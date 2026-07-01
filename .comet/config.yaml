@@ -1,0 +1,12 @@
+# Comet 项目级配置
+# 规范路径：.comet/config.yaml
+
+# 上下文压缩模式
+# - off: 不启用（默认），交接包使用 standard mode（compact 可追溯摘录）
+# - beta: 启用结构化 spec projection，减少 token 占用
+context_compression: beta
+
+# 自动阶段衔接
+# - true: 阶段守卫推进 phase 后自动调用下一个 skill（默认）
+# - false: 阶段守卫推进 phase 后暂停，由用户手动运行下一 skill
+auto_transition: true

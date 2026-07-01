@@ -1,0 +1,107 @@
+# ========================
+# Python
+# ========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# ========================
+# Virtual environments
+# ========================
+venv/
+.venv/
+env/
+.env/
+*.venv
+
+# ========================
+# Tests and coverage
+# ========================
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+*.cover
+
+# ========================
+# Temporary and cache files
+# ========================
+*.tmp
+*.temp
+*.cache
+*.bak
+*.swp
+*.swo
+*~
+\#*\#
+.#*
+tmp/
+.tmp/
+
+# ========================
+# Local runtime state
+# ========================
+.local/
+/codegraph/
+/.codegraph/
+
+# ========================
+# OS / editor
+# ========================
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.idea/
+.vscode/settings.json
+.vscode/tasks.json
+.vscode/launch.json
+.vscode/extensions.json
+*.code-workspace
+
+# ========================
+# Codex / Claude local-only state
+# ========================
+.codex/environments/*
+!.codex/environments/environment.toml
+.claude/worktrees/
+
+# ========================
+# Logs
+# ========================
+*.log
+logs/
+
+# ========================
+# Environment variables and secrets
+# ========================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+
+# ========================
+# Local generated stores
+# ========================
+local_store/raw/*
+local_store/parquet/*
+*.duckdb
+*.duckdb.wal
+
+# ========================
+# Jupyter
+# ========================
+.ipynb_checkpoints/
+*.ipynb_checkpoints

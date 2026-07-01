@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "build": {
+    "checks": []
+  },
+  "verify": {
+    "maxParallel": 0,
+    "timeoutSeconds": 180,
+    "checks": [
+      {
+        "id": "verify.python-tests",
+        "command": ".\\.venv\\Scripts\\python.exe -m pytest",
+        "paths": [
+          "joinquant/**",
+          "scripts/**",
+          "tests/**",
+          "requirements*.txt"
+        ],
+        "inputs": [
+          "joinquant/**",
+          "scripts/**",
+          "tests/**",
+          "requirements.txt",
+          "requirements-dev.txt"
+        ],
+        "parallel": true
+      },
+      {
+        "id": "verify.openspec",
+        "command": "openspec validate --all --strict --no-interactive",
+        "paths": [
+          "openspec/**"
+        ],
+        "inputs": [
+          "openspec/**"
+        ],
+        "parallel": true
+      }
+    ]
+  }
+}
