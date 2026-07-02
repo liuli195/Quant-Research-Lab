@@ -1,0 +1,4 @@
+# Comet guard-readable project commands
+build_command: .venv/Scripts/python.exe .build-and-verify/runtime/build_and_verify.py build --project .
+
+verify_command: .venv/Scripts/python.exe .build-and-verify/runtime/build_and_verify.py verify --project .
