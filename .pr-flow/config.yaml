@@ -1,0 +1,51 @@
+defaults:
+  baseBranch: main
+  mergeStrategy: merge
+  reviewGate:
+    mode: github
+  hotfix:
+    verifyCommand: .\.venv\Scripts\python.exe .\.build-and-verify\runtime\build_and_verify.py
+      verify --project . --full
+  wait:
+    timeoutSeconds: 600
+    pollSeconds: 15
+  pr:
+    bodyTemplatePath: .pr-flow/pr-template.md
+    requiredSections:
+    - Summary
+    - Scope
+    - Closing References
+branches:
+  main:
+    remote: origin
+    allowHotfixPush: true
+authorization:
+  phraseHashAlgorithm: md5
+  phraseHash: 4f9ee82bfd2ac6399a3e330ac49d75f1
+setup:
+  github:
+    branchRulesets:
+    - name: protect-main
+      targetBranches:
+      - main
+      requirePullRequest: true
+      requiredApprovingReviewCount: 0
+      restrictDeletions: true
+      blockForcePushes: true
+      bypassForHotfix: true
+    statusChecks:
+    - task: add_or_identify
+      label: Full Verify
+      source: .build-and-verify/config.json
+      workflowOrJob: .github/workflows/full-verify.yml / Full Verify
+      purpose: Run full verification through build-and-verify runtime
+      failureImpact: Block PR merge
+    requiredChecks: true
+    codeScanning:
+      defaultSetup: true
+      requireCodeScanningResults: true
+      tool: CodeQL
+      threshold: github_default
+    allowedMergeMethods:
+    - merge
+    autoDeleteHeadBranch: false

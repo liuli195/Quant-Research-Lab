@@ -1,7 +1,18 @@
 {
   "version": 1,
   "build": {
-    "checks": []
+    "checks": [
+      {
+        "id": "build.placeholder",
+        "command": [
+          ".\\.venv\\Scripts\\python.exe",
+          "scripts\\build_placeholder.py"
+        ],
+        "inputs": [
+          "scripts/build_placeholder.py"
+        ]
+      }
+    ]
   },
   "verify": {
     "maxParallel": 0,
@@ -9,7 +20,11 @@
     "checks": [
       {
         "id": "verify.python-tests",
-        "command": ".\\.venv\\Scripts\\python.exe -m pytest",
+        "command": [
+          ".\\.venv\\Scripts\\python.exe",
+          "-m",
+          "pytest"
+        ],
         "paths": [
           "joinquant/**",
           "scripts/**",
@@ -23,7 +38,8 @@
           "requirements.txt",
           "requirements-dev.txt"
         ],
-        "parallel": true
+        "checkParallel": true,
+        "pytestXdistWorkers": "auto"
       },
       {
         "id": "verify.openspec",
@@ -34,7 +50,7 @@
         "inputs": [
           "openspec/**"
         ],
-        "parallel": true
+        "checkParallel": true
       }
     ]
   }
