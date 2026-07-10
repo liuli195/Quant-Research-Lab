@@ -463,3 +463,105 @@ def test_log_response_is_archived_before_recovery(tmp_path: Path) -> None:
         "recovered_rows": 1,
         "errors": [{"offset": 8, "bytes": 3, "error": "invalid_json"}],
     }
+
+
+def _simulation_streams(suffix: str) -> dict[str, dict[str, str]]:
+    return {
+        name: {
+            "cursor": f"{name}-{suffix}",
+            "sha256": hashlib.sha256(f"{name}-{suffix}".encode()).hexdigest(),
+        }
+        for name in ("code", "snapshots", "data", "logs")
+    }
+
+
+def test_simulations_advance_independent_cursors() -> None:
+    from joinquant_sync.archive import sync_active_simulations
+
+    simulations = [
+        {
+            "id": "sim-1",
+            "tracking": "active",
+            "object": {"status": "active"},
+            "streams": _simulation_streams("old-1"),
+        },
+        {
+            "id": "sim-2",
+            "tracking": "active",
+            "object": {"status": "active"},
+            "streams": _simulation_streams("old-2"),
+        },
+    ]
+
+    def fetch_remote(item: dict[str, object]) -> dict[str, object]:
+        if item["id"] == "sim-2":
+            raise ConnectionError("offline")
+        return {
+            "status": "active",
+            "streams": _simulation_streams("new-1"),
+            "writer_present": False,
+            "attribution_lines": [],
+        }
+
+    results = sync_active_simulations(simulations, fetch_remote)
+    assert results[0]["committed"] is True
+    assert results[0]["manifest"]["streams"]["logs"]["cursor"] == "logs-new-1"
+    assert results[1]["committed"] is False
+    assert results[1]["manifest"]["streams"] == _simulation_streams("old-2")
+    assert results[1]["resume"]["logs"] == "logs-old-2"
+    assert simulations[0]["streams"] == _simulation_streams("old-1")
+
+
+def test_same_cursor_changed_digest_is_an_increment() -> None:
+    from joinquant_sync.archive import next_increment
+
+    current = _simulation_streams("same")
+    remote = _simulation_streams("same")
+    remote["logs"]["sha256"] = hashlib.sha256(b"changed").hexdigest()
+    increment = next_increment(
+        {"streams": current}, {"status": "active", "streams": remote}
+    )
+    assert increment["changed"] == ["logs"]
+    assert increment["requests"]["logs"]["after"] == "logs-same"
+
+
+def test_closed_simulation_requires_one_final_sync() -> None:
+    from joinquant_sync.archive import finalize_closed_simulation
+
+    manifest = {
+        "object": {"status": "active"},
+        "tracking": "active",
+        "streams": _simulation_streams("old"),
+    }
+    remote = {
+        "status": "closed",
+        "streams": _simulation_streams("final"),
+        "writer_present": True,
+        "attribution_lines": [
+            b'{"token":"t","seq":1,"event":"run_start"}',
+            b'{"token":"t","seq":2,"event":"run_end"}',
+        ],
+    }
+    result = finalize_closed_simulation(manifest, remote)
+    assert result["tracking"] == "stopped"
+    assert result["final_sync"] == "complete"
+    assert result["object"]["status"] == "closed"
+    assert result["attribution"]["run_end"] is True
+
+
+def test_closed_simulation_with_writer_rejects_missing_run_end() -> None:
+    from joinquant_sync.archive import AttributionIncomplete, finalize_closed_simulation
+
+    manifest = {
+        "object": {"status": "active"},
+        "tracking": "active",
+        "streams": _simulation_streams("old"),
+    }
+    remote = {
+        "status": "closed",
+        "streams": _simulation_streams("final"),
+        "writer_present": True,
+        "attribution_lines": [b'{"token":"t","seq":1,"event":"run_start"}'],
+    }
+    with pytest.raises(AttributionIncomplete):
+        finalize_closed_simulation(manifest, remote)

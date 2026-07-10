@@ -7,8 +7,9 @@ import msvcrt
 import os
 import re
 import uuid
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -41,6 +42,10 @@ class IdentityConflict(RuntimeError):
 
 class AttributionIncomplete(RuntimeError):
     """Raised when an attribution stream is malformed or not closed."""
+
+
+class SimulationIncrementError(RuntimeError):
+    """Raised when a simulation increment lacks verifiable stream evidence."""
 
 
 @dataclass(frozen=True)
@@ -573,6 +578,162 @@ def validate_attribution(
         "run_start": True,
         "run_end": events[-1] == "run_end",
     }
+
+
+SIMULATION_STREAMS = ("code", "snapshots", "data", "logs")
+
+
+def _verified_simulation_streams(document: dict[str, object]) -> dict[str, dict[str, object]]:
+    streams = document.get("streams")
+    if not isinstance(streams, dict):
+        raise SimulationIncrementError("simulation streams are missing")
+    verified: dict[str, dict[str, object]] = {}
+    for name in SIMULATION_STREAMS:
+        state = streams.get(name)
+        if not isinstance(state, dict):
+            raise SimulationIncrementError(f"simulation stream is missing: {name}")
+        cursor = state.get("cursor")
+        digest = state.get("sha256")
+        if not isinstance(cursor, str) or not cursor:
+            raise SimulationIncrementError(f"simulation cursor is invalid: {name}")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise SimulationIncrementError(f"simulation digest is invalid: {name}")
+        verified[name] = deepcopy(state)
+    return verified
+
+
+def _optional_current_streams(
+    manifest: dict[str, object],
+) -> dict[str, dict[str, object]]:
+    if "streams" not in manifest:
+        return {}
+    return _verified_simulation_streams(manifest)
+
+
+def _remote_attribution(remote: dict[str, object], status: str) -> dict[str, object]:
+    writer_present = remote.get("writer_present")
+    lines = remote.get("attribution_lines")
+    if not isinstance(writer_present, bool) or not isinstance(lines, list) or not all(
+        isinstance(line, bytes) for line in lines
+    ):
+        raise SimulationIncrementError("simulation attribution evidence is missing")
+    attribution_status = "done" if status == "closed" else status
+    return validate_attribution(lines, attribution_status, writer_present)
+
+
+def next_increment(
+    manifest: dict[str, object], remote: dict[str, object]
+) -> dict[str, object]:
+    status = remote.get("status")
+    if status not in {"active", "closed"}:
+        raise SimulationIncrementError("simulation status is invalid")
+    current = _optional_current_streams(manifest)
+    offered = _verified_simulation_streams(remote)
+    requests: dict[str, dict[str, object]] = {}
+    for name in SIMULATION_STREAMS:
+        previous = current.get(name)
+        if previous == offered[name]:
+            continue
+        requests[name] = {
+            "after": previous.get("cursor") if previous else None,
+            "through": offered[name]["cursor"],
+            "sha256": offered[name]["sha256"],
+        }
+    return {
+        "status": status,
+        "changed": list(requests),
+        "requests": requests,
+    }
+
+
+def _accept_simulation_remote(
+    manifest: dict[str, object], remote: dict[str, object]
+) -> dict[str, object]:
+    accepted = deepcopy(manifest)
+    object_state = accepted.get("object")
+    if not isinstance(object_state, dict):
+        object_state = {}
+        accepted["object"] = object_state
+    object_state["status"] = remote["status"]
+    accepted["streams"] = _verified_simulation_streams(remote)
+    accepted["attribution"] = _remote_attribution(remote, str(remote["status"]))
+    return accepted
+
+
+def finalize_closed_simulation(
+    manifest: dict[str, object], remote: dict[str, object]
+) -> dict[str, object]:
+    if manifest.get("tracking") == "stopped" and manifest.get("final_sync") == "complete":
+        return deepcopy(manifest)
+    if remote.get("status") != "closed":
+        raise SimulationIncrementError("final sync requires closed remote status")
+    next_increment(manifest, remote)
+    accepted = _accept_simulation_remote(manifest, remote)
+    accepted["tracking"] = "stopped"
+    accepted["final_sync"] = "complete"
+    return accepted
+
+
+def _resume_cursors(manifest: dict[str, object]) -> dict[str, object]:
+    try:
+        streams = _optional_current_streams(manifest)
+    except SimulationIncrementError:
+        return {}
+    return {name: state["cursor"] for name, state in streams.items()}
+
+
+def sync_active_simulations(
+    simulations: Iterable[dict[str, object]],
+    fetch_remote: Callable[[dict[str, object]], dict[str, object]],
+) -> list[dict[str, object]]:
+    results: list[dict[str, object]] = []
+    for simulation in simulations:
+        original = deepcopy(simulation)
+        simulation_id = str(original.get("id") or "")
+        if original.get("tracking") != "active":
+            results.append(
+                {
+                    "id": simulation_id,
+                    "committed": False,
+                    "status": "not_active",
+                    "manifest": original,
+                    "resume": _resume_cursors(original),
+                }
+            )
+            continue
+        try:
+            remote = fetch_remote(deepcopy(original))
+            increment = next_increment(original, remote)
+            if remote.get("status") == "closed":
+                accepted = finalize_closed_simulation(original, remote)
+            else:
+                accepted = _accept_simulation_remote(original, remote)
+                accepted["tracking"] = "active"
+                accepted.pop("final_sync", None)
+            results.append(
+                {
+                    "id": simulation_id,
+                    "committed": True,
+                    "status": str(remote["status"]),
+                    "increment": increment,
+                    "manifest": accepted,
+                }
+            )
+        except Exception as error:
+            results.append(
+                {
+                    "id": simulation_id,
+                    "committed": False,
+                    "status": "failed",
+                    "error": {
+                        "type": type(error).__name__,
+                        "message": str(error),
+                    },
+                    "manifest": original,
+                    "resume": _resume_cursors(original),
+                }
+            )
+    return results
 
 
 def stage_external_file(source: Path, stage_dir: Path) -> dict[str, object]:

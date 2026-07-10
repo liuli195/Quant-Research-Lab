@@ -77,6 +77,18 @@ Research 官方 `get_backtest` 文件还包含：
 
 判定：`missing_at_source`。普通日志不能替代归因日志。
 
+## 活动模拟交易只读 PoC
+
+使用同一仓库外登录会话访问“模拟交易”列表和两个活动详情页，全程只读，没有暂停、关闭、修改或创建模拟交易。
+
+- 列表行以 `_status=1` 明确表示活动状态，并提供名称、页面顺序和 `data-backtestspaceid` 页面空间标识。
+- 详情链接和接口使用的 `backtestId` 是传输别名：刷新列表会变化，而且代码、结果等接口在同一详情页也可能使用不同别名。因此它只能追加到 manifest（清单）的 `aliases`，不能作为本地目录主键。
+- 详情页真实调用 `backtest/result`、`live/stat`、`live/position`、`live/transactionDetail`、`live/log`、`backtest/source`、`getLiveHistoryList` 和 `getLiveHistoryCode`。
+- 页面持仓限制为 50 条、订单限制为 200 条；聚宽前端在超限位置明确提示使用 Research `get_backtest` 或官方导出。因此页面表格不能证明历史持仓和订单完整，必须继续由 Research 全量结构化结果交叉补齐。
+- `live/stat` 使用返回的 `count` 和下一偏移量递归取数；代码历史每页 20 条；日志使用偏移量继续读取。每类数据必须保存独立游标与摘要，一个接口成功不能代表其他接口完整。
+
+结论：活动发现、代码/日志/快照读取和每日增量真实可行；完整持仓与订单仍须复用已验证的 Browser + Research 双来源闭包。页面传输别名漂移是已实测事实，增量实现必须在每次运行重新发现别名。
+
 ## 下载和认证路径
 
 - 自动路径：页面“收益概述”官方下载成功；Research 完整结构化文件和归因日志下载成功。

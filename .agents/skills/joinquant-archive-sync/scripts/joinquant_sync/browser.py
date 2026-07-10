@@ -7,10 +7,11 @@ import os
 import secrets
 import sqlite3
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 from playwright.sync_api import BrowserContext, Page, sync_playwright
 
@@ -31,10 +32,79 @@ class PaidConfirmationRequired(RuntimeError):
     """Raised when a paid download is unconfirmed, changed, or already consumed."""
 
 
+class SimulationDiscoveryError(RuntimeError):
+    """Raised when an active simulation row lacks stable page evidence."""
+
+
 def ensure_authenticated(page: PageLike) -> None:
     url = page.url.lower()
     if "/login" in url or "/user/login" in url:
         raise AuthRequired("auth_required")
+
+
+def parse_active_simulation_rows(
+    rows: Iterable[dict[str, object]],
+) -> list[dict[str, object]]:
+    candidates: list[dict[str, object]] = []
+    seen_spaces: set[str] = set()
+    for ordinal, row in enumerate(rows, start=1):
+        if str(row.get("status") or "") != "1":
+            continue
+        name = str(row.get("name") or "").strip()
+        page_space_id = str(row.get("page_space_id") or "").strip()
+        detail_url = urljoin(
+            "https://www.joinquant.com", str(row.get("detail_url") or "").strip()
+        )
+        parsed = urlsplit(detail_url)
+        if (
+            not name
+            or not page_space_id
+            or page_space_id in seen_spaces
+            or parsed.scheme != "https"
+            or parsed.hostname not in {"joinquant.com", "www.joinquant.com"}
+            or parsed.path != "/algorithm/live/index"
+        ):
+            raise SimulationDiscoveryError("active simulation page identity is invalid")
+        seen_spaces.add(page_space_id)
+        aliases = [
+            parse_qs(parsed.query).get("backtestId", [""])[0],
+            str(row.get("transport_id") or "").strip(),
+        ]
+        candidates.append(
+            {
+                "page_ordinal": str(ordinal),
+                "name": name,
+                "page_space_id": page_space_id,
+                "status": "active",
+                "detail_url": detail_url,
+                "aliases": list(dict.fromkeys(alias for alias in aliases if alias)),
+            }
+        )
+    return candidates
+
+
+def discover_active_simulations(page: Page) -> list[dict[str, object]]:
+    page.goto(
+        "https://www.joinquant.com/algorithm/trade/list?process=1",
+        wait_until="networkidle",
+    )
+    ensure_authenticated(page)
+    rows = page.locator("tr[_status]").evaluate_all(
+        """
+        elements => elements.map(row => {
+          const link = row.querySelector('td.name a[href*="/algorithm/live/index"]');
+          const transport = row.querySelector('td[_backtestid]');
+          return {
+            status: row.getAttribute('_status') || '',
+            name: link ? (link.textContent || '').trim() : '',
+            page_space_id: row.getAttribute('data-backtestspaceid') || '',
+            detail_url: link ? link.getAttribute('href') || '' : '',
+            transport_id: transport ? transport.getAttribute('_backtestid') || '' : '',
+          };
+        })
+        """
+    )
+    return parse_active_simulation_rows(rows)
 
 
 @contextmanager

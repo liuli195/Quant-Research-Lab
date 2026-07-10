@@ -371,3 +371,35 @@ def test_paid_preview_is_bound_and_one_time(tmp_path: Path) -> None:
             set(),
             store_dir=tmp_path,
         )
+
+
+def test_active_simulation_rows_separate_stable_identity_from_aliases() -> None:
+    from joinquant_sync.browser import parse_active_simulation_rows
+
+    rows = [
+        {
+            "status": "1",
+            "name": "etf_factor_rotation",
+            "page_space_id": "2901335",
+            "detail_url": "/algorithm/live/index?backtestId=rotating-detail",
+            "transport_id": "rotating-result",
+        },
+        {
+            "status": "2",
+            "name": "closed",
+            "page_space_id": "10",
+            "detail_url": "/algorithm/live/index?backtestId=closed",
+            "transport_id": "closed",
+        },
+    ]
+    candidates = parse_active_simulation_rows(rows)
+    assert candidates == [
+        {
+            "page_ordinal": "1",
+            "name": "etf_factor_rotation",
+            "page_space_id": "2901335",
+            "status": "active",
+            "detail_url": "https://www.joinquant.com/algorithm/live/index?backtestId=rotating-detail",
+            "aliases": ["rotating-detail", "rotating-result"],
+        }
+    ]
