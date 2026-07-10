@@ -185,3 +185,84 @@ def test_auth_uses_external_persistent_profile(
         / "storage-state.json",
     }
     assert json.loads(capsys.readouterr().out)["status"] == "authenticated"
+
+
+def test_full_page_without_end_evidence_is_not_complete() -> None:
+    from joinquant_sync.research import PaginationIncomplete, collect_pages
+
+    pages = iter([{"rows": [{"id": 1}], "next": None, "page_full": True}])
+    with pytest.raises(PaginationIncomplete):
+        collect_pages(lambda _cursor: next(pages))
+
+
+def test_collect_pages_matches_real_1000_289_empty_shape() -> None:
+    from joinquant_sync.research import collect_pages
+
+    pages = {
+        None: {"rows": [{"id": index} for index in range(1000)], "next": "1000"},
+        "1000": {
+            "rows": [{"id": index} for index in range(1000, 1289)],
+            "next": "1289",
+        },
+        "1289": {"rows": [], "next": None},
+    }
+
+    rows, pagination = collect_pages(lambda cursor: pages[cursor])
+
+    assert len(rows) == 1289
+    assert pagination == {
+        "complete": True,
+        "end": "empty_page",
+        "pages": 3,
+        "rows": 1289,
+        "cursors": [None, "1000", "1289"],
+    }
+
+
+def test_failed_run_accepts_verified_empty_table() -> None:
+    from joinquant_sync.research import validate_fact_table
+
+    result = validate_fact_table("risk", [], "failed", {"end": "empty_page"})
+    assert result["status"] == "complete"
+    assert result["verified_empty"] is True
+
+
+def test_done_run_rejects_unexplained_empty_required_table() -> None:
+    from joinquant_sync.research import FactValidationError, validate_fact_table
+
+    with pytest.raises(FactValidationError):
+        validate_fact_table("results", [], "done", {"end": "empty_page"})
+
+
+def test_fact_table_rejects_duplicate_or_unsorted_rows() -> None:
+    from joinquant_sync.research import FactValidationError, validate_fact_table
+
+    pagination = {"end": "empty_page"}
+    duplicate = [
+        {"time": "2026-01-01", "returns": 0.1, "benchmark_returns": 0.0},
+        {"time": "2026-01-01", "returns": 0.1, "benchmark_returns": 0.0},
+    ]
+    with pytest.raises(FactValidationError):
+        validate_fact_table("results", duplicate, "done", pagination)
+    unsorted = [
+        {"time": "2026-01-02", "returns": 0.1, "benchmark_returns": 0.0},
+        {"time": "2026-01-01", "returns": 0.2, "benchmark_returns": 0.0},
+    ]
+    with pytest.raises(FactValidationError):
+        validate_fact_table("results", unsorted, "done", pagination)
+
+
+def test_inventory_drift_blocks_second_unstable_batch() -> None:
+    from joinquant_sync.research import InventoryChanged, sync_with_fence
+
+    inventories = iter([{"rev": 1}, {"rev": 2}, {"rev": 2}, {"rev": 3}])
+    with pytest.raises(InventoryChanged):
+        sync_with_fence(lambda: next(inventories), lambda: object())
+
+
+def test_inventory_drift_retries_once_and_returns_stable_result() -> None:
+    from joinquant_sync.research import sync_with_fence
+
+    inventories = iter([{"rev": 1}, {"rev": 2}, {"rev": 2}, {"rev": 2}])
+    collected = iter(["first", "second"])
+    assert sync_with_fence(lambda: next(inventories), lambda: next(collected)) == "second"

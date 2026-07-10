@@ -363,3 +363,35 @@ def test_object_lock_conflict_is_retryable(tmp_path: Path) -> None:
         with pytest.raises(ObjectLocked):
             with object_lock(object_dir):
                 pass
+
+
+def test_code_context_keeps_backtest_code_and_simulation_versions(
+    tmp_path: Path,
+) -> None:
+    from joinquant_sync.archive import write_code_context
+
+    backtest = write_code_context(
+        tmp_path / "backtest",
+        "backtest",
+        "def initialize(context):\n    pass\n",
+        {"start_date": "2026-01-01"},
+    )
+    simulation = write_code_context(
+        tmp_path / "simulation",
+        "simulation",
+        "def initialize(context):\n    pass\n",
+        {"frequency": "day"},
+        source_backtest="4",
+        versions=["# old\n", "def initialize(context):\n    pass\n"],
+    )
+
+    assert (tmp_path / "backtest" / "code.py").read_text(encoding="utf-8") == (
+        "def initialize(context):\n    pass\n"
+    )
+    assert backtest["path"] == "code.py"
+    assert (tmp_path / "backtest" / "params.json").is_file()
+    assert simulation["path"] == "current_code.py"
+    assert json.loads(
+        (tmp_path / "simulation" / "source.json").read_text(encoding="utf-8")
+    ) == {"backtest_id": "4"}
+    assert len(list((tmp_path / "simulation" / "code_versions").glob("*.py"))) == 2

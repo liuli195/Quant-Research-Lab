@@ -412,6 +412,81 @@ def verify_existing_manifest(object_dir: Path) -> dict[str, object]:
     return manifest
 
 
+def _write_staged_bytes(destination: Path, payload: bytes) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_code_context(
+    stage_dir: Path,
+    kind: str,
+    code: str,
+    params: dict[str, object],
+    *,
+    source_backtest: str | None = None,
+    versions: list[str] | None = None,
+) -> dict[str, object]:
+    filenames = {
+        "strategy": "default_code.py",
+        "build": "code.py",
+        "backtest": "code.py",
+        "simulation": "current_code.py",
+    }
+    if kind not in filenames:
+        raise ValueError(f"unsupported code context kind: {kind}")
+    if kind == "simulation" and not source_backtest:
+        raise ValueError("simulation source_backtest is required")
+
+    payload = code.encode("utf-8")
+    code_path = stage_dir / filenames[kind]
+    _write_staged_bytes(code_path, payload)
+    params_path = stage_dir / "params.json"
+    _write_staged_bytes(
+        params_path,
+        (json.dumps(params, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
+            "utf-8"
+        ),
+    )
+
+    version_entries: list[dict[str, object]] = []
+    if kind == "simulation":
+        _write_staged_bytes(
+            stage_dir / "source.json",
+            (json.dumps({"backtest_id": source_backtest}, indent=2) + "\n").encode(
+                "utf-8"
+            ),
+        )
+        for version in [*(versions or []), code]:
+            version_payload = version.encode("utf-8")
+            digest = hashlib.sha256(version_payload).hexdigest()
+            version_path = stage_dir / "code_versions" / f"{digest}.py"
+            if not version_path.exists():
+                _write_staged_bytes(version_path, version_payload)
+            entry = {
+                "path": version_path.relative_to(stage_dir).as_posix(),
+                "sha256": digest,
+                "bytes": len(version_payload),
+            }
+            if entry not in version_entries:
+                version_entries.append(entry)
+
+    return {
+        "path": code_path.relative_to(stage_dir).as_posix(),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+        "params_path": params_path.relative_to(stage_dir).as_posix(),
+        "versions": version_entries,
+    }
+
+
 def stage_external_file(source: Path, stage_dir: Path) -> dict[str, object]:
     if not source.is_file():
         raise FileNotFoundError(source)
