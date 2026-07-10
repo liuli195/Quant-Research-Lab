@@ -17,6 +17,12 @@ from joinquant_sync.browser import (
     open_authenticated_context,
 )
 from joinquant_sync.query import export_csv, query_rows
+from joinquant_sync.scheduler import (
+    SchedulerError,
+    install_scheduler,
+    scheduler_status,
+    uninstall_scheduler,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,6 +38,10 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--strategy", required=True)
     sync.add_argument("--target", required=True)
     sync.add_argument("--stage-only", required=True)
+
+    active_sync = commands.add_parser("sync-active-simulations")
+    active_sync.add_argument("--repository", default=".")
+    active_sync.add_argument("--profile")
 
     verify = commands.add_parser("verify")
     verify.add_argument("--import-file", required=True)
@@ -49,6 +59,14 @@ def build_parser() -> argparse.ArgumentParser:
     csv_export.add_argument("--start")
     csv_export.add_argument("--end")
     csv_export.add_argument("--destination", required=True)
+
+    schedule_install = commands.add_parser("schedule-install")
+    schedule_install.add_argument("--repo-root", default=".")
+    schedule_install.add_argument("--task-name", default="JoinQuantArchiveSync")
+    schedule_status = commands.add_parser("schedule-status")
+    schedule_status.add_argument("--task-name", default="JoinQuantArchiveSync")
+    schedule_uninstall = commands.add_parser("schedule-uninstall")
+    schedule_uninstall.add_argument("--task-name", default="JoinQuantArchiveSync")
     return parser
 
 
@@ -89,6 +107,16 @@ def main(argv: list[str] | None = None) -> int:
         except TargetRequired:
             print(json.dumps({"status": "target_required"}))
             return 2
+    if args.command == "sync-active-simulations":
+        print(
+            json.dumps(
+                {
+                    "status": "integration_pending",
+                    "repository": str(Path(args.repository).resolve()),
+                }
+            )
+        )
+        return 1
     if args.command == "query":
         path = Path(args.object)
         manifest = path / "manifest.json" if path.is_dir() else path
@@ -111,6 +139,31 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.destination),
         )
         print(json.dumps(result, ensure_ascii=False))
+    if args.command == "schedule-install":
+        root = Path(args.repo_root).resolve()
+        command = [
+            str(root / ".venv" / "Scripts" / "python.exe"),
+            str(Path(__file__).resolve()),
+            "--repository",
+            str(root),
+        ]
+        try:
+            install_scheduler(args.task_name, command)
+        except SchedulerError as error:
+            print(json.dumps({"status": "failed", "error": str(error)}))
+            return 1
+        print(json.dumps({"status": "installed", "task_name": args.task_name}))
+    if args.command == "schedule-status":
+        result = scheduler_status(args.task_name)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result.get("installed") else 1
+    if args.command == "schedule-uninstall":
+        try:
+            uninstall_scheduler(args.task_name)
+        except SchedulerError as error:
+            print(json.dumps({"status": "failed", "error": str(error)}))
+            return 1
+        print(json.dumps({"status": "uninstalled", "task_name": args.task_name}))
     return 0
 
 
