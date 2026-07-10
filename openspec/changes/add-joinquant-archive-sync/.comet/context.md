@@ -1,0 +1,231 @@
+# Comet Spec Context
+
+- Change: add-joinquant-archive-sync
+- Phase: design
+- Mode: beta
+- Context hash: 0c2fce08a96c77fd61d91344e532bc7b82446e56ee8c58c35ae76874b12e6751
+
+Generated-by: comet-handoff.sh
+
+OpenSpec remains the canonical capability spec. This beta context pack verbatim-projects spec files and references supporting artifacts by hash, not an agent-authored summary.
+
+## Source References
+
+- Source: openspec/changes/add-joinquant-archive-sync/proposal.md
+- SHA256: dc9393cacbf247818fd9641c738ebce437eecc48c6f92b6b498db8a3ab81f149
+- Source: openspec/changes/add-joinquant-archive-sync/design.md
+- SHA256: 75d4dfbc6b964d02fce85b1648877a25235852c1eeae5f46c61650f3bf6bc9cc
+- Source: openspec/changes/add-joinquant-archive-sync/tasks.md
+- SHA256: 18a415e8e93f9d45d928cbf73a27ae419c2d3a61c7f906187873418764e1396d
+- Source: openspec/changes/add-joinquant-archive-sync/specs/joinquant-archive-sync/spec.md
+- SHA256: 5f3cab94f19de330c5a747bc610893212e253ab6b79463ffd6cf907b83c87eac
+
+## Acceptance Projection
+
+## openspec/changes/add-joinquant-archive-sync/specs/joinquant-archive-sync/spec.md
+
+- Source: openspec/changes/add-joinquant-archive-sync/specs/joinquant-archive-sync/spec.md
+- Lines: 1-196
+- SHA256: 5f3cab94f19de330c5a747bc610893212e253ab6b79463ffd6cf907b83c87eac
+
+```md
+## ADDED Requirements
+
+### Requirement: 页面对象必须映射到稳定仓库目录
+系统 MUST（必须）以 `joinquant/strategies/<strategy_id>/` 表示一个聚宽策略详情页，并分别以 `builds/<build_id>/`、`backtests/<backtest_id>/` 和 `simulations/<simulation_id>/` 表示该策略的构建、回测和模拟交易对象。目录主键 MUST 使用可复核的本地稳定键；会随页面刷新变化的远端传输标识 MUST 作为清单别名保存而不能成为唯一主键。
+
+#### Scenario: 首次归档一个策略
+- **WHEN** 调用者同步一个尚未归档的策略
+- **THEN** 系统创建策略目录、`default_code.py` 和 `manifest.json`，并在清单中记录页面名称、详情链接、页面路径和远端标识别名
+
+#### Scenario: 远端传输标识变化
+- **WHEN** 同一页面对象的远端传输标识变化但稳定页面身份和代码摘要未变化
+- **THEN** 系统更新别名而不创建重复策略、构建、回测或模拟交易目录
+
+### Requirement: 历史运行同步必须由明确目标驱动
+系统 MUST 只同步调用者明确指定的历史回测或构建记录。有效目标 SHALL（应当）为策略页面内可复核的序号或详情链接；缺失目标、含义不明确的目标或 `latest`（最新）选择器 MUST 被拒绝。多个目标只有逐项明确列出后才能同步。
+
+#### Scenario: 同步一个指定回测
+- **WHEN** 用户或 Agent（代理）传入一个有效的策略和回测页面序号
+- **THEN** 系统只解析并同步该回测及其所属策略必要元数据，不同步其他历史回测
+
+#### Scenario: 先列出再选择
+- **WHEN** Agent 请求可选历史运行列表但未指定同步目标
+- **THEN** 系统只返回轻量元数据，不下载代码、结果或日志
+
+#### Scenario: 拒绝隐式全量或最新目标
+- **WHEN** 调用未提供目标、使用 `latest` 或只传入策略而未列出历史运行
+- **THEN** 系统在任何历史数据下载前返回可操作的目标校验错误
+
+### Requirement: 代码和运行上下文必须完整保存
+系统 MUST 保存策略当前默认代码、每个已同步构建和回测的完整代码，以及每个已同步模拟交易的当前代码和完整代码变更历史。回测目录 MUST 包含代码、参数、数据和报告；模拟交易目录 MUST 包含来源回测、代码、参数、快照、代码变更记录、数据和报告。
+
+#### Scenario: 已完成运行包含代码
+- **WHEN** 一个已完成的构建、回测或模拟交易被同步
+- **THEN** 系统保存非空代码文件并在清单中记录代码 SHA256（完整性摘要）
+
+#### Scenario: 失败或取消运行仍保留代码
+- **WHEN** 一个失败或取消的构建或回测被同步
+- **THEN** 系统仍保存其完整代码、参数、状态和错误证据，不因结构化结果为空而省略运行目录
+
+#### Scenario: 模拟交易发生代码变更
+- **WHEN** 模拟交易的代码历史新增记录
+- **THEN** 系统按远端顺序增量保存所有新增版本及摘要，并保留此前版本
+
+### Requirement: 结构化数据必须按运行状态校验
+系统 MUST 对已完成回测和构建保存并校验结果、资金、持仓、订单、自定义记录、风险和分期风险数据。对于失败或取消运行，系统 MUST 根据远端状态验证允许为空的数据集，而不能伪造空表为成功结果。分页 MUST 持续到接口提供明确终止条件。
+
+#### Scenario: 已完成回测数据完整
+- **WHEN** 已完成回测的结果、资金、持仓、订单、风险和分期风险分页全部返回
+- **THEN** 系统校验字段、行数、唯一键、排序、时间范围、交易日关联和分页终止状态后才把对应数据集标记为 `complete`
+
+#### Scenario: 失败回测具有合法空结果
+- **WHEN** 远端状态为失败且结构化结果、风险和分期风险为空
+- **THEN** 系统保存失败状态和错误证据，并把符合该状态语义的空数据集记录为已验证的空结果而不是下载遗漏
+
+#### Scenario: 任一分页未明确结束
+- **WHEN** 某数据集达到页大小或接口上限且未取得明确空页、总数或结束游标
+- **THEN** 系统不得把该数据集标记为 `complete`
+
+### Requirement: 每种预期数据都必须有独立完整性状态
+每个归档对象的 `manifest.json` MUST 列出全部预期数据集，并为每个数据集记录来源、行数或字节数、时间范围、分页证据、文件 SHA256 和 `complete`、`capped_free`、`missing_at_source`、`unsupported_api_version` 或 `failed` 状态。对象只有在必需核心数据均为 `complete` 且其余预期数据均具有可接受的显式状态时才能通过完整性门禁。
+
+#### Scenario: 部分数据完整而另一部分缺失
+- **WHEN** 结果和资金数据完整但持仓分页未完成
+- **THEN** 系统保留已验证数据，将持仓标记为 `failed`，并使整个对象无法通过完整性门禁
+
+#### Scenario: 同步前后远端清单变化
+- **WHEN** 同步结束时重读的远端对象清单与同步开始时不一致
+- **THEN** 系统只重试变化部分且不原子提交未通过围栏校验的批次
+
+#### Scenario: 重复同步同一对象
+- **WHEN** 同一目标的远端摘要和游标均未变化
+- **THEN** 系统验证已有文件摘要并跳过重复下载；如有缺失或变化则只补齐对应数据集
+
+### Requirement: 日志必须按价值、来源和费用分别处理
+系统 MUST 把归因日志作为独立核心数据集，默认完整同步并严格校验，同时完整同步失败运行的错误日志。代码存在归因写入器时，任何归因日志缺页、断序、Token（标识）不一致、记录数或摘要不符以及已结束运行缺少 `run_end` 都 MUST 阻断对象完整性门禁。源代码未实现归因写入器时 MUST 以代码摘要和判断证据标记 `missing_at_source`，不得伪造补全。普通控制台日志和性能响应 MUST 默认获取全部免费内容；只有后续内容存在但无法免费取得或无法证明分页结束时才能标记 `capped_free`。
+
+#### Scenario: 已结束运行的归因日志完整
+- **WHEN** 已结束运行存在归因 JSONL（逐行数据）日志
+- **THEN** 系统验证每行可解析、运行 Token（标识）一致、序列连续、记录数与摘要一致并同时存在 `run_start` 和 `run_end` 后标记为 `complete`
+
+#### Scenario: 存在写入器但归因日志不完整
+- **WHEN** 代码存在归因写入器，但同步结果缺页、断序、Token 不一致、记录数或摘要不符，或已结束运行缺少 `run_end`
+- **THEN** 系统将归因日志标记为 `failed` 并阻止对象通过完整性门禁，不得降级为普通日志例外
+
+#### Scenario: 活动模拟交易没有 run_end
+- **WHEN** 活动模拟交易的归因日志序列连续且存在 `run_start`，但运行尚未结束
+- **THEN** 系统接受当前增量并保持活动状态，不把缺少 `run_end` 误报为遗漏
+
+#### Scenario: 源代码没有归因写入器
+- **WHEN** 代码证据证明该运行未实现归因日志写入
+- **THEN** 系统记录 `missing_at_source`、代码摘要和判断证据
+
+#### Scenario: 普通日志不足 1000 条且明确结束
+- **WHEN** 免费控制台日志取得少于 1000 条并通过空页、总数或结束游标证明分页结束
+- **THEN** 系统保存全部日志并标记为 `complete`，不得标记免费上限例外
+
+#### Scenario: 普通日志达到 1000 条边界
+- **WHEN** 免费控制台日志已取得 1000 条
+- **THEN** 系统必须探测下一页；下一页免费可取时继续下载，下一页明确为空或总数等于 1000 时标记 `complete`，只有确认存在后续但免费接口不可取或无法证明结束时才标记 `capped_free`
+
+#### Scenario: 日志响应不是合法 JSON
+- **WHEN** 日志或性能响应因未转义代码文本而无法按标准 JSON 解析
+- **THEN** 系统先原样保存响应，再用容错解析恢复可识别记录，并在清单中记录解析错误和恢复数量
+
+### Requirement: 积分日志必须显式选择和确认
+系统 MUST 只在调用者明确指定运行和日志类型后请求积分日志，并 MUST 在下载前展示聚宽返回的范围和积分价格。未获得当次明确确认时，系统不得发起消耗积分的导出。
+
+#### Scenario: 未指定日志类型
+- **WHEN** 调用者只要求“补齐日志”但未指定运行和日志类型
+- **THEN** 系统不发起积分请求并返回需要补充的精确参数
+
+#### Scenario: 已确认指定积分导出
+- **WHEN** 调用者确认了指定运行、日志类型、范围和聚宽返回的积分价格
+- **THEN** 系统只下载该部分，并把费用确认和文件摘要写入清单
+
+### Requirement: 活动模拟交易必须按北京时间增量同步
+系统 SHALL 使用 Windows Task Scheduler（Windows 任务计划程序）每天北京时间 04:00 调用同一同步核心，扫描并增量同步全部活动模拟交易。失败后 MUST 每 30 分钟重试，最多 3 次；仍失败时 MUST 记录失败并在次日从已验证游标继续。模拟交易关闭后 MUST 执行一次最终同步并停止跟踪。
+
+#### Scenario: 正常的每日增量同步
+- **WHEN** 04:00 计划任务发现两个活动模拟交易
+- **THEN** 系统分别从各自已验证游标同步新增代码版本、快照、数据和日志，并独立提交清单
+
+#### Scenario: 连续三次重试失败
+- **WHEN** 首次同步及之后三次 30 分钟间隔重试均失败
+- **THEN** 系统保留最后完整版本、记录失败原因，并在次日从该版本继续而不覆盖已验证数据
+
+#### Scenario: 模拟交易关闭
+- **WHEN** 已跟踪模拟交易由活动变为关闭
+- **THEN** 系统完成一次包含结束状态的最终同步，验证归因 `run_end`（如源端实现），然后停止每日跟踪
+
+### Requirement: 浏览器认证和下载不得暴露凭证
+生产同步 MUST 使用仓库现有 Playwright（浏览器自动化）及仓库外专用持久浏览器目录复用登录状态。系统 MUST 不读取、打印或提交密码、Token（访问令牌）、Cookie（浏览器凭证）或浏览器配置；计划任务 MUST 不依赖 Codex 会话。大文件 MUST 通过浏览器下载事件进入临时目录而不能通过 Agent 对话传输。
+
+#### Scenario: 首次认证
+- **WHEN** 用户运行认证命令
+- **THEN** 系统打开可见浏览器供用户自行登录，并只在仓库外保存浏览器自身的持久状态
+
+#### Scenario: 登录状态过期
+- **WHEN** 交互式或计划任务访问聚宽时被重定向到登录页
+- **THEN** 系统返回 `auth_required`、不尝试自动填写凭证，并且不修改已有归档
+
+#### Scenario: 官方导出完成
+- **WHEN** 聚宽产生指定对象的官方导出文件
+- **THEN** Playwright 捕获该次下载到隔离临时目录，校验通过后才移动到对象目录
+
+#### Scenario: 首次实施验证真实下载能力
+- **WHEN** 开始实现生产浏览器和 Research API（研究接口）适配器
+- **THEN** 系统先用一个明确指定且存在归因写入器的真实回测验证登录、结构化导出、官方文件下载、完整归因日志和本地落盘；自动下载失败时必须验证人工导入同一暂存协议，两条路径均失败则停止后续实施并报告阻断
+
+### Requirement: 归档必须紧凑并可直接查询
+系统 MUST 将原始证据保存为 gzip（压缩）JSON/JSONL，将结构化事实保存为 Parquet + Zstd（列式压缩格式），并按需生成读取 Parquet 的 DuckDB（嵌入式分析数据库）视图。压缩原始数据、JSONL 日志和 Parquet MUST 使用 Git LFS（大文件存储），代码、清单和小型文本继续使用普通 Git。系统 MUST 只在调用者指定数据范围时物化 Vibe-Trading 可读取的 CSV，不保存重复 DuckDB 数据库副本。
+
+#### Scenario: 查询一个回测的订单和归因日志
+- **WHEN** 调用者通过查询入口选择一个已归档回测
+- **THEN** 系统使用对象清单定位 Parquet 文件并返回订单与归因记录，无需解压或重写全部归档
+
+#### Scenario: 为 Vibe-Trading 导出数据
+- **WHEN** 调用者指定策略、运行、数据集、字段和时间范围
+- **THEN** 系统只生成该范围的 CSV，并记录来源文件摘要和过滤条件
+
+### Requirement: 仓库 Skill 必须提供统一同步入口
+仓库 MUST 只在 `.agents/skills/joinquant-archive-sync/` 保存一份真实 Skill（技能）目录，并在其中自包含 `SKILL.md`、Python CLI（命令行接口）、运行依赖和参考资料。`.claude/skills/joinquant-archive-sync` MUST 使用同仓库相对 SymbolicLink（符号链接）指向该目录；不得创建 Plugin（插件）、marketplace（市场）、第二份同步脚本或缓存更新层。认证、抓取、解析、落盘、完整性校验和查询逻辑 MUST 只实现一次，Codex、Claude、人工命令和 Windows Task Scheduler MUST 调用该同一入口。
+
+#### Scenario: Agent 调用 Skill 同步回测
+- **WHEN** Agent 通过 Skill 传入策略和一个回测详情链接
+- **THEN** Skill 调用同一 CLI 完成同步并返回对象目录、各数据集状态和例外，不包含第二套抓取逻辑
+
+#### Scenario: Codex 和 Claude 发现同一 Skill
+- **WHEN** 分别从 Codex 和 Claude 项目入口加载 `joinquant-archive-sync`
+- **THEN** 两端解析到同一仓库目录，且 `SKILL.md` 与执行脚本的 SHA256 完全一致
+
+#### Scenario: 计划任务调用模拟交易同步
+- **WHEN** Windows Task Scheduler 触发活动模拟交易命令
+- **THEN** 它调用 Skill 内同一同步核心和完整性门禁
+
+### Requirement: 正式运行必须保持在聚宽云端
+系统 MUST 只进行策略编写辅助、资料同步、本地归档、查询和复盘，不得在本地把任何结果声明为正式回测或模拟交易结果。
+
+#### Scenario: 本地查询归档数据
+- **WHEN** Vibe-Trading 或 Agent 查询本地 Parquet 或 CSV
+- **THEN** 输出明确保留聚宽运行身份和来源链接，不把本地计算替代为正式云端裁决
+
+### Requirement: 端到端回归必须覆盖发布入口
+实现完成前 MUST 从 Codex、Claude 的仓库 Skill 或计划任务发布入口执行 `self-test` 端到端回归。`self-test` MUST 在进程内生成小型证据并复用生产同步核心，覆盖明确目标选择、完整性门禁、临时归档、重复同步、查询和 CSV 输出；DuckDB 使用内存数据库，归档只写系统临时目录，不得访问网络或加载历史归档。单元测试组合不得替代该主流程回归。真实聚宽能力只由首次实施 PoC 验证，不进入常规端到端回归。
+
+#### Scenario: 仓库 Skill 内存端到端回归
+- **WHEN** Codex 和 Claude 分别通过仓库 Skill 调用同一 `self-test`
+- **THEN** 两端使用进程内小型证据完成临时页面目录和清单、第二次幂等同步、DuckDB 查询及指定 CSV 导出，且不访问聚宽或历史数据
+
+#### Scenario: 关键边界端到端回归
+- **WHEN** 内存证据包含失败或取消运行、不合法日志响应、普通日志 1000 条边界、归因日志完整或缺页或断序或无终止事件或无写入器，以及不支持接口版本
+- **THEN** 每种情况分别产生正确状态且没有任何对象被误报为全量完整
+
+#### Scenario: 计划任务发布入口回归
+- **WHEN** 验收创建临时 Windows 计划任务并通过 `schtasks /Run` 调用同一 `self-test`
+- **THEN** 任务返回成功状态且不访问聚宽，验收结束后删除该临时任务
+
+```
+
+Full source files remain canonical. If a required heading or scenario is missing here, regenerate the handoff or read the source spec directly. Supporting files (proposal, design, tasks) are referenced by hash only.

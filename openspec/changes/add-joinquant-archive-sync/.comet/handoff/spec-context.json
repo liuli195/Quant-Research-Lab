@@ -1,0 +1,30 @@
+{
+  "change": "add-joinquant-archive-sync",
+  "phase": "design",
+  "mode": "beta",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "0c2fce08a96c77fd61d91344e532bc7b82446e56ee8c58c35ae76874b12e6751",
+  "files": [
+    {
+      "path": "openspec/changes/add-joinquant-archive-sync/proposal.md",
+      "sha256": "dc9393cacbf247818fd9641c738ebce437eecc48c6f92b6b498db8a3ab81f149",
+      "role": "supporting"
+    },
+    {
+      "path": "openspec/changes/add-joinquant-archive-sync/design.md",
+      "sha256": "75d4dfbc6b964d02fce85b1648877a25235852c1eeae5f46c61650f3bf6bc9cc",
+      "role": "supporting"
+    },
+    {
+      "path": "openspec/changes/add-joinquant-archive-sync/tasks.md",
+      "sha256": "18a415e8e93f9d45d928cbf73a27ae419c2d3a61c7f906187873418764e1396d",
+      "role": "supporting"
+    },
+    {
+      "path": "openspec/changes/add-joinquant-archive-sync/specs/joinquant-archive-sync/spec.md",
+      "sha256": "5f3cab94f19de330c5a747bc610893212e253ab6b79463ffd6cf907b83c87eac",
+      "role": "spec"
+    }
+  ]
+}
