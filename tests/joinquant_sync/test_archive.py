@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import zipfile
 import json
 from pathlib import Path
 
@@ -42,7 +43,9 @@ def test_history_target_accepts_only_ordinal_or_detail_url() -> None:
         validate_history_target("strategy-001", "121b439805c89d76b93c5ce520310c2d")
 
 
-def test_remote_alias_change_does_not_create_duplicate_directory(tmp_path: Path) -> None:
+def test_remote_alias_change_does_not_create_duplicate_directory(
+    tmp_path: Path,
+) -> None:
     from joinquant_sync.archive import resolve_local_id
 
     index = tmp_path / "index.json"
@@ -188,8 +191,7 @@ def test_uncollected_or_empty_dataset_map_cannot_pass_gate() -> None:
 
     assert evaluate_gate({})["status"] == "fail"
     assert (
-        evaluate_gate(expected_datasets("backtest", "done", False))["status"]
-        == "fail"
+        evaluate_gate(expected_datasets("backtest", "done", False))["status"] == "fail"
     )
 
 
@@ -197,9 +199,7 @@ def test_complete_status_requires_file_or_verified_empty_evidence() -> None:
     from joinquant_sync.archive import evaluate_gate
 
     assert (
-        evaluate_gate({"results": {"required": True, "status": "complete"}})[
-            "status"
-        ]
+        evaluate_gate({"results": {"required": True, "status": "complete"}})["status"]
         == "fail"
     )
 
@@ -275,9 +275,10 @@ def test_raw_response_round_trips_and_hashes(tmp_path: Path) -> None:
 
     assert gzip.decompress(destination.read_bytes()) == raw
     assert result["sha256"] == hashlib.sha256(raw).hexdigest()
-    assert result["compressed_sha256"] == hashlib.sha256(
-        destination.read_bytes()
-    ).hexdigest()
+    assert (
+        result["compressed_sha256"]
+        == hashlib.sha256(destination.read_bytes()).hexdigest()
+    )
 
 
 def test_atomic_commit_moves_only_manifest_referenced_files(tmp_path: Path) -> None:
@@ -290,8 +291,16 @@ def test_atomic_commit_moves_only_manifest_referenced_files(tmp_path: Path) -> N
     digest = hashlib.sha256(staged.read_bytes()).hexdigest()
     manifest = {
         "schema_version": 1,
+        "object": {"kind": "strategy", "local_id": "1", "status": "current"},
+        "source": {
+            "url": "memory://strategy",
+            "aliases": [],
+            "observed_at": "2026-01-01T00:00:00Z",
+        },
+        "fence": {"before_sha256": "0" * 64, "after_sha256": "0" * 64},
+        "code": {"path": "raw/chunk.json", "sha256": digest},
         "datasets": {
-            "results": {
+            "page_metadata": {
                 "required": True,
                 "status": "complete",
                 "files": [{"path": "raw/chunk.json", "sha256": digest}],
@@ -304,6 +313,7 @@ def test_atomic_commit_moves_only_manifest_referenced_files(tmp_path: Path) -> N
 
     assert not staged.exists()
     assert (object_dir / "raw" / "chunk.json").read_bytes() == b'{"page":1}'
+    (object_dir / "default_code.py").write_bytes(b'{"page":1}')
     assert verify_existing_manifest(object_dir) == manifest
 
 
@@ -315,8 +325,16 @@ def test_repeated_commit_with_same_content_is_idempotent(tmp_path: Path) -> None
     digest = hashlib.sha256(payload).hexdigest()
     manifest = {
         "schema_version": 1,
+        "object": {"kind": "strategy", "local_id": "1", "status": "current"},
+        "source": {
+            "url": "memory://strategy",
+            "aliases": [],
+            "observed_at": "2026-01-01T00:00:00Z",
+        },
+        "fence": {"before_sha256": "0" * 64, "after_sha256": "0" * 64},
+        "code": {"path": "raw/chunk.json", "sha256": digest},
         "datasets": {
-            "results": {
+            "page_metadata": {
                 "required": True,
                 "status": "complete",
                 "files": [{"path": "raw/chunk.json", "sha256": digest}],
@@ -329,8 +347,54 @@ def test_repeated_commit_with_same_content_is_idempotent(tmp_path: Path) -> None
         staged.parent.mkdir()
         staged.write_bytes(payload)
         commit_manifest(object_dir, manifest, [staged])
-
     assert (object_dir / "raw" / "chunk.json").read_bytes() == payload
+
+
+def test_incremental_commit_distinguishes_same_named_partitions(tmp_path: Path) -> None:
+    from joinquant_sync.archive import commit_manifest
+
+    object_dir = tmp_path / "simulation"
+    old = object_dir / "snapshots" / "old" / "data" / "results.parquet"
+    old.parent.mkdir(parents=True)
+    old.write_bytes(b"old")
+    stage_root = tmp_path / "stage"
+    new = stage_root / "snapshots" / "new" / "data" / "results.parquet"
+    new.parent.mkdir(parents=True)
+    new.write_bytes(b"new")
+    files = [
+        {
+            "path": "snapshots/old/data/results.parquet",
+            "sha256": hashlib.sha256(b"old").hexdigest(),
+        },
+        {
+            "path": "snapshots/new/data/results.parquet",
+            "sha256": hashlib.sha256(b"new").hexdigest(),
+        },
+    ]
+    manifest = {
+        "schema_version": 1,
+        "object": {"kind": "strategy", "local_id": "1", "status": "current"},
+        "source": {
+            "url": "memory://strategy",
+            "aliases": [],
+            "observed_at": "2026-01-01T00:00:00Z",
+        },
+        "fence": {"before_sha256": "0" * 64, "after_sha256": "0" * 64},
+        "code": {
+            "path": "snapshots/old/data/results.parquet",
+            "sha256": hashlib.sha256(b"old").hexdigest(),
+        },
+        "datasets": {
+            "page_metadata": {
+                "required": True,
+                "status": "complete",
+                "files": files,
+            }
+        },
+        "gate": {"status": "pass", "exceptions": []},
+    }
+    commit_manifest(object_dir, manifest, [new])
+    assert (object_dir / files[1]["path"]).read_bytes() == b"new"
 
 
 def test_existing_manifest_rejects_missing_referenced_file(tmp_path: Path) -> None:
@@ -353,6 +417,30 @@ def test_existing_manifest_rejects_missing_referenced_file(tmp_path: Path) -> No
 
     with pytest.raises(IntegrityError):
         verify_existing_manifest(object_dir)
+
+
+def test_verify_rejects_manifest_missing_schema_contract(tmp_path: Path) -> None:
+    from joinquant_sync.archive import IntegrityError, verify_existing_manifest
+
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "datasets": {
+                    "fake": {
+                        "required": False,
+                        "status": "complete",
+                        "rows": 0,
+                        "verified_empty": True,
+                    }
+                },
+                "gate": {"status": "pass", "exceptions": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(IntegrityError, match="manifest required field"):
+        verify_existing_manifest(tmp_path)
 
 
 def test_object_lock_conflict_is_retryable(tmp_path: Path) -> None:
@@ -390,10 +478,13 @@ def test_code_context_keeps_backtest_code_and_simulation_versions(
     )
     assert backtest["path"] == "code.py"
     assert (tmp_path / "backtest" / "params.json").is_file()
+    assert backtest["params"]["path"] == "params.json"
+    assert len(backtest["params"]["sha256"]) == 64
     assert simulation["path"] == "current_code.py"
     assert json.loads(
         (tmp_path / "simulation" / "source.json").read_text(encoding="utf-8")
     ) == {"backtest_id": "4"}
+    assert simulation["source"]["path"] == "source.json"
     assert len(list((tmp_path / "simulation" / "code_versions").glob("*.py"))) == 2
 
 
@@ -415,6 +506,66 @@ def test_active_simulation_may_lack_run_end() -> None:
     result = validate_attribution(lines, "active", True)
     assert result["status"] == "complete"
     assert result["last_seq"] == 1
+
+
+def test_attribution_must_match_expected_run_identity() -> None:
+    from joinquant_sync.archive import AttributionIncomplete, validate_attribution
+
+    lines = [
+        b'{"token":"run-a","seq":1,"event":"run_start","current_dt":"2026-01-02T00:00:00"}'
+    ]
+    with pytest.raises(AttributionIncomplete, match="expected token"):
+        validate_attribution(
+            lines,
+            "active",
+            True,
+            expected_token="run-b",
+            expected_path="audit/run-b.jsonl",
+            expected_start="2026-01-02",
+        )
+    with pytest.raises(AttributionIncomplete, match="start time"):
+        validate_attribution(
+            lines,
+            "active",
+            True,
+            expected_token="run-a",
+            expected_path="audit/run-a.jsonl",
+            expected_start="2026-01-03",
+        )
+
+
+def test_attribution_path_must_name_the_expected_token() -> None:
+    from joinquant_sync.archive import AttributionIncomplete, validate_attribution
+
+    lines = [b'{"token":"run-a","seq":1,"event":"run_start"}']
+    with pytest.raises(AttributionIncomplete, match="path token"):
+        validate_attribution(
+            lines,
+            "active",
+            True,
+            expected_token="run-a",
+            expected_path="audit/other.jsonl",
+        )
+
+
+def test_attribution_rejects_nonmonotonic_or_out_of_range_middle_time() -> None:
+    from joinquant_sync.archive import AttributionIncomplete, validate_attribution
+
+    lines = [
+        b'{"token":"run-a","seq":1,"event":"run_start","current_dt":"2026-01-01"}',
+        b'{"token":"run-a","seq":2,"event":"step","current_dt":"2099-01-01"}',
+        b'{"token":"run-a","seq":3,"event":"run_end","current_dt":"2026-01-31"}',
+    ]
+    with pytest.raises(AttributionIncomplete, match="time"):
+        validate_attribution(
+            lines,
+            "done",
+            True,
+            expected_token="run-a",
+            expected_path="audit/run-a.jsonl",
+            expected_start="2026-01-01",
+            expected_end="2026-01-31",
+        )
 
 
 @pytest.mark.parametrize(
@@ -565,3 +716,77 @@ def test_closed_simulation_with_writer_rejects_missing_run_end() -> None:
     }
     with pytest.raises(AttributionIncomplete):
         finalize_closed_simulation(manifest, remote)
+
+
+def test_attribution_writer_path_is_derived_from_literal_token_and_directory() -> None:
+    from joinquant_sync.archive import detect_attribution_writer
+
+    code = """
+JQ_AUTO_AUDIT_TOKEN = "run-123"
+JQ_AUTO_AUDIT_DIR = "jq_auto_audit"
+def audit_event(event):
+    write_file(g.audit_path, event, append=True)
+"""
+    assert detect_attribution_writer(code) == {
+        "writer_present": True,
+        "path": "jq_auto_audit/run-123.jsonl",
+        "evidence": {"token": "run-123", "directory": "jq_auto_audit"},
+    }
+
+
+def test_code_without_attribution_writer_is_missing_at_source() -> None:
+    from joinquant_sync.archive import detect_attribution_writer
+
+    assert detect_attribution_writer("def initialize(context):\n    pass\n") == {
+        "writer_present": False,
+        "path": "",
+        "evidence": {"code_writer": False},
+    }
+
+
+def test_verify_cli_checks_manifest_gate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import jq_sync
+
+    (tmp_path / "manifest.json").write_text(
+        '{"schema_version":1,"gate":{"status":"fail"},"datasets":{}}',
+        encoding="utf-8",
+    )
+    assert jq_sync.main(["verify", "--object", str(tmp_path)]) == 3
+    assert "integrity_failed" in capsys.readouterr().out
+
+
+def test_paid_log_range_keeps_only_requested_lines(tmp_path: Path) -> None:
+    from joinquant_sync.archive import extract_paid_log_range
+
+    archive = tmp_path / "log.zip"
+    with zipfile.ZipFile(archive, "w") as output:
+        output.writestr("log.txt", b"zero\none\ntwo\nthree\n")
+    result = extract_paid_log_range(archive, "1:3", tmp_path / "selected.jsonl.gz")
+    import gzip
+
+    with gzip.open(result["path"], "rb") as stream:
+        assert stream.read() == b"one\ntwo\n"
+    assert result["actual_range"] == "1:3"
+
+
+def test_paid_log_download_requires_explicit_confirmation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import jq_sync
+
+    assert (
+        jq_sync.main(
+            [
+                "paid-log",
+                "download",
+                "--preview-id",
+                "0" * 32,
+                "--destination",
+                str(tmp_path / "selected.gz"),
+            ]
+        )
+        == 4
+    )
+    assert "confirmation_required" in capsys.readouterr().out

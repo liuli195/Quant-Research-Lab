@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import gzip
 import json
 from contextlib import contextmanager
 from pathlib import Path
@@ -17,6 +18,54 @@ def test_login_redirect_is_auth_required() -> None:
 
     with pytest.raises(AuthRequired):
         ensure_authenticated(FakePage())
+
+
+def test_research_export_filters_time_series_after_saved_cursors() -> None:
+    from joinquant_sync.research_cloud import build_research_export_script
+
+    script = build_research_export_script(
+        "backtest", "export.json", after_times={"results": "2026-07-10"}
+    )
+    assert '"results": "2026-07-10"' in script
+    assert "_incremental" in script
+    assert 'str(row.get("time")) >= cursor' in script
+    assert '"params": _safe("get_params", gt.get_params)' in script
+    assert '"status": _safe("get_status", gt.get_status)' in script
+
+
+def test_research_transport_leaves_xsrf_to_jupyter_ajax() -> None:
+    import joinquant_sync.research_cloud as research_cloud
+
+    scripts = research_cloud._EXECUTE_JS + research_cloud._FILE_JS
+    assert "document.cookie" not in scripts
+    assert 'require(["base/js/utils"]' in scripts
+    assert "utils.ajax" in scripts
+
+
+def test_log_transport_captures_original_response_text() -> None:
+    import joinquant_sync.browser as browser
+
+    assert "responseText" in browser._CY_AJAX_JS
+    assert "document.cookie" not in browser._CY_AJAX_JS
+
+
+def test_malformed_production_log_response_is_persisted_before_failure(
+    tmp_path: Path,
+) -> None:
+    from joinquant_sync.browser import FreeLogIncomplete
+    from joinquant_sync.sync_pipeline import persist_failure_evidence
+
+    error = FreeLogIncomplete(
+        "malformed",
+        raw_pages=[{"offset": 1000, "raw_text": '{"ok":1}\nBROKEN'}],
+    )
+    evidence = persist_failure_evidence(tmp_path, error, identity="run-1")
+    assert evidence is not None
+    with gzip.open(Path(evidence["path"]), "rt", encoding="utf-8") as stream:
+        payload = json.load(stream)
+    assert payload["raw_pages"][0]["raw_text"] == '{"ok":1}\nBROKEN'
+    assert payload["recovery"][0]["rows"] == [{"ok": 1}]
+    assert payload["recovery"][0]["errors"]
 
 
 def test_stage_external_file_preserves_bytes_and_sha256(tmp_path: Path) -> None:
@@ -69,7 +118,7 @@ def test_persistent_context_and_download_capture(tmp_path: Path) -> None:
     assert destination.read_bytes() == b'{"ok":true}'
 
 
-def test_persistent_context_loads_external_storage_state(tmp_path: Path) -> None:
+def test_persistent_context_ignores_exported_storage_state(tmp_path: Path) -> None:
     from joinquant_sync.browser import open_authenticated_context
 
     profile = tmp_path / "profile"
@@ -98,9 +147,7 @@ def test_persistent_context_loads_external_storage_state(tmp_path: Path) -> None
     with open_authenticated_context(profile, headless=True) as context:
         cookies = context.cookies("https://example.com")
 
-    assert [(cookie["name"], cookie["value"]) for cookie in cookies] == [
-        ("session", "temporary-test-value")
-    ]
+    assert cookies == []
 
 
 def test_verify_import_stages_file(
@@ -162,9 +209,6 @@ def test_auth_uses_external_persistent_profile(
     class FakeContext:
         pages = [FakePage()]
 
-        def storage_state(self, *, path: Path) -> None:
-            opened["state_path"] = path
-
     opened: dict[str, object] = {}
 
     @contextmanager
@@ -179,12 +223,29 @@ def test_auth_uses_external_persistent_profile(
     assert opened == {
         "profile_dir": tmp_path / "QuantResearchLab" / "joinquant-playwright",
         "headless": True,
-        "state_path": tmp_path
-        / "QuantResearchLab"
-        / "joinquant-playwright"
-        / "storage-state.json",
     }
     assert json.loads(capsys.readouterr().out)["status"] == "authenticated"
+
+
+def test_auth_rejects_profile_inside_repository(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import jq_sync
+
+    @contextmanager
+    def unexpected_context(*_args: object, **_kwargs: object):
+        raise AssertionError("browser must not open for an unsafe profile")
+        yield
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(jq_sync, "open_authenticated_context", unexpected_context)
+    assert jq_sync.main(["auth", "--profile", str(tmp_path / ".browser")]) == 2
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "invalid_profile",
+        "message": "--profile must be outside the repository",
+    }
 
 
 def test_full_page_without_end_evidence_is_not_complete() -> None:
@@ -223,7 +284,11 @@ def test_empty_page_cannot_override_unmet_declared_total() -> None:
     from joinquant_sync.research import PaginationIncomplete, collect_pages
 
     pages = {
-        None: {"rows": [{"id": index} for index in range(1000)], "next": "1000", "total": 1289},
+        None: {
+            "rows": [{"id": index} for index in range(1000)],
+            "next": "1000",
+            "total": 1289,
+        },
         "1000": {"rows": [], "next": None, "total": 1289},
     }
     with pytest.raises(PaginationIncomplete):
@@ -276,7 +341,9 @@ def test_inventory_drift_retries_once_and_returns_stable_result() -> None:
 
     inventories = iter([{"rev": 1}, {"rev": 2}, {"rev": 2}, {"rev": 2}])
     collected = iter(["first", "second"])
-    assert sync_with_fence(lambda: next(inventories), lambda: next(collected)) == "second"
+    assert (
+        sync_with_fence(lambda: next(inventories), lambda: next(collected)) == "second"
+    )
 
 
 def _make_log_fetcher(count: int, probe: str):
@@ -294,7 +361,11 @@ def _make_log_fetcher(count: int, probe: str):
 
 @pytest.mark.parametrize(
     ("count", "probe", "expected"),
-    [(999, "empty", "complete"), (1000, "empty", "complete"), (1000, "blocked", "capped_free")],
+    [
+        (999, "empty", "complete"),
+        (1000, "empty", "complete"),
+        (1000, "blocked", "capped_free"),
+    ],
 )
 def test_free_log_boundary(count: int, probe: str, expected: str) -> None:
     from joinquant_sync.browser import collect_free_logs
@@ -311,21 +382,70 @@ def test_free_page_after_1000_continues() -> None:
     assert status == "complete"
 
 
+def test_simulation_log_probes_and_keeps_free_rows_after_1000() -> None:
+    from joinquant_sync.browser import collect_simulation_logs
+
+    calls: list[tuple[int, int]] = []
+
+    def fetch_older(offset: int, limit: int) -> dict[str, object]:
+        calls.append((offset, limit))
+        return {"rows": [f"older-{index}" for index in range(limit)]}
+
+    records, status = collect_simulation_logs(
+        100,
+        [f"latest-{index}" for index in range(1000)],
+        fetch_older,
+    )
+
+    assert calls == [(0, 100)]
+    assert len(records) == 1100
+    assert status == "complete"
+
+
+def test_simulation_log_marks_cap_only_after_blocked_probe() -> None:
+    from joinquant_sync.browser import collect_simulation_logs
+
+    calls: list[tuple[int, int]] = []
+
+    def blocked(offset: int, limit: int) -> dict[str, object]:
+        calls.append((offset, limit))
+        return {"rows": [], "blocked_free": True}
+
+    records, status = collect_simulation_logs(
+        100,
+        [f"latest-{index}" for index in range(1000)],
+        blocked,
+    )
+
+    assert calls == [(0, 100)]
+    assert len(records) == 1000
+    assert status == "capped_free"
+
+
 def test_paid_preview_is_bound_and_one_time(tmp_path: Path) -> None:
     from joinquant_sync.browser import (
         PaidConfirmationRequired,
         consume_paid_preview,
         create_paid_preview,
+        load_paid_preview,
     )
 
     quote = {"credits": 3, "rows": 1200}
     preview = create_paid_preview(
         "run-1", "normal_log", "1000:1200", quote, store_dir=tmp_path
     )
+    assert load_paid_preview(preview["preview_id"], store_dir=tmp_path) == preview
     used: set[str] = set()
     with pytest.raises(PaidConfirmationRequired):
         consume_paid_preview(
-            preview, "run-1", "normal_log", "1000:1200", quote, False, used, store_dir=tmp_path
+            preview,
+            "run-1",
+            "normal_log",
+            "1000:1200",
+            quote,
+            False,
+            used,
+            store_dir=tmp_path,
         )
     with pytest.raises(PaidConfirmationRequired):
         consume_paid_preview(
@@ -338,16 +458,19 @@ def test_paid_preview_is_bound_and_one_time(tmp_path: Path) -> None:
             used,
             store_dir=tmp_path,
         )
-    assert consume_paid_preview(
-        preview,
-        "run-1",
-        "normal_log",
-        "1000:1200",
-        quote,
-        True,
-        used,
-        store_dir=tmp_path,
-    )["preview_id"] == preview["preview_id"]
+    assert (
+        consume_paid_preview(
+            preview,
+            "run-1",
+            "normal_log",
+            "1000:1200",
+            quote,
+            True,
+            used,
+            store_dir=tmp_path,
+        )["preview_id"]
+        == preview["preview_id"]
+    )
     with pytest.raises(PaidConfirmationRequired):
         consume_paid_preview(
             preview,
@@ -374,7 +497,10 @@ def test_paid_preview_is_bound_and_one_time(tmp_path: Path) -> None:
 
 
 def test_active_simulation_rows_separate_stable_identity_from_aliases() -> None:
-    from joinquant_sync.browser import parse_active_simulation_rows
+    from joinquant_sync.browser import (
+        parse_active_simulation_rows,
+        parse_simulation_rows,
+    )
 
     rows = [
         {
@@ -403,3 +529,86 @@ def test_active_simulation_rows_separate_stable_identity_from_aliases() -> None:
             "aliases": ["rotating-detail", "rotating-result"],
         }
     ]
+    assert parse_simulation_rows(rows)[1]["status"] == "closed"
+
+
+@pytest.mark.parametrize("status", ["0", "1", "3", "5"])
+def test_simulation_list_accepts_only_verified_active_statuses(status: str) -> None:
+    from joinquant_sync.browser import parse_simulation_rows
+
+    candidate = parse_simulation_rows(
+        [
+            {
+                "status": status,
+                "name": "active",
+                "page_space_id": "10",
+                "detail_url": "/algorithm/live/index?backtestId=active",
+            }
+        ]
+    )
+    assert candidate[0]["status"] == "active"
+
+
+def test_simulation_list_blocks_unknown_status_instead_of_assuming_closed() -> None:
+    from joinquant_sync.browser import SimulationDiscoveryError, parse_simulation_rows
+
+    with pytest.raises(SimulationDiscoveryError, match="unknown simulation status: 6"):
+        parse_simulation_rows(
+            [
+                {
+                    "status": "6",
+                    "name": "unknown",
+                    "page_space_id": "10",
+                    "detail_url": "/algorithm/live/index?backtestId=unknown",
+                }
+            ]
+        )
+
+
+def test_history_rows_deduplicate_mobile_copy_by_page_ordinal() -> None:
+    from joinquant_sync.browser import parse_history_rows
+
+    row = {
+        "page_ordinal": "115",
+        "name": "etf_factor_rotation",
+        "status_text": "完成",
+        "created_at": "2026-07-09 17:35:51",
+        "date_range": "2021-01-01 - 2026-04-30",
+        "detail_id": "rotating-detail",
+        "result_id": "rotating-result",
+        "source_id": "rotating-source",
+    }
+    assert parse_history_rows([row, dict(row)]) == [
+        {
+            "page_ordinal": "115",
+            "name": "etf_factor_rotation",
+            "status": "done",
+            "created_at": "2026-07-09 17:35:51",
+            "date_range": "2021-01-01 - 2026-04-30",
+            "detail_url": "https://www.joinquant.com/algorithm/backtest/detail?backtestId=rotating-detail",
+            "aliases": ["rotating-detail", "rotating-result", "rotating-source"],
+        }
+    ]
+
+
+def test_backtest_log_network_error_is_not_reported_as_free_cap() -> None:
+    """Transport failure must fail closed instead of becoming a paid-log exception."""
+    from joinquant_sync.browser import FreeLogIncomplete
+
+    # Exercise the production collector through its injectable fetch contract.
+    from joinquant_sync.browser import collect_free_logs
+
+    def failed_page(_offset: int) -> dict[str, object]:
+        raise FreeLogIncomplete("offline")
+
+    with pytest.raises(FreeLogIncomplete):
+        collect_free_logs(failed_page)
+
+
+def test_simulation_terminal_status_requires_explicit_page_evidence() -> None:
+    from joinquant_sync.browser import parse_simulation_page_status
+
+    assert parse_simulation_page_status("3", "运行中") == "active"
+    assert parse_simulation_page_status("2", "模拟交易已关闭") == "closed"
+    assert parse_simulation_page_status("6", "模拟交易已关闭") == "unknown"
+    assert parse_simulation_page_status("", "页面不可用") == "unknown"

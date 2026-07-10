@@ -8,7 +8,7 @@ base-ref: 1318db74acbe665286a9f137ed9efd95205a5018
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在仓库内实现一套由 Codex（代码代理）、Claude（代码代理）和 Windows Task Scheduler（Windows 任务计划程序）共同调用的 JoinQuant（聚宽）归档 Skill（技能），能按目标增量同步策略、构建、回测和模拟交易，并逐数据集证明代码、结构化数据和日志完整性。
+**Goal:** 在仓库内实现一套由 Codex（代码代理）、Claude（代码代理）和 Windows Task Scheduler（Windows 任务计划程序）共同调用的 JoinQuant（聚宽）归档 Skill（技能），能按目标增量同步策略、回测和模拟交易，并逐数据集证明代码、结构化数据和日志完整性。
 
 **Architecture:** `.agents/skills/joinquant-archive-sync/` 保存唯一 Skill、Python CLI（命令行入口）和四个职责模块；Browser（浏览器）与 Research（研究接口）证据先进入同一暂存包，再由 archive（归档）模块校验并原子替换 manifest（清单）。原始证据用 gzip，事实表用 Parquet + Zstd，查询使用内存 DuckDB（分析型数据库），常规 E2E（端到端）由 `self-test` 在内存生成小证据完成。
 
@@ -42,6 +42,7 @@ base-ref: 1318db74acbe665286a9f137ed9efd95205a5018
 │       ├── __init__.py
 │       ├── browser.py               # 登录、页面、代码、日志、下载
 │       ├── research.py              # 结构化数据分页与校验
+│       ├── research_cloud.py        # Research 云端执行与单次原始返回
 │       ├── archive.py               # 身份、证据、门禁、增量、原子清单
 │       └── query.py                 # Parquet、DuckDB、CSV
 └── references/
@@ -228,7 +229,7 @@ Expected: FAIL，因为身份、预期数据集和门禁函数尚不存在。
 
 - [ ] **Step 4: 实现稳定 ID 和目标拒绝规则**
 
-`strategy_id`、`simulation_id` 由索引首次分配后复用；构建和回测目录使用页面序号；远端 ID 和 URL 只追加到 `aliases`。CLI 在任何下载前调用 `validate_history_target`。
+`strategy_id`、`simulation_id` 由索引首次分配后复用；回测目录使用页面序号；远端 ID 和 URL 只追加到 `aliases`。CLI 在任何下载前调用 `validate_history_target`。
 
 - [ ] **Step 5: 运行测试并确认通过**
 
@@ -349,9 +350,9 @@ Expected: FAIL，新分页和围栏接口不存在。
 
 第一次前后清单不一致时只重取变化数据集；第二次仍不一致时保留暂存证据但不提交 manifest。
 
-- [ ] **Step 5: 保存策略、构建、回测和模拟交易的完整代码上下文**
+- [ ] **Step 5: 保存策略、回测和模拟交易的完整代码上下文**
 
-策略写 `default_code.py`；`sync-build` 与 `sync-backtest` 分别保存完整 `code.py`、参数、数据和报告；模拟交易保存来源回测、当前代码、全部代码版本、参数和快照。每份代码写入 SHA256，失败或取消运行也不得省略代码目录。
+策略写 `default_code.py`；`sync-backtest` 保存完整 `code.py`、参数、数据和报告；模拟交易保存来源回测、当前代码、全部代码版本、参数和快照。每份代码写入 SHA256，失败或取消运行也不得省略代码目录。可行性复核确认聚宽没有独立构建页面对象，因此不实现虚构的 `sync-build`。
 
 - [ ] **Step 6: 运行测试并确认通过**
 
@@ -686,7 +687,7 @@ Expected: FAIL，SKILL.md 和 Claude 符号链接尚未创建。
 
 - [ ] **Step 3: 编写最小 SKILL.md**
 
-SKILL 只描述：明确目标校验、认证、指定构建/回测同步、模拟交易同步、按需积分日志、查询、CSV、计划任务、`self-test` 和状态解释；所有动作调用 `scripts/jq_sync.py`，不得内嵌抓取逻辑。操作说明覆盖 `auth_required`、`capped_free`、`missing_at_source`、重试耗尽和禁止提交凭证。
+SKILL 只描述：明确目标校验、认证、指定回测同步、模拟交易同步、按需积分日志、查询、CSV、计划任务、`self-test` 和状态解释；所有动作调用 `scripts/jq_sync.py`，不得内嵌抓取逻辑。操作说明覆盖 `auth_required`、`capped_free`、`missing_at_source`、重试耗尽和禁止提交凭证。
 
 - [ ] **Step 4: 创建相对目录符号链接**
 
@@ -743,7 +744,7 @@ Expected: FAIL，`run_self_test` 尚不存在。
 
 - [ ] **Step 3: 实现固定小数据量的生产路径自检**
 
-在进程内生成最小策略、构建、回测和模拟交易对象，并覆盖完成/失败/取消运行、畸形 JSON、999/1000/1001 条普通日志、完整/缺页/断序/缺终止/无写入器归因日志和不支持接口版本。使用 `io.BytesIO`、DuckDB `:memory:` 和 `TemporaryDirectory`，调用同一门禁、原子 manifest、查询和 CSV 函数；不得启动 Playwright、访问网络或读取 `joinquant/` 历史目录。用 `time.perf_counter` 和 `tracemalloc` 报告耗时及峰值，不设置硬件相关阈值。
+在进程内生成最小策略、回测和模拟交易对象，并覆盖完成/失败/取消运行、畸形 JSON、999/1000/1001 条普通日志、完整/缺页/断序/缺终止/无写入器归因日志和不支持接口版本。使用 `io.BytesIO`、DuckDB `:memory:` 和 `TemporaryDirectory`，调用同一门禁、原子 manifest、查询和 CSV 函数；不得启动 Playwright、访问网络或读取 `joinquant/` 历史目录。用 `time.perf_counter` 和 `tracemalloc` 报告耗时及峰值，不设置硬件相关阈值。
 
 - [ ] **Step 4: 把 Skill 路径加入仓库验证触发范围**
 
@@ -850,7 +851,7 @@ git commit -m "test: 验证聚宽归档完整流程"
 
 ## 计划自检
 
-- Spec coverage（规格覆盖）：11 个任务覆盖真实 PoC、页面身份、明确构建/回测目标、策略与全部运行代码、数据/日志、归因门禁、普通日志 1000 条边界、积分确认、增量模拟交易、04:00 计划任务、紧凑查询、Git LFS、双代理 Skill 和内存 E2E。
+- Spec coverage（规格覆盖）：11 个任务覆盖真实 PoC、页面身份、明确回测目标、策略与全部运行代码、数据/日志、归因门禁、普通日志 1000 条边界、积分确认、增量模拟交易、04:00 计划任务、紧凑查询、Git LFS、双代理 Skill 和内存 E2E。
 - Placeholder scan（占位扫描）：没有占位语句或未定义的“以后实现”；真实目标通过必填环境变量输入，避免猜测或隐式默认。
 - Type consistency（类型一致性）：Browser/Research 只产证据，Archive 统一生成 manifest 和门禁，Query 只消费 manifest；`self-test` 与计划任务均调用相同生产接口。
 - Scope check（范围检查）：没有 Plugin、外部市场、服务进程、持久 DuckDB、全历史默认同步或第二套测试实现。

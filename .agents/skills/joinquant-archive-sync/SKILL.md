@@ -26,6 +26,7 @@ description: Use when 用户或 Agent 需要认证聚宽、列出候选对象、
 - 归因日志默认全量同步并校验 Token（标识）、连续序号、`run_start` 和终态 `run_end`。代码没有写入器时只能标记 `missing_at_source`，普通日志不能替代归因日志。
 - 普通日志默认取得 1000 条并探测下一页。有结束证据才是 `complete`；免费范围无法证明结束时是 `capped_free`。
 - 积分下载必须绑定运行、日志类型、范围和当次报价。先预览，再取得对该报价的明确确认；只下载确认部分。不得默认消费积分或复用旧确认。
+- 聚宽当前只按“完整日志”固定报价，不提供远端分段价格。`paid-log preview` 会同时显示完整日志积分和本地保留范围；只有调用者接受这项事实并执行带 `--confirm` 的 `paid-log download` 才会扣分，最终只保留所选行范围。
 
 ## 快速索引
 
@@ -38,6 +39,7 @@ description: Use when 用户或 Agent 需要认证聚宽、列出候选对象、
 | 校验/人工补录 | `verify` |
 | 查询归档 | `query` |
 | 按范围导出 | `export-csv` |
+| 积分日志预览/确认下载 | `paid-log preview` / `paid-log download --confirm` |
 | 内存端到端自检 | `self-test` |
 | 安装/查看/卸载 04:00 任务 | `schedule-install` / `schedule-status` / `schedule-uninstall` |
 

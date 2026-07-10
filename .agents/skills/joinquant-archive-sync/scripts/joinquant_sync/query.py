@@ -12,6 +12,8 @@ import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from .archive import IntegrityError, verify_existing_manifest
+
 
 class QueryError(RuntimeError):
     """Raised when manifest-backed data cannot be queried safely."""
@@ -35,7 +37,9 @@ def write_parquet(
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
     try:
-        pq.write_table(pa.Table.from_pylist(materialized), temporary, compression="zstd")
+        pq.write_table(
+            pa.Table.from_pylist(materialized), temporary, compression="zstd"
+        )
         os.replace(temporary, destination)
     finally:
         temporary.unlink(missing_ok=True)
@@ -88,8 +92,14 @@ def open_views(
     *,
     manifest: dict[str, object] | None = None,
 ) -> list[str]:
+    try:
+        verified = verify_existing_manifest(manifest_path.parent)
+    except IntegrityError as error:
+        raise QueryError(str(error)) from error
     if manifest is None:
-        manifest = _load_manifest(manifest_path)
+        manifest = verified
+    elif manifest != verified:
+        raise QueryError("manifest changed during query")
     gate = manifest.get("gate")
     if not isinstance(gate, dict) or gate.get("status") != "pass":
         raise QueryError("manifest gate did not pass")
@@ -113,10 +123,12 @@ def open_views(
             if not path.is_file() or _sha256(path) != item.get("sha256"):
                 raise QueryError(f"dataset file failed hash check: {name}")
             paths.append(path)
-        literals = ",".join("'" + path.as_posix().replace("'", "''") + "'" for path in paths)
+        literals = ",".join(
+            "'" + path.as_posix().replace("'", "''") + "'" for path in paths
+        )
         connection.execute(
             f"CREATE OR REPLACE TEMP VIEW {_identifier(str(name))} AS "
-            f"SELECT * FROM read_parquet([{literals}])"
+            f"SELECT * FROM read_parquet([{literals}], union_by_name=true)"
         )
         actual = connection.execute(
             f"SELECT count(*) FROM {_identifier(str(name))}"
@@ -144,9 +156,7 @@ def export_csv(
             raise QueryError(f"dataset is not queryable: {dataset}")
         columns = {
             row[0]
-            for row in connection.execute(
-                f"DESCRIBE {_identifier(dataset)}"
-            ).fetchall()
+            for row in connection.execute(f"DESCRIBE {_identifier(dataset)}").fetchall()
         }
         if any(field not in columns for field in fields):
             raise QueryError("requested field is missing")

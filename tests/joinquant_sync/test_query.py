@@ -11,27 +11,80 @@ import pytest
 def _archive_with_rows(
     tmp_path: Path, dataset: str, rows: list[dict[str, object]]
 ) -> Path:
-    from joinquant_sync.query import write_parquet
+    from joinquant_sync.archive import detect_attribution_writer
+    from joinquant_sync.sync_pipeline import commit_simulation_evidence
 
-    data_path = tmp_path / f"{dataset}.parquet"
-    file_record = write_parquet(rows, data_path)
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text(
-        json.dumps(
-            {
-                "gate": {"status": "pass", "exceptions": []},
-                "datasets": {
-                    dataset: {
-                        "status": "complete",
-                        "rows": len(rows),
-                        "files": [file_record],
-                    }
-                }
-            }
-        ),
-        encoding="utf-8",
+    code = "def initialize(context):\n    pass\n"
+    dates = sorted(
+        {str(row.get("time"))[:10] for row in rows if row.get("time") not in {None, ""}}
     )
-    return manifest
+    if not dates:
+        dates = ["2026-01-01"]
+    bundle: dict[str, object] = {
+        "metadata": {
+            "schema_version": 1,
+            "backtest_id": "query-source",
+            "generated_at": "2026-01-01T00:00:00",
+            "extraction_method": "joinquant_research_get_backtest",
+            "incremental_after": {},
+            "transfer_modes": {
+                name: "full"
+                for name in ("results", "positions", "orders", "records", "balances")
+            },
+        },
+        "params": {"start_date": dates[0], "end_date": dates[-1]},
+        "status": "running",
+        "results": [{"time": date, "returns": 0.0} for date in dates],
+        "balances": [{"time": date, "cash": 1.0} for date in dates],
+        "positions": [],
+        "orders": [],
+        "records": [],
+        "risk": {"sharpe": 1.0},
+        "period_risks": {},
+    }
+    bundle[dataset] = rows
+    log_record = {"offset": 0, "text": "query fixture"}
+    browser = {
+        "normal_log": (json.dumps(log_record, separators=(",", ":")) + "\n").encode(),
+        "normal_log_records": [log_record],
+        "normal_log_raw_pages": [
+            {
+                "cursor": 0,
+                "response": {"data": {"logArr": [log_record["text"]]}},
+            }
+        ],
+        "normal_log_status": "complete",
+        "normal_log_rows": 1,
+        "log_pages": [{"cursor": 0, "rows": 1}],
+        "code": code,
+        "params": {"start_date": dates[0], "end_date": dates[-1]},
+        "source_backtest": "query-source",
+        "source_raw": b'{"query_fixture":true}',
+        "code_versions": [code],
+    }
+    commit_simulation_evidence(
+        tmp_path,
+        tmp_path.parent / f"{tmp_path.name}-stage",
+        {
+            "local_id": "simulation-001",
+            "page_space_id": "query-space",
+            "detail_url": "memory://query",
+            "aliases": ["query-source"],
+            "status": "active",
+            "collection_fence": {
+                "collection_before_sha256": "0" * 64,
+                "collection_after_sha256": "0" * 64,
+            },
+        },
+        browser,
+        {
+            "bundle": bundle,
+            "raw": json.dumps(bundle, separators=(",", ":")).encode(),
+            "attribution": b"",
+        },
+        detect_attribution_writer(code),
+    )
+    return tmp_path / "manifest.json"
 
 
 def test_duckdb_view_matches_manifest_rows(tmp_path: Path) -> None:
@@ -39,7 +92,7 @@ def test_duckdb_view_matches_manifest_rows(tmp_path: Path) -> None:
 
     manifest = _archive_with_rows(tmp_path, "orders", [{"id": 1}, {"id": 2}])
     connection = duckdb.connect(":memory:")
-    assert open_views(manifest, connection) == ["orders"]
+    assert "orders" in open_views(manifest, connection)
     assert connection.execute("select count(*) from orders").fetchone()[0] == 2
     assert not list(tmp_path.glob("*.duckdb"))
 
@@ -147,9 +200,7 @@ def test_csv_uses_one_manifest_snapshot(
 ) -> None:
     import joinquant_sync.query as query
 
-    manifest = _archive_with_rows(
-        tmp_path, "orders", [{"id": 1, "time": "2026-01-01"}]
-    )
+    manifest = _archive_with_rows(tmp_path, "orders", [{"id": 1, "time": "2026-01-01"}])
     original = query._load_manifest
     calls = 0
 

@@ -30,33 +30,26 @@
 joinquant/strategies/<strategy_id>/
 ├── default_code.py
 ├── manifest.json
-├── builds/<build_id>/
-│   ├── code.py
-│   ├── parameters.json
-│   ├── manifest.json
-│   ├── raw/
-│   ├── data/
-│   └── report/
 ├── backtests/<backtest_id>/
 │   ├── code.py
-│   ├── parameters.json
+│   ├── params.json
 │   ├── manifest.json
 │   ├── raw/
 │   ├── data/
-│   └── report/
+│   └── reports/
 └── simulations/<simulation_id>/
     ├── source.json
-    ├── code.py
-    ├── code_history/
-    ├── parameters.json
+    ├── current_code.py
+    ├── code_versions/
+    ├── params.json
     ├── snapshots/
     ├── manifest.json
-    ├── raw/
-    ├── data/
-    └── report/
+    └── reports/
 ```
 
 `strategy_id` 使用本地稳定键，历史回测使用策略页面内可复核的序号或稳定页面键；所有远端标识和详情链接作为别名保存。选择中央数据仓库再用指针回链虽然便于统一查询，但会破坏页面对应关系并增加引用失效风险，因此不采用。
+
+聚宽页面和官方 `get_backtest` 不存在独立构建对象，因此不创建 `builds/` 或 `sync-build`。
 
 ### 2. 原始证据与查询数据各保留一份
 

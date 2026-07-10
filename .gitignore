@@ -49,6 +49,7 @@ tmp/
 # Local runtime state
 # ========================
 .local/
+**/.sync.lock
 /codegraph/
 /.codegraph/
 

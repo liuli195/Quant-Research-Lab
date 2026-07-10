@@ -8,29 +8,15 @@ from tempfile import TemporaryDirectory
 
 from .archive import (
     AttributionIncomplete,
-    commit_manifest,
+    detect_attribution_writer,
     evaluate_gate,
     expected_datasets,
     recover_malformed_json,
-    stage_external_file,
     validate_attribution,
-    write_code_context,
-    write_raw_gzip,
 )
 from .browser import collect_free_logs
-from .query import export_csv, query_rows, write_parquet
-
-
-def _manifest_file(
-    record: dict[str, object], relative: str, format_: str
-) -> dict[str, object]:
-    digest = record.get("compressed_sha256", record.get("sha256"))
-    return {
-        "path": relative,
-        "sha256": digest,
-        "bytes": record["bytes"],
-        "format": format_,
-    }
+from .query import export_csv, query_rows
+from .sync_pipeline import commit_simulation_evidence
 
 
 def _complete_synthetic_datasets(
@@ -103,9 +89,7 @@ def _exercise_attribution() -> list[str]:
     if not validate_attribution(complete, "done", True)["run_end"]:
         raise AssertionError("self-test complete attribution failed")
     _expect_attribution_failure([])
-    _expect_attribution_failure(
-        [b'{"token":"t","seq":1,"event":"run_start"}']
-    )
+    _expect_attribution_failure([b'{"token":"t","seq":1,"event":"run_start"}'])
     missing_writer = validate_attribution([], "done", False)
     if missing_writer["status"] != "missing_at_source":
         raise AssertionError("self-test missing writer failed")
@@ -124,83 +108,124 @@ def _exercise_attribution() -> list[str]:
     ]
 
 
-def _build_batch(
-    stage: Path, rows: list[dict[str, object]]
-) -> tuple[dict[str, object], list[Path]]:
-    code = write_code_context(
-        stage,
-        "backtest",
-        "def initialize(context):\n    pass\n",
-        {"start_date": "2026-01-01", "end_date": "2026-01-02"},
-    )
-    parquet = write_parquet(rows, stage / "data" / "results.parquet", root=stage)
-    raw = write_raw_gzip(
-        json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
-        stage / "raw" / "results.json.gz",
-    )
-    normal_log = write_raw_gzip(
-        b"2026-01-01 - INFO - self-test\n",
-        stage / "raw" / "normal-log.jsonl.gz",
-    )
-
-    datasets = expected_datasets("backtest", "done", False)
-    _complete_synthetic_datasets(datasets)
-    datasets["results"] = {
-        "required": True,
-        "status": "complete",
-        "rows": len(rows),
-        "files": [
-            parquet,
-            _manifest_file(raw, "raw/results.json.gz", "json.gz"),
+def _simulation_evidence() -> tuple[
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+]:
+    code = "def initialize(context):\n    pass\n"
+    log_record = {"offset": 0, "text": "2026-01-01 - INFO - self-test"}
+    browser = {
+        "normal_log": (json.dumps(log_record, separators=(",", ":")) + "\n").encode(),
+        "normal_log_records": [log_record],
+        "normal_log_raw_pages": [
+            {
+                "offset": 0,
+                "response": {"data": {"logArr": [log_record["text"]]}},
+            }
         ],
+        "normal_log_status": "complete",
+        "normal_log_rows": 1,
+        "log_pages": [{"cursor": 0, "rows": 1}],
+        "code": code,
+        "params": {"start_date": "2026-01-01"},
+        "source_backtest": "self-test-source",
+        "research_id": "self-test-source",
+        "source_raw": b'{"code":"self-test"}',
+        "code_versions": [code],
+        "code_history_pages": [{"page": 1, "totalCount": 1}],
     }
-    datasets["normal_log"] = {
-        "required": False,
-        "status": "complete",
-        "rows": 1,
-        "files": [
-            _manifest_file(normal_log, "raw/normal-log.jsonl.gz", "jsonl.gz")
-        ],
-        "pagination": {"complete": True, "probe_after": 1},
-    }
-    gate = evaluate_gate(datasets)
-    if gate["status"] != "pass":
-        raise AssertionError("self-test manifest gate failed")
-    manifest = {
-        "schema_version": 1,
-        "object": {"kind": "backtest", "local_id": "1", "status": "done"},
-        "source": {"url": "memory://self-test", "aliases": []},
-        "fence": {"before_sha256": "0" * 64, "after_sha256": "0" * 64},
-        "code": {
-            "path": "code.py",
-            "sha256": code["sha256"],
-            "bytes": code["bytes"],
+    research = {
+        "bundle": {
+            "metadata": {
+                "schema_version": 1,
+                "backtest_id": "self-test-source",
+                "generated_at": "2026-01-01T00:00:00",
+                "extraction_method": "joinquant_research_get_backtest",
+                "incremental_after": {},
+                "transfer_modes": {
+                    name: "full"
+                    for name in (
+                        "results",
+                        "positions",
+                        "orders",
+                        "records",
+                        "balances",
+                    )
+                },
+            },
+            "params": {"start_date": "2026-01-01", "end_date": "2026-01-02"},
+            "status": "running",
+            "results": [
+                {"id": 1, "time": "2026-01-01", "return": 0.01},
+                {"id": 2, "time": "2026-01-02", "return": -0.02},
+            ],
+            "balances": [
+                {"time": "2026-01-01", "cash": 100.0},
+                {"time": "2026-01-02", "cash": 98.0},
+            ],
+            "positions": [],
+            "orders": [],
+            "records": [],
+            "risk": {"sharpe": 0.5},
+            "period_risks": {},
         },
-        "datasets": datasets,
-        "gate": gate,
+        "attribution": b"",
     }
-    staged = [
-        stage / "code.py",
-        stage / "data" / "results.parquet",
-        stage / "raw" / "results.json.gz",
-        stage / "raw" / "normal-log.jsonl.gz",
-    ]
-    return manifest, staged
+    research["raw"] = json.dumps(
+        research["bundle"], ensure_ascii=False, separators=(",", ":")
+    ).encode()
+    candidate = {
+        "local_id": "simulation-001",
+        "page_space_id": "self-test-space",
+        "status": "active",
+        "detail_url": "memory://self-test",
+        "aliases": ["self-test-space"],
+        "collection_fence": {
+            "collection_before_sha256": "0" * 64,
+            "collection_after_sha256": "0" * 64,
+        },
+    }
+    return candidate, browser, research, detect_attribution_writer(code)
 
 
-def _restage_committed(object_dir: Path, stage: Path, manifest: dict[str, object]) -> list[Path]:
-    relative_paths = [str(manifest["code"]["path"])]
-    for dataset in manifest["datasets"].values():
-        relative_paths.extend(
-            str(item["path"])
-            for item in dataset.get("files") or []
-            if isinstance(item, dict)
+def _exercise_orchestration(repository: Path) -> str:
+    from . import sync_pipeline
+
+    candidate, browser, _, _ = _simulation_evidence()
+    candidate.update(name="self-test", page_ordinal="1")
+    original = {
+        name: getattr(sync_pipeline, name)
+        for name in (
+            "discover_all_simulations",
+            "discover_active_simulations",
+            "fetch_strategy_default_code",
+            "fetch_simulation_browser_evidence",
+            "fetch_research_backtest",
         )
-    staged: list[Path] = []
-    for relative in relative_paths:
-        record = stage_external_file(object_dir / relative, stage)
-        staged.append(Path(str(record["path"])))
-    return staged
+    }
+    try:
+        sync_pipeline.discover_all_simulations = lambda _page: [dict(candidate)]
+        sync_pipeline.discover_active_simulations = lambda _page: [dict(candidate)]
+        sync_pipeline.fetch_strategy_default_code = lambda _page, _name: {
+            "name": "self-test",
+            "edit_url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=self-test",
+            "code": browser["code"],
+        }
+        sync_pipeline.fetch_simulation_browser_evidence = lambda _page, _candidate: (
+            dict(_simulation_evidence()[1])
+        )
+        sync_pipeline.fetch_research_backtest = lambda _page, _backtest_id, **_kwargs: (
+            _simulation_evidence()[2]
+        )
+        result = sync_pipeline.sync_all_active_simulations(object(), repository)
+    finally:
+        for name, value in original.items():
+            setattr(sync_pipeline, name, value)
+    if len(result) != 1 or result[0].get("status") != "committed":
+        raise AssertionError(f"self-test production orchestration failed: {result}")
+    return "committed"
 
 
 def run_self_test() -> dict[str, object]:
@@ -218,19 +243,22 @@ def run_self_test() -> dict[str, object]:
 
         with TemporaryDirectory(prefix="joinquant-self-test-") as directory:
             temporary_path = Path(directory)
-            object_dir = temporary_path / "object"
-            rows = [
-                {"id": 1, "time": "2026-01-01", "return": 0.01},
-                {"id": 2, "time": "2026-01-02", "return": -0.02},
-            ]
-            manifest, staged = _build_batch(temporary_path / "stage-1", rows)
-            commit_manifest(object_dir, manifest, staged)
-            first_manifest = (object_dir / "manifest.json").read_bytes()
-
-            staged_again = _restage_committed(
-                object_dir, temporary_path / "stage-2", manifest
+            orchestration = _exercise_orchestration(
+                temporary_path / "orchestrated-repository"
             )
-            commit_manifest(object_dir, manifest, staged_again)
+            object_dir = temporary_path / "object"
+            first = commit_simulation_evidence(
+                object_dir,
+                temporary_path / "stage-1",
+                *_simulation_evidence(),
+            )
+            manifest = first["manifest"]
+            first_manifest = (object_dir / "manifest.json").read_bytes()
+            second = commit_simulation_evidence(
+                object_dir,
+                temporary_path / "stage-2",
+                *_simulation_evidence(),
+            )
             idempotent = first_manifest == (object_dir / "manifest.json").read_bytes()
 
             queried = query_rows(object_dir / "manifest.json", "results", 100)
@@ -250,18 +278,23 @@ def run_self_test() -> dict[str, object]:
                 "csv_rows": csv["rows"],
                 "manifest_rows": manifest["datasets"]["results"]["rows"],
                 "query_rows": len(queried),
+                "sync_statuses": [first["status"], second["status"]],
+                "object_kind": manifest["object"]["kind"],
                 "cases": {
                     "run_statuses": statuses,
                     "normal_log_boundaries": log_boundaries,
                     "attribution": attribution,
                     "malformed_json": True,
                     "unsupported_api_version": True,
+                    "production_orchestration": orchestration,
                 },
             }
     finally:
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
-    result["temporary_removed"] = temporary_path is not None and not temporary_path.exists()
+    result["temporary_removed"] = (
+        temporary_path is not None and not temporary_path.exists()
+    )
     result["elapsed_seconds"] = time.perf_counter() - started
     result["peak_bytes"] = peak
     return result
