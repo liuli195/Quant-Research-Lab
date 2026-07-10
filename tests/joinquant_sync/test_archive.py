@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gzip
+import hashlib
 import json
 from pathlib import Path
 
@@ -184,3 +186,116 @@ def test_manifest_schema_declares_required_contract(repo_root: Path) -> None:
         "unsupported_api_version",
         "failed",
     ]
+
+
+def test_failed_batch_keeps_previous_manifest(tmp_path: Path) -> None:
+    from joinquant_sync.archive import IntegrityError, commit_manifest
+
+    object_dir = tmp_path / "backtests" / "1"
+    object_dir.mkdir(parents=True)
+    old = {"schema_version": 1, "gate": {"status": "pass"}, "datasets": {}}
+    (object_dir / "manifest.json").write_text(json.dumps(old), encoding="utf-8")
+
+    with pytest.raises(IntegrityError):
+        commit_manifest(object_dir, {"gate": {"status": "fail"}}, [])
+
+    assert json.loads((object_dir / "manifest.json").read_text()) == old
+
+
+def test_raw_response_round_trips_and_hashes(tmp_path: Path) -> None:
+    from joinquant_sync.archive import write_raw_gzip
+
+    raw = b'{"x":1}'
+    destination = tmp_path / "raw.json.gz"
+    result = write_raw_gzip(raw, destination)
+
+    assert gzip.decompress(destination.read_bytes()) == raw
+    assert result["sha256"] == hashlib.sha256(raw).hexdigest()
+    assert result["compressed_sha256"] == hashlib.sha256(
+        destination.read_bytes()
+    ).hexdigest()
+
+
+def test_atomic_commit_moves_only_manifest_referenced_files(tmp_path: Path) -> None:
+    from joinquant_sync.archive import commit_manifest, verify_existing_manifest
+
+    object_dir = tmp_path / "backtests" / "1"
+    staged = tmp_path / "stage" / "chunk.json"
+    staged.parent.mkdir()
+    staged.write_bytes(b'{"page":1}')
+    digest = hashlib.sha256(staged.read_bytes()).hexdigest()
+    manifest = {
+        "schema_version": 1,
+        "datasets": {
+            "results": {
+                "required": True,
+                "status": "complete",
+                "files": [{"path": "raw/chunk.json", "sha256": digest}],
+            }
+        },
+        "gate": {"status": "pass", "exceptions": []},
+    }
+
+    commit_manifest(object_dir, manifest, [staged])
+
+    assert not staged.exists()
+    assert (object_dir / "raw" / "chunk.json").read_bytes() == b'{"page":1}'
+    assert verify_existing_manifest(object_dir) == manifest
+
+
+def test_repeated_commit_with_same_content_is_idempotent(tmp_path: Path) -> None:
+    from joinquant_sync.archive import commit_manifest
+
+    object_dir = tmp_path / "backtests" / "1"
+    payload = b'{"page":1}'
+    digest = hashlib.sha256(payload).hexdigest()
+    manifest = {
+        "schema_version": 1,
+        "datasets": {
+            "results": {
+                "required": True,
+                "status": "complete",
+                "files": [{"path": "raw/chunk.json", "sha256": digest}],
+            }
+        },
+        "gate": {"status": "pass", "exceptions": []},
+    }
+    for stage_name in ("stage-a", "stage-b"):
+        staged = tmp_path / stage_name / "chunk.json"
+        staged.parent.mkdir()
+        staged.write_bytes(payload)
+        commit_manifest(object_dir, manifest, [staged])
+
+    assert (object_dir / "raw" / "chunk.json").read_bytes() == payload
+
+
+def test_existing_manifest_rejects_missing_referenced_file(tmp_path: Path) -> None:
+    from joinquant_sync.archive import IntegrityError, verify_existing_manifest
+
+    object_dir = tmp_path / "backtests" / "1"
+    object_dir.mkdir(parents=True)
+    manifest = {
+        "schema_version": 1,
+        "datasets": {
+            "results": {
+                "required": True,
+                "status": "complete",
+                "files": [{"path": "raw/missing.json", "sha256": "0" * 64}],
+            }
+        },
+        "gate": {"status": "pass", "exceptions": []},
+    }
+    (object_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(IntegrityError):
+        verify_existing_manifest(object_dir)
+
+
+def test_object_lock_conflict_is_retryable(tmp_path: Path) -> None:
+    from joinquant_sync.archive import ObjectLocked, object_lock
+
+    object_dir = tmp_path / "backtests" / "1"
+    with object_lock(object_dir):
+        with pytest.raises(ObjectLocked):
+            with object_lock(object_dir):
+                pass
