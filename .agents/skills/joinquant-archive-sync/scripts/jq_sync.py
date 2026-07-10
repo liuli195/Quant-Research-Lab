@@ -23,6 +23,7 @@ from joinquant_sync.scheduler import (
     scheduler_status,
     uninstall_scheduler,
 )
+from joinquant_sync.selftest import run_self_test
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -67,6 +68,8 @@ def build_parser() -> argparse.ArgumentParser:
     schedule_status.add_argument("--task-name", default="JoinQuantArchiveSync")
     schedule_uninstall = commands.add_parser("schedule-uninstall")
     schedule_uninstall.add_argument("--task-name", default="JoinQuantArchiveSync")
+    self_test = commands.add_parser("self-test")
+    self_test.add_argument("--repo-root", default=".")
     return parser
 
 
@@ -164,6 +167,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"status": "failed", "error": str(error)}))
             return 1
         print(json.dumps({"status": "uninstalled", "task_name": args.task_name}))
+    if args.command == "self-test":
+        print(json.dumps(run_self_test(), ensure_ascii=False))
     return 0
 
 

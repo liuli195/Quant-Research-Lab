@@ -26,12 +26,18 @@
           "pytest"
         ],
         "paths": [
+          ".agents/skills/joinquant-archive-sync/**",
+          ".claude/skills/joinquant-archive-sync",
+          ".gitattributes",
           "joinquant/**",
           "scripts/**",
           "tests/**",
           "requirements*.txt"
         ],
         "inputs": [
+          ".agents/skills/joinquant-archive-sync/**",
+          ".claude/skills/joinquant-archive-sync",
+          ".gitattributes",
           "joinquant/**",
           "scripts/**",
           "tests/**",
