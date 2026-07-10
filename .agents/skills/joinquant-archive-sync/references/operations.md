@@ -6,6 +6,8 @@
 & .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py <command>
 ```
 
+先用 `<command> --help` 查看实时参数，不从文档复制过时参数。
+
 首次认证使用可见浏览器：
 
 ```powershell
@@ -22,6 +24,32 @@
 - 积分下载只做所选数据集和范围的价格预览；用户确认前不得提交下载。
 - 自动下载失败时，用 `verify --import-file` 导入同一目标的人工下载文件；两条路径都失败则停止提交。
 
+## 常用操作
+
+```powershell
+# 只读列出候选；不会触发历史下载
+& .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py list-targets --strategy <策略>
+
+# 只同步一个明确历史目标
+& .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py sync-backtest --strategy <策略> --target <页面序号或详情URL>
+
+# 增量同步全部活动模拟交易
+& .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py sync-active-simulations --repository .
+
+# 查询和按需导出
+& .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py query --object <对象目录> --dataset <数据集>
+& .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py export-csv --object <对象目录> --dataset <数据集> --fields <字段列表> --destination <文件>
+```
+
+安装计划任务前，`self-test` 和一次手动 `sync-active-simulations` 必须成功。安装命令会校验 Windows 时区为 `China Standard Time`，使用每天 04:00、每 30 分钟最多重试 3 次的原生任务；不写常驻轮询或无限重试。
+
+```powershell
+& .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py self-test
+& .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py schedule-install --repo-root .
+& .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py schedule-status
+& .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py schedule-uninstall
+```
+
 ## 人工补录
 
 ```powershell
@@ -30,7 +58,7 @@
   --stage-only .local\joinquant-sync\manual-import
 ```
 
-命令输出文件路径、字节数和 SHA256（摘要）。后续任务会把这些证据纳入正式 manifest（清单）。
+命令输出文件路径、字节数和 SHA256（摘要），并用同一门禁纳入 manifest（清单）。
 
 ## 已验证来源
 
