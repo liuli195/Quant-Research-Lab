@@ -21,6 +21,7 @@
 - `strategy_id` 和 `simulation_id` 首次写入索引后不变。
 - 构建和回测的 `local_id` 是所属页面内的正整数序号。
 - 远端 ID、详情 URL 和名称只追加到 `aliases`；刷新后远端 ID 改变不得新建目录。
+- 构建和回测的页面序号再次出现时，代码与参数指纹必须一致；指纹冲突立即停止，不能把新别名并入旧对象。
 - 历史回测只接受明确页面序号或聚宽详情 URL；拒绝空目标、`latest`、`all` 和裸远端 ID。
 
 索引最小结构：
@@ -48,6 +49,8 @@
 - `missing_at_source`：源端没有该数据；必须有代码或页面证据。
 - `unsupported_api_version`：当前平台接口不提供该非核心数据；必须记录接口版本和响应证据。
 - `failed`：下载、解析或验证失败。
+
+预期数据集创建时默认是 `failed`，取得并校验证据后才能改为 `complete`。`complete` 必须引用至少一个已校验文件，或同时记录 `rows: 0` 与 `verified_empty: true`；空数据集映射和只有状态、没有证据的条目都不能通过门禁。
 
 合法空表使用 `complete`、`rows: 0`、`verified_empty: true`，不能靠缺文件表示。
 

@@ -8,6 +8,16 @@ from pathlib import Path
 import pytest
 
 
+def _mark_collected(datasets: dict[str, dict[str, object]]) -> None:
+    for name, item in datasets.items():
+        if item.get("status") == "missing_at_source" or item.get("verified_empty"):
+            continue
+        item.update(
+            status="complete",
+            files=[{"path": f"raw/{name}.json", "sha256": "0" * 64}],
+        )
+
+
 @pytest.mark.parametrize("target", [None, "", "latest", "all"])
 def test_history_target_rejects_implicit_selection(target: str | None) -> None:
     from joinquant_sync.archive import TargetRequired, validate_history_target
@@ -89,10 +99,39 @@ def test_strategy_ids_are_allocated_once(tmp_path: Path) -> None:
     assert (first, same, second) == ("strategy-001", "strategy-001", "strategy-002")
 
 
+def test_backtest_identity_fingerprint_conflict_is_rejected(tmp_path: Path) -> None:
+    from joinquant_sync.archive import IdentityConflict, resolve_local_id
+
+    index = tmp_path / "index.json"
+    resolve_local_id(
+        index,
+        "backtest",
+        {
+            "strategy_id": "strategy-001",
+            "page_ordinal": "4",
+            "remote_id": "old-id",
+            "fingerprint": "code-and-params-a",
+        },
+    )
+
+    with pytest.raises(IdentityConflict):
+        resolve_local_id(
+            index,
+            "backtest",
+            {
+                "strategy_id": "strategy-001",
+                "page_ordinal": "4",
+                "remote_id": "new-id",
+                "fingerprint": "code-and-params-b",
+            },
+        )
+
+
 def test_incomplete_attribution_blocks_gate() -> None:
     from joinquant_sync.archive import evaluate_gate, expected_datasets
 
     datasets = expected_datasets("backtest", "done", True)
+    _mark_collected(datasets)
     datasets["attribution_log"].update(status="failed")
     assert evaluate_gate(datasets)["status"] == "fail"
 
@@ -101,6 +140,7 @@ def test_missing_writer_is_explicit_exception() -> None:
     from joinquant_sync.archive import evaluate_gate, expected_datasets
 
     datasets = expected_datasets("backtest", "done", False)
+    _mark_collected(datasets)
     assert datasets["attribution_log"]["status"] == "missing_at_source"
     gate = evaluate_gate(datasets)
     assert gate["status"] == "pass"
@@ -111,6 +151,7 @@ def test_missing_dataset_status_blocks_gate() -> None:
     from joinquant_sync.archive import evaluate_gate, expected_datasets
 
     datasets = expected_datasets("backtest", "done", True)
+    _mark_collected(datasets)
     del datasets["orders"]["status"]
     assert evaluate_gate(datasets)["status"] == "fail"
 
@@ -126,6 +167,7 @@ def test_failed_run_uses_verified_empty_structured_datasets() -> None:
         "verified_empty": True,
     }
     assert datasets["error_log"]["required"] is True
+    _mark_collected(datasets)
     assert evaluate_gate(datasets)["status"] == "pass"
 
 
@@ -133,11 +175,33 @@ def test_capped_free_log_is_visible_but_does_not_fail_gate() -> None:
     from joinquant_sync.archive import evaluate_gate, expected_datasets
 
     datasets = expected_datasets("backtest", "done", True)
+    _mark_collected(datasets)
     datasets["normal_log"].update(
         status="capped_free", pagination={"probed_offset": 1000}
     )
     gate = evaluate_gate(datasets)
     assert gate == {"status": "pass", "exceptions": ["normal_log:capped_free"]}
+
+
+def test_uncollected_or_empty_dataset_map_cannot_pass_gate() -> None:
+    from joinquant_sync.archive import evaluate_gate, expected_datasets
+
+    assert evaluate_gate({})["status"] == "fail"
+    assert (
+        evaluate_gate(expected_datasets("backtest", "done", False))["status"]
+        == "fail"
+    )
+
+
+def test_complete_status_requires_file_or_verified_empty_evidence() -> None:
+    from joinquant_sync.archive import evaluate_gate
+
+    assert (
+        evaluate_gate({"results": {"required": True, "status": "complete"}})[
+            "status"
+        ]
+        == "fail"
+    )
 
 
 def test_cli_rejects_non_page_target_before_sync() -> None:

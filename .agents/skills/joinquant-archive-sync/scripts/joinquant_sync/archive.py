@@ -35,6 +35,10 @@ class ObjectLocked(RuntimeError):
     """Raised when another sync owns the same object lock."""
 
 
+class IdentityConflict(RuntimeError):
+    """Raised when one page ordinal resolves to different immutable evidence."""
+
+
 @dataclass(frozen=True)
 class DatasetPolicy:
     required: bool = True
@@ -110,7 +114,18 @@ def resolve_local_id(
             "identity": stable_identity,
             "aliases": [],
         }
+        if kind in {"build", "backtest"} and page_identity.get("fingerprint"):
+            item["fingerprint"] = str(page_identity["fingerprint"])
         objects.append(item)
+
+    if kind in {"build", "backtest"} and page_identity.get("fingerprint"):
+        incoming_fingerprint = str(page_identity["fingerprint"])
+        existing_fingerprint = str(item.get("fingerprint") or "")
+        if existing_fingerprint and existing_fingerprint != incoming_fingerprint:
+            raise IdentityConflict(
+                f"page identity conflict: {kind}/{ordinal}"
+            )
+        item["fingerprint"] = incoming_fingerprint
 
     alias = {
         key: str(page_identity[key])
@@ -151,7 +166,7 @@ def expected_datasets(
         attribution_log=DatasetPolicy(required=has_attribution_writer),
     )
     datasets = {
-        name: {"required": policy.required, "status": "complete"}
+        name: {"required": policy.required, "status": "failed"}
         for name, policy in policies.items()
     }
     if run_status in {"failed", "cancelled"}:
@@ -164,20 +179,22 @@ def expected_datasets(
             "risk",
             "period_risks",
         ):
-            datasets[name].update(rows=0, verified_empty=True)
+            datasets[name].update(status="complete", rows=0, verified_empty=True)
     if not has_attribution_writer:
         datasets["attribution_log"].update(
             status="missing_at_source", evidence={"code_writer": False}
         )
     if not datasets["error_log"]["required"]:
-        datasets["error_log"].update(rows=0, verified_empty=True)
+        datasets["error_log"].update(
+            status="complete", rows=0, verified_empty=True
+        )
     return datasets
 
 
 def evaluate_gate(
     datasets: dict[str, dict[str, object]],
 ) -> dict[str, object]:
-    failed = False
+    failed = not datasets
     exceptions: list[str] = []
     for name, item in datasets.items():
         status = item.get("status")
@@ -186,12 +203,17 @@ def evaluate_gate(
             failed = True
             continue
         if status == "complete":
-            if item.get("rows") == 0 and not item.get("verified_empty"):
+            verified_empty = item.get("verified_empty") is True and item.get("rows") == 0
+            if not item.get("files") and not verified_empty:
                 failed = True
             continue
         accepted = False
         if status == "capped_free":
-            accepted = name == "normal_log" and bool(item.get("pagination"))
+            accepted = (
+                name == "normal_log"
+                and bool(item.get("pagination"))
+                and bool(item.get("files"))
+            )
         elif status in {"missing_at_source", "unsupported_api_version"}:
             accepted = not required and bool(item.get("evidence"))
         if required or not accepted:
