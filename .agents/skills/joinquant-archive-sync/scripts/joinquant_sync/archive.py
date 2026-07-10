@@ -7,7 +7,7 @@ import msvcrt
 import os
 import re
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +37,10 @@ class ObjectLocked(RuntimeError):
 
 class IdentityConflict(RuntimeError):
     """Raised when one page ordinal resolves to different immutable evidence."""
+
+
+class AttributionIncomplete(RuntimeError):
+    """Raised when an attribution stream is malformed or not closed."""
 
 
 @dataclass(frozen=True)
@@ -484,6 +488,88 @@ def write_code_context(
         "bytes": len(payload),
         "params_path": params_path.relative_to(stage_dir).as_posix(),
         "versions": version_entries,
+    }
+
+
+def recover_malformed_json(
+    raw: bytes,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    rows: list[dict[str, object]] = []
+    errors: list[dict[str, object]] = []
+    offset = 0
+    for raw_line in raw.splitlines(keepends=True):
+        line = raw_line.rstrip(b"\r\n")
+        if line.strip():
+            try:
+                value = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                errors.append(
+                    {"offset": offset, "bytes": len(line), "error": "invalid_json"}
+                )
+            else:
+                if isinstance(value, dict):
+                    rows.append(value)
+                else:
+                    errors.append(
+                        {"offset": offset, "bytes": len(line), "error": "invalid_json"}
+                    )
+        offset += len(raw_line)
+    return rows, errors
+
+
+def archive_log_response(raw: bytes, destination: Path) -> dict[str, object]:
+    evidence = write_raw_gzip(raw, destination)
+    rows, errors = recover_malformed_json(raw)
+    return {
+        "raw": evidence,
+        "rows": rows,
+        "recovery": {
+            "source_lines": len(raw.splitlines()),
+            "recovered_rows": len(rows),
+            "errors": errors,
+        },
+    }
+
+
+def validate_attribution(
+    lines: Iterable[bytes], run_status: str, writer_present: bool
+) -> dict[str, object]:
+    if not writer_present:
+        return {
+            "required": False,
+            "status": "missing_at_source",
+            "rows": 0,
+            "evidence": {"code_writer": False},
+        }
+    raw_lines = [line.rstrip(b"\r\n") for line in lines if line.strip()]
+    try:
+        rows = [json.loads(line) for line in raw_lines]
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise AttributionIncomplete("attribution JSONL is malformed") from error
+    if not rows or not all(isinstance(row, dict) for row in rows):
+        raise AttributionIncomplete("attribution JSONL is empty or non-object")
+    tokens = {row.get("token") or row.get("audit_token") for row in rows}
+    if len(tokens) != 1 or None in tokens:
+        raise AttributionIncomplete("attribution token mismatch")
+    sequence = [row.get("seq") for row in rows]
+    if sequence != list(range(1, len(rows) + 1)):
+        raise AttributionIncomplete("attribution sequence is not contiguous")
+    events = [row.get("event") for row in rows]
+    if events[0] != "run_start":
+        raise AttributionIncomplete("run_start is missing")
+    if run_status in {"done", "failed", "cancelled"} and events[-1] != "run_end":
+        raise AttributionIncomplete("run_end is missing")
+    payload = b"\n".join(raw_lines) + b"\n"
+    return {
+        "required": True,
+        "status": "complete",
+        "rows": len(rows),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "token": next(iter(tokens)),
+        "first_seq": sequence[0],
+        "last_seq": sequence[-1],
+        "run_start": True,
+        "run_end": events[-1] == "run_end",
     }
 
 

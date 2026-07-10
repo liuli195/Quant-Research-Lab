@@ -266,3 +266,64 @@ def test_inventory_drift_retries_once_and_returns_stable_result() -> None:
     inventories = iter([{"rev": 1}, {"rev": 2}, {"rev": 2}, {"rev": 2}])
     collected = iter(["first", "second"])
     assert sync_with_fence(lambda: next(inventories), lambda: next(collected)) == "second"
+
+
+def _make_log_fetcher(count: int, probe: str):
+    rows = [{"seq": index} for index in range(count)]
+
+    def fetch(offset: int):
+        if offset < len(rows):
+            return {"rows": rows[offset : offset + 1000], "end": False}
+        if probe == "empty":
+            return {"rows": [], "end": True}
+        return {"rows": [], "end": False, "blocked_free": True}
+
+    return fetch
+
+
+@pytest.mark.parametrize(
+    ("count", "probe", "expected"),
+    [(999, "empty", "complete"), (1000, "empty", "complete"), (1000, "blocked", "capped_free")],
+)
+def test_free_log_boundary(count: int, probe: str, expected: str) -> None:
+    from joinquant_sync.browser import collect_free_logs
+
+    _, status = collect_free_logs(_make_log_fetcher(count=count, probe=probe))
+    assert status == expected
+
+
+def test_free_page_after_1000_continues() -> None:
+    from joinquant_sync.browser import collect_free_logs
+
+    rows, status = collect_free_logs(_make_log_fetcher(count=1001, probe="empty"))
+    assert len(rows) == 1001
+    assert status == "complete"
+
+
+def test_paid_preview_is_bound_and_one_time() -> None:
+    from joinquant_sync.browser import (
+        PaidConfirmationRequired,
+        consume_paid_preview,
+        create_paid_preview,
+    )
+
+    quote = {"credits": 3, "rows": 1200}
+    preview = create_paid_preview("run-1", "normal_log", "1000:1200", quote)
+    used: set[str] = set()
+    with pytest.raises(PaidConfirmationRequired):
+        consume_paid_preview(preview, "run-1", "normal_log", "1000:1200", quote, False, used)
+    with pytest.raises(PaidConfirmationRequired):
+        consume_paid_preview(
+            preview,
+            "run-1",
+            "normal_log",
+            "1000:1200",
+            {"credits": 4, "rows": 1200},
+            True,
+            used,
+        )
+    assert consume_paid_preview(
+        preview, "run-1", "normal_log", "1000:1200", quote, True, used
+    )["preview_id"] == preview["preview_id"]
+    with pytest.raises(PaidConfirmationRequired):
+        consume_paid_preview(preview, "run-1", "normal_log", "1000:1200", quote, True, used)

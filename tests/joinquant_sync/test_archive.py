@@ -395,3 +395,57 @@ def test_code_context_keeps_backtest_code_and_simulation_versions(
         (tmp_path / "simulation" / "source.json").read_text(encoding="utf-8")
     ) == {"backtest_id": "4"}
     assert len(list((tmp_path / "simulation" / "code_versions").glob("*.py"))) == 2
+
+
+def test_attribution_requires_contiguous_sequence_and_run_end() -> None:
+    from joinquant_sync.archive import AttributionIncomplete, validate_attribution
+
+    lines = [
+        b'{"token":"t","seq":1,"event":"run_start"}',
+        b'{"token":"t","seq":3,"event":"run_end"}',
+    ]
+    with pytest.raises(AttributionIncomplete):
+        validate_attribution(lines, "done", True)
+
+
+def test_active_simulation_may_lack_run_end() -> None:
+    from joinquant_sync.archive import validate_attribution
+
+    lines = [b'{"token":"t","seq":1,"event":"run_start"}']
+    result = validate_attribution(lines, "active", True)
+    assert result["status"] == "complete"
+    assert result["last_seq"] == 1
+
+
+def test_no_attribution_writer_is_explicit_missing_source() -> None:
+    from joinquant_sync.archive import validate_attribution
+
+    assert validate_attribution([], "done", False) == {
+        "required": False,
+        "status": "missing_at_source",
+        "rows": 0,
+        "evidence": {"code_writer": False},
+    }
+
+
+def test_malformed_json_recovery_reports_exact_bad_offset() -> None:
+    from joinquant_sync.archive import recover_malformed_json
+
+    rows, errors = recover_malformed_json(b'{"a":1}\nBAD\n{"a":2}\n')
+    assert rows == [{"a": 1}, {"a": 2}]
+    assert errors == [{"offset": 8, "bytes": 3, "error": "invalid_json"}]
+
+
+def test_log_response_is_archived_before_recovery(tmp_path: Path) -> None:
+    from joinquant_sync.archive import archive_log_response
+
+    raw = b'{"a":1}\nBAD\n'
+    result = archive_log_response(raw, tmp_path / "raw" / "logs.jsonl.gz")
+
+    assert gzip.decompress((tmp_path / "raw" / "logs.jsonl.gz").read_bytes()) == raw
+    assert result["rows"] == [{"a": 1}]
+    assert result["recovery"] == {
+        "source_lines": 2,
+        "recovered_rows": 1,
+        "errors": [{"offset": 8, "bytes": 3, "error": "invalid_json"}],
+    }
