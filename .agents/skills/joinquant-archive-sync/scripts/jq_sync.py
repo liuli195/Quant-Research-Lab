@@ -16,6 +16,7 @@ from joinquant_sync.browser import (
     ensure_authenticated,
     open_authenticated_context,
 )
+from joinquant_sync.query import export_csv, query_rows
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,6 +36,19 @@ def build_parser() -> argparse.ArgumentParser:
     verify = commands.add_parser("verify")
     verify.add_argument("--import-file", required=True)
     verify.add_argument("--stage-only", required=True)
+
+    query = commands.add_parser("query")
+    query.add_argument("--object", required=True)
+    query.add_argument("--dataset", required=True)
+    query.add_argument("--limit", type=int, default=100)
+
+    csv_export = commands.add_parser("export-csv")
+    csv_export.add_argument("--object", required=True)
+    csv_export.add_argument("--dataset", required=True)
+    csv_export.add_argument("--fields", required=True)
+    csv_export.add_argument("--start")
+    csv_export.add_argument("--end")
+    csv_export.add_argument("--destination", required=True)
     return parser
 
 
@@ -75,6 +89,28 @@ def main(argv: list[str] | None = None) -> int:
         except TargetRequired:
             print(json.dumps({"status": "target_required"}))
             return 2
+    if args.command == "query":
+        path = Path(args.object)
+        manifest = path / "manifest.json" if path.is_dir() else path
+        print(
+            json.dumps(
+                query_rows(manifest, args.dataset, args.limit),
+                ensure_ascii=False,
+                default=str,
+            )
+        )
+    if args.command == "export-csv":
+        path = Path(args.object)
+        manifest = path / "manifest.json" if path.is_dir() else path
+        result = export_csv(
+            manifest,
+            args.dataset,
+            [field.strip() for field in args.fields.split(",") if field.strip()],
+            args.start,
+            args.end,
+            Path(args.destination),
+        )
+        print(json.dumps(result, ensure_ascii=False))
     return 0
 
 
