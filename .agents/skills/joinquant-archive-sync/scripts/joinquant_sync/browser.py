@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import os
+import secrets
+import sqlite3
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -98,13 +102,82 @@ def _quote_sha256(quote: dict[str, object]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _paid_store_dir(store_dir: Path | None) -> Path:
+    if store_dir is not None:
+        return store_dir
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if not local_app_data:
+        raise PaidConfirmationRequired("LOCALAPPDATA is required for paid previews")
+    return Path(local_app_data) / "QuantResearchLab" / "joinquant-playwright"
+
+
+def _paid_secret(store_dir: Path | None) -> bytes:
+    directory = _paid_store_dir(store_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "paid-preview.key"
+    try:
+        with path.open("xb") as stream:
+            stream.write(secrets.token_bytes(32))
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
+    except FileExistsError:
+        pass
+    secret = path.read_bytes()
+    if len(secret) != 32:
+        raise PaidConfirmationRequired("paid preview key is invalid")
+    return secret
+
+
+def _preview_payload(preview: dict[str, object]) -> bytes:
+    signed = {
+        name: preview.get(name)
+        for name in (
+            "preview_id",
+            "run_id",
+            "log_type",
+            "range",
+            "quote",
+            "quote_sha256",
+        )
+    }
+    return json.dumps(
+        signed, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+
+
+def _preview_signature(preview: dict[str, object], store_dir: Path | None) -> str:
+    return hmac.new(
+        _paid_secret(store_dir), _preview_payload(preview), hashlib.sha256
+    ).hexdigest()
+
+
+def _consume_preview_id(preview_id: str, store_dir: Path | None) -> None:
+    database = _paid_store_dir(store_dir) / "paid-preview.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS used_preview "
+            "(preview_id TEXT PRIMARY KEY, used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        try:
+            connection.execute(
+                "INSERT INTO used_preview(preview_id) VALUES (?)", (preview_id,)
+            )
+            connection.commit()
+        except sqlite3.IntegrityError as error:
+            raise PaidConfirmationRequired("paid preview was already consumed") from error
+
+
 def create_paid_preview(
     run_id: str,
     log_type: str,
     range_: str,
     quote: dict[str, object],
+    *,
+    store_dir: Path | None = None,
 ) -> dict[str, object]:
-    return {
+    preview: dict[str, object] = {
         "preview_id": uuid.uuid4().hex,
         "run_id": run_id,
         "log_type": log_type,
@@ -112,6 +185,8 @@ def create_paid_preview(
         "quote": quote,
         "quote_sha256": _quote_sha256(quote),
     }
+    preview["signature"] = _preview_signature(preview, store_dir)
+    return preview
 
 
 def consume_paid_preview(
@@ -122,6 +197,8 @@ def consume_paid_preview(
     quote: dict[str, object],
     confirm: bool,
     used_preview_ids: set[str],
+    *,
+    store_dir: Path | None = None,
 ) -> dict[str, object]:
     preview_id = str(preview.get("preview_id") or "")
     matches = (
@@ -129,8 +206,20 @@ def consume_paid_preview(
         and preview.get("log_type") == log_type
         and preview.get("range") == range_
         and preview.get("quote_sha256") == _quote_sha256(quote)
+        and preview.get("quote") == quote
     )
-    if not confirm or not preview_id or not matches or preview_id in used_preview_ids:
+    signature = str(preview.get("signature") or "")
+    valid_signature = hmac.compare_digest(
+        signature, _preview_signature(preview, store_dir)
+    )
+    if (
+        not confirm
+        or not preview_id
+        or not matches
+        or not valid_signature
+        or preview_id in used_preview_ids
+    ):
         raise PaidConfirmationRequired("paid preview confirmation is invalid")
+    _consume_preview_id(preview_id, store_dir)
     used_preview_ids.add(preview_id)
     return preview

@@ -552,7 +552,9 @@ def validate_attribution(
     if len(tokens) != 1 or None in tokens:
         raise AttributionIncomplete("attribution token mismatch")
     sequence = [row.get("seq") for row in rows]
-    if sequence != list(range(1, len(rows) + 1)):
+    if not all(type(value) is int for value in sequence) or sequence != list(
+        range(1, len(rows) + 1)
+    ):
         raise AttributionIncomplete("attribution sequence is not contiguous")
     events = [row.get("event") for row in rows]
     if events[0] != "run_start":

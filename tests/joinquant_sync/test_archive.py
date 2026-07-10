@@ -417,6 +417,20 @@ def test_active_simulation_may_lack_run_end() -> None:
     assert result["last_seq"] == 1
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        b'{"token":"","seq":1,"event":"run_start"}',
+        b'{"token":"t","seq":true,"event":"run_start"}',
+    ],
+)
+def test_attribution_rejects_empty_token_or_non_integer_sequence(line: bytes) -> None:
+    from joinquant_sync.archive import AttributionIncomplete, validate_attribution
+
+    with pytest.raises(AttributionIncomplete):
+        validate_attribution([line], "active", True)
+
+
 def test_no_attribution_writer_is_explicit_missing_source() -> None:
     from joinquant_sync.archive import validate_attribution
 

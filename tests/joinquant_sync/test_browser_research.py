@@ -219,6 +219,17 @@ def test_collect_pages_matches_real_1000_289_empty_shape() -> None:
     }
 
 
+def test_empty_page_cannot_override_unmet_declared_total() -> None:
+    from joinquant_sync.research import PaginationIncomplete, collect_pages
+
+    pages = {
+        None: {"rows": [{"id": index} for index in range(1000)], "next": "1000", "total": 1289},
+        "1000": {"rows": [], "next": None, "total": 1289},
+    }
+    with pytest.raises(PaginationIncomplete):
+        collect_pages(lambda cursor: pages[cursor])
+
+
 def test_failed_run_accepts_verified_empty_table() -> None:
     from joinquant_sync.research import validate_fact_table
 
@@ -300,7 +311,7 @@ def test_free_page_after_1000_continues() -> None:
     assert status == "complete"
 
 
-def test_paid_preview_is_bound_and_one_time() -> None:
+def test_paid_preview_is_bound_and_one_time(tmp_path: Path) -> None:
     from joinquant_sync.browser import (
         PaidConfirmationRequired,
         consume_paid_preview,
@@ -308,10 +319,14 @@ def test_paid_preview_is_bound_and_one_time() -> None:
     )
 
     quote = {"credits": 3, "rows": 1200}
-    preview = create_paid_preview("run-1", "normal_log", "1000:1200", quote)
+    preview = create_paid_preview(
+        "run-1", "normal_log", "1000:1200", quote, store_dir=tmp_path
+    )
     used: set[str] = set()
     with pytest.raises(PaidConfirmationRequired):
-        consume_paid_preview(preview, "run-1", "normal_log", "1000:1200", quote, False, used)
+        consume_paid_preview(
+            preview, "run-1", "normal_log", "1000:1200", quote, False, used, store_dir=tmp_path
+        )
     with pytest.raises(PaidConfirmationRequired):
         consume_paid_preview(
             preview,
@@ -321,9 +336,38 @@ def test_paid_preview_is_bound_and_one_time() -> None:
             {"credits": 4, "rows": 1200},
             True,
             used,
+            store_dir=tmp_path,
         )
     assert consume_paid_preview(
-        preview, "run-1", "normal_log", "1000:1200", quote, True, used
+        preview,
+        "run-1",
+        "normal_log",
+        "1000:1200",
+        quote,
+        True,
+        used,
+        store_dir=tmp_path,
     )["preview_id"] == preview["preview_id"]
     with pytest.raises(PaidConfirmationRequired):
-        consume_paid_preview(preview, "run-1", "normal_log", "1000:1200", quote, True, used)
+        consume_paid_preview(
+            preview,
+            "run-1",
+            "normal_log",
+            "1000:1200",
+            quote,
+            True,
+            set(),
+            store_dir=tmp_path,
+        )
+    forged = dict(preview, run_id="run-2")
+    with pytest.raises(PaidConfirmationRequired):
+        consume_paid_preview(
+            forged,
+            "run-2",
+            "normal_log",
+            "1000:1200",
+            quote,
+            True,
+            set(),
+            store_dir=tmp_path,
+        )

@@ -26,7 +26,10 @@ def _sha256(path: Path) -> str:
 
 
 def write_parquet(
-    rows: Iterable[dict[str, object]], destination: Path
+    rows: Iterable[dict[str, object]],
+    destination: Path,
+    *,
+    root: Path | None = None,
 ) -> dict[str, object]:
     materialized = list(rows)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -36,8 +39,13 @@ def write_parquet(
         os.replace(temporary, destination)
     finally:
         temporary.unlink(missing_ok=True)
+    archive_root = (root or destination.parent).resolve()
+    try:
+        relative = destination.resolve().relative_to(archive_root).as_posix()
+    except ValueError:
+        raise QueryError("Parquet destination is outside object root") from None
     return {
-        "path": destination.name,
+        "path": relative,
         "sha256": _sha256(destination),
         "bytes": destination.stat().st_size,
         "rows": len(materialized),
@@ -75,9 +83,16 @@ def _identifier(name: str) -> str:
 
 
 def open_views(
-    manifest_path: Path, connection: duckdb.DuckDBPyConnection
+    manifest_path: Path,
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    manifest: dict[str, object] | None = None,
 ) -> list[str]:
-    manifest = _load_manifest(manifest_path)
+    if manifest is None:
+        manifest = _load_manifest(manifest_path)
+    gate = manifest.get("gate")
+    if not isinstance(gate, dict) or gate.get("status") != "pass":
+        raise QueryError("manifest gate did not pass")
     datasets = manifest.get("datasets")
     if not isinstance(datasets, dict):
         raise QueryError("manifest datasets are missing")
@@ -85,7 +100,11 @@ def open_views(
     for name, dataset in datasets.items():
         if not isinstance(dataset, dict) or dataset.get("status") != "complete":
             continue
-        files = [item for item in dataset.get("files") or [] if item.get("format") == "parquet"]
+        files = [
+            item
+            for item in dataset.get("files") or []
+            if isinstance(item, dict) and item.get("format") == "parquet"
+        ]
         if not files:
             continue
         paths: list[Path] = []
@@ -118,9 +137,10 @@ def export_csv(
 ) -> dict[str, object]:
     if not fields:
         raise QueryError("at least one field is required")
+    manifest = _load_manifest(manifest_path)
     connection = duckdb.connect(":memory:")
     try:
-        if dataset not in open_views(manifest_path, connection):
+        if dataset not in open_views(manifest_path, connection, manifest=manifest):
             raise QueryError(f"dataset is not queryable: {dataset}")
         columns = {
             row[0]
@@ -155,7 +175,6 @@ def export_csv(
         os.replace(temporary, destination)
     finally:
         temporary.unlink(missing_ok=True)
-    manifest = _load_manifest(manifest_path)
     source_files = manifest["datasets"][dataset]["files"]
     return {
         "path": str(destination),

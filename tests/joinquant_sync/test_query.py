@@ -19,6 +19,7 @@ def _archive_with_rows(
     manifest.write_text(
         json.dumps(
             {
+                "gate": {"status": "pass", "exceptions": []},
                 "datasets": {
                     dataset: {
                         "status": "complete",
@@ -82,6 +83,26 @@ def test_manifest_row_mismatch_blocks_view(tmp_path: Path) -> None:
         open_views(manifest, duckdb.connect(":memory:"))
 
 
+def test_query_rejects_failed_manifest_gate(tmp_path: Path) -> None:
+    from joinquant_sync.query import QueryError, open_views
+
+    manifest = _archive_with_rows(tmp_path, "orders", [{"id": 1}])
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data["gate"]["status"] = "fail"
+    manifest.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(QueryError):
+        open_views(manifest, duckdb.connect(":memory:"))
+
+
+def test_nested_parquet_path_is_relative_to_object_root(tmp_path: Path) -> None:
+    from joinquant_sync.query import write_parquet
+
+    record = write_parquet(
+        [{"id": 1}], tmp_path / "data" / "orders.parquet", root=tmp_path
+    )
+    assert record["path"] == "data/orders.parquet"
+
+
 def test_cli_query_and_csv_use_manifest_only(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -119,3 +140,31 @@ def test_cli_query_and_csv_use_manifest_only(
         == 0
     )
     assert pd.read_csv(output)["id"].tolist() == [2]
+
+
+def test_csv_uses_one_manifest_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import joinquant_sync.query as query
+
+    manifest = _archive_with_rows(
+        tmp_path, "orders", [{"id": 1, "time": "2026-01-01"}]
+    )
+    original = query._load_manifest
+    calls = 0
+
+    def counted(path: Path):
+        nonlocal calls
+        calls += 1
+        return original(path)
+
+    monkeypatch.setattr(query, "_load_manifest", counted)
+    query.export_csv(
+        manifest,
+        "orders",
+        ["id", "time"],
+        "2026-01-01",
+        "2026-01-01",
+        tmp_path / "snapshot.csv",
+    )
+    assert calls == 1

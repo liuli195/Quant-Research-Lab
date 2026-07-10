@@ -31,6 +31,7 @@ def collect_pages(
     cursors: list[str | None] = []
     seen: set[str | None] = set()
     rows: list[dict[str, object]] = []
+    declared_total: int | None = None
     for _ in range(10_000):
         if cursor in seen:
             raise PaginationIncomplete(f"repeated cursor: {cursor}")
@@ -43,15 +44,24 @@ def collect_pages(
         ):
             raise PaginationIncomplete("page rows must be a list of objects")
         rows.extend(page_rows)
+        page_total = page.get("total")
+        if isinstance(page_total, int):
+            if declared_total is None:
+                declared_total = page_total
+            elif page_total != declared_total:
+                raise PaginationIncomplete("declared total changed between pages")
+            if len(rows) > declared_total:
+                raise PaginationIncomplete("rows exceed declared total")
         if not page_rows:
+            if declared_total is not None and len(rows) != declared_total:
+                raise PaginationIncomplete("empty page before declared total")
             end = "empty_page"
             break
         next_cursor = page.get("next")
         if next_cursor is not None:
             cursor = str(next_cursor)
             continue
-        total = page.get("total")
-        if isinstance(total, int) and len(rows) >= total:
+        if declared_total is not None and len(rows) == declared_total:
             end = "declared_total"
             break
         if page.get("end"):
@@ -63,13 +73,16 @@ def collect_pages(
         raise PaginationIncomplete("last page has no end evidence")
     else:
         raise PaginationIncomplete("pagination exceeded 10000 pages")
-    return rows, {
+    pagination: dict[str, object] = {
         "complete": True,
         "end": end,
         "pages": len(cursors),
         "rows": len(rows),
         "cursors": cursors,
     }
+    if declared_total is not None:
+        pagination["total"] = declared_total
+    return rows, pagination
 
 
 def validate_fact_table(
