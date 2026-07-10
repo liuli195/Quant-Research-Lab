@@ -6,7 +6,11 @@ import os
 import time
 from pathlib import Path
 
-from joinquant_sync.archive import stage_external_file
+from joinquant_sync.archive import (
+    TargetRequired,
+    stage_external_file,
+    validate_history_target,
+)
 from joinquant_sync.browser import (
     AuthRequired,
     ensure_authenticated,
@@ -65,6 +69,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "verify":
         item = stage_external_file(Path(args.import_file), Path(args.stage_only))
         print(json.dumps(item, ensure_ascii=False))
+    if args.command == "sync-backtest":
+        try:
+            validate_history_target(args.strategy, args.target)
+        except TargetRequired:
+            print(json.dumps({"status": "target_required"}))
+            return 2
     return 0
 
 
