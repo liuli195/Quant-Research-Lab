@@ -2,6 +2,8 @@
 comet_change: add-joinquant-archive-sync
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-07-11-add-joinquant-archive-sync
+status: final
 ---
 
 # 聚宽归档与增量同步技术设计

@@ -2,6 +2,7 @@
 change: add-joinquant-archive-sync
 design-doc: docs/superpowers/specs/2026-07-11-joinquant-archive-sync-design.md
 base-ref: 1318db74acbe665286a9f137ed9efd95205a5018
+archived-with: 2026-07-11-add-joinquant-archive-sync
 ---
 
 # 聚宽归档与增量同步实施计划
@@ -28,6 +29,7 @@ base-ref: 1318db74acbe665286a9f137ed9efd95205a5018
 - 不创建 Plugin（插件）、marketplace（市场）、守护进程、第二套同步逻辑或持久 `.duckdb` 文件。
 - 提交步骤只有在用户明确授权 Git 提交后执行；未授权时保留工作树改动并报告。
 
+archived-with: 2026-07-11-add-joinquant-archive-sync
 ---
 
 ## 文件结构
@@ -63,6 +65,7 @@ tests/
 └── test_skill_layout.py
 ```
 
+archived-with: 2026-07-11-add-joinquant-archive-sync
 ---
 
 ### Task 1: 建立最小运行骨架并完成真实 PoC
@@ -182,6 +185,7 @@ git rm tests/test_placeholder.py
 git commit -m "feat: 验证聚宽归档下载链路"
 ```
 
+archived-with: 2026-07-11-add-joinquant-archive-sync
 ---
 
 ### Task 2: 实现稳定身份、目标校验和 manifest 门禁
@@ -244,6 +248,7 @@ git add .agents/skills/joinquant-archive-sync tests/joinquant_sync/test_archive.
 git commit -m "feat: 建立归档身份与完整性门禁"
 ```
 
+archived-with: 2026-07-11-add-joinquant-archive-sync
 ---
 
 ### Task 3: 实现原始证据优先和原子 manifest 提交
@@ -302,6 +307,7 @@ git add .agents/skills/joinquant-archive-sync/scripts/joinquant_sync/archive.py 
 git commit -m "feat: 原子提交聚宽归档清单"
 ```
 
+archived-with: 2026-07-11-add-joinquant-archive-sync
 ---
 
 ### Task 4: 实现 Research 分页、运行状态和前后清单围栏
@@ -367,6 +373,7 @@ git add .agents/skills/joinquant-archive-sync tests/joinquant_sync/test_browser_
 git commit -m "feat: 校验聚宽结构化数据分页"
 ```
 
+archived-with: 2026-07-11-add-joinquant-archive-sync
 ---
 
 ### Task 5: 实现归因日志、普通日志 1000 条边界和积分确认
@@ -457,6 +464,7 @@ git add .agents/skills/joinquant-archive-sync tests/joinquant_sync
 git commit -m "feat: 完整校验聚宽日志"
 ```
 
+archived-with: 2026-07-11-add-joinquant-archive-sync
 ---
 
 ### Task 6: 实现 Parquet、DuckDB 查询、CSV 和 Git LFS 恢复证明
@@ -532,6 +540,7 @@ git add .agents/skills/joinquant-archive-sync tests/joinquant_sync/test_query.py
 git commit -m "feat: 提供紧凑查询与按需导出"
 ```
 
+archived-with: 2026-07-11-add-joinquant-archive-sync
 ---
 
 ### Task 7: 实现模拟交易增量和关闭终态
@@ -595,6 +604,7 @@ git add .agents/skills/joinquant-archive-sync tests/joinquant_sync/test_archive.
 git commit -m "feat: 增量归档聚宽模拟交易"
 ```
 
+archived-with: 2026-07-11-add-joinquant-archive-sync
 ---
 
 ### Task 8: 实现北京时间计划任务和重试
@@ -650,6 +660,7 @@ git add .agents/skills/joinquant-archive-sync/scripts/jq_sync.py tests/joinquant
 git commit -m "feat: 安排聚宽每日增量同步"
 ```
 
+archived-with: 2026-07-11-add-joinquant-archive-sync
 ---
 
 ### Task 9: 完成仓库 Skill、Claude 符号链接和操作说明
@@ -711,6 +722,7 @@ git add .agents/skills/joinquant-archive-sync .claude/skills/joinquant-archive-s
 git commit -m "feat: 提供双代理共用聚宽同步技能"
 ```
 
+archived-with: 2026-07-11-add-joinquant-archive-sync
 ---
 
 ### Task 10: 实现全内存 self-test 和发布入口 E2E
@@ -783,6 +795,7 @@ git add .agents/skills/joinquant-archive-sync .build-and-verify/config.json test
 git commit -m "test: 增加聚宽同步内存端到端回归"
 ```
 
+archived-with: 2026-07-11-add-joinquant-archive-sync
 ---
 
 ### Task 11: 验证计划任务发布入口和完整交付
@@ -847,6 +860,7 @@ git add .agents/skills/joinquant-archive-sync tests .build-and-verify/config.jso
 git commit -m "test: 验证聚宽归档完整流程"
 ```
 
+archived-with: 2026-07-11-add-joinquant-archive-sync
 ---
 
 ## 计划自检

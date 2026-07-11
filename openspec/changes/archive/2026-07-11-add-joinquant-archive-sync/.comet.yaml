@@ -18,7 +18,7 @@ verification_report: docs/superpowers/reports/2026-07-11-add-joinquant-archive-s
 branch_status: handled
 created_at: 2026-07-10
 verified_at: 2026-07-11
-archived: false
+archived: true
 direct_override: null
 handoff_context: openspec/changes/add-joinquant-archive-sync/.comet/handoff/spec-context.json
 handoff_hash: 0c2fce08a96c77fd61d91344e532bc7b82446e56ee8c58c35ae76874b12e6751
