@@ -6,8 +6,14 @@
     "status": "active"
   },
   "source": {
-    "url": "https://www.joinquant.com/algorithm/live/index?backtestId=16173ca58e4a02e3f9cfa136d3c39aad",
+    "url": "https://www.joinquant.com/algorithm/live/index?backtestId=75c9f93beff19abf3d237db61c7d0c98",
     "aliases": [
+      {
+        "remote_id": "f6d71545b478c12e4032a271768bde75"
+      },
+      {
+        "remote_id": "f5c61db964aa9198e08918dcbe7c0718"
+      },
       {
         "remote_id": "722239c75798c1e29b87085702001b0f"
       },
@@ -55,20 +61,32 @@
       },
       {
         "remote_id": "528196fa1ccea98f418aff69eff639c0"
+      },
+      {
+        "remote_id": "80bc5750db1a1dbe8cf2a0f6cbbf3fd5"
+      },
+      {
+        "remote_id": "60fde9ded72461e2a1ce06fc227a2ec6"
+      },
+      {
+        "remote_id": "75c9f93beff19abf3d237db61c7d0c98"
+      },
+      {
+        "remote_id": "af6abae582d4dff0e1eaf7f3c38b63ac"
       }
     ],
-    "observed_at": "2026-07-11T16:03:49+08:00",
-    "source_backtest": "3c06c46757c12d94b76c84a963c6a0a9"
+    "observed_at": "2026-07-11T17:16:49+08:00",
+    "source_backtest": "296c7d76c7aed2b24ad9d05b3bbe79d8"
   },
   "fence": {
-    "before_sha256": "4c08954334b4d9c3c22da42816a648eabe280459cf9cf99796280f0b72c44642",
-    "after_sha256": "4c08954334b4d9c3c22da42816a648eabe280459cf9cf99796280f0b72c44642"
+    "before_sha256": "9d211df7e802618811e5098d05b3d1359080d9b73ca877364b4ae5fde3aeed54",
+    "after_sha256": "9d211df7e802618811e5098d05b3d1359080d9b73ca877364b4ae5fde3aeed54"
   },
   "research_response": {
-    "path": "snapshots/3fef8e5031ed2d1067ded41b/raw/research-response-e51776e8640d194ff7a12908.json.gz",
-    "sha256": "890cdfaedccd2c5997ff7f2983b3b63feb7ec86427461e33f7cc5516bfa043d8",
-    "bytes": 1611,
-    "raw_sha256": "e51776e8640d194ff7a1290845ecab4d2cc7dbe8e0cac6a25080862d19d7f063",
+    "path": "snapshots/3fef8e5031ed2d1067ded41b/raw/research-response-34ad3839979ab682a25b1e78.json.gz",
+    "sha256": "5cf34c6520049451ad55265e3b2cb61f4f26f49d0486d4e0fdff79e4d5f2cc35",
+    "bytes": 1610,
+    "raw_sha256": "34ad3839979ab682a25b1e7833b9897deee88b0c0bc59ee81b3e0caef6a8c6b6",
     "raw_bytes": 4738,
     "format": "json.gz"
   },
@@ -88,6 +106,14 @@
       "raw_sha256": "e51776e8640d194ff7a1290845ecab4d2cc7dbe8e0cac6a25080862d19d7f063",
       "raw_bytes": 4738,
       "format": "json.gz"
+    },
+    {
+      "path": "snapshots/3fef8e5031ed2d1067ded41b/raw/research-response-34ad3839979ab682a25b1e78.json.gz",
+      "sha256": "5cf34c6520049451ad55265e3b2cb61f4f26f49d0486d4e0fdff79e4d5f2cc35",
+      "bytes": 1610,
+      "raw_sha256": "34ad3839979ab682a25b1e7833b9897deee88b0c0bc59ee81b3e0caef6a8c6b6",
+      "raw_bytes": 4738,
+      "format": "json.gz"
     }
   ],
   "code": {
@@ -101,8 +127,8 @@
       "bytes": 50
     },
     "source": {
-      "path": "source_versions/a53d09f6a7b25e7b57d9f5d474ac3ef6506335a578b16f6ba2eae3ded530f9b9.json",
-      "sha256": "a53d09f6a7b25e7b57d9f5d474ac3ef6506335a578b16f6ba2eae3ded530f9b9",
+      "path": "source_versions/ded2b6c4a646fd30b722ed1efdec14cf9b39873624d7124b7ddb4f24af46fd40.json",
+      "sha256": "ded2b6c4a646fd30b722ed1efdec14cf9b39873624d7124b7ddb4f24af46fd40",
       "bytes": 56
     },
     "versions": [
@@ -113,12 +139,13 @@
       }
     ],
     "history": {
-      "path": "raw/code-history-b9e1034938f8f4ca9ee8e944.json.gz",
-      "sha256": "b165dd9cd71f568f750f1d4637c7a4a00dfe042221659d53f7189155448d9c72",
-      "bytes": 318,
-      "raw_sha256": "b9e1034938f8f4ca9ee8e944ffd23dca1eefcf27fe757cba0fc6023fd5c2e633",
+      "path": "raw/code-history-c564f1f6319a2ee35cfebc5e.json.gz",
+      "sha256": "f5bb3435f7c16668bf8e32ee2489c9bf1c1281e9d8fcdc0772cf3c3125da2940",
+      "bytes": 322,
+      "raw_sha256": "c564f1f6319a2ee35cfebc5ef97320dc7a0fc0a937cd80b4b064a10f15e28cf3",
       "raw_bytes": 649,
-      "format": "json.gz"
+      "format": "json.gz",
+      "rows": 2
     },
     "source_response": {
       "path": "raw/code-source-response-ca822d82df0ef8c71850f3f3.bin.gz",
@@ -185,7 +212,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.results",
         "terminal": true,
-        "research_response_sha256": "890cdfaedccd2c5997ff7f2983b3b63feb7ec86427461e33f7cc5516bfa043d8"
+        "research_response_sha256": "5cf34c6520049451ad55265e3b2cb61f4f26f49d0486d4e0fdff79e4d5f2cc35"
       }
     },
     "balances": {
@@ -245,7 +272,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.balances",
         "terminal": true,
-        "research_response_sha256": "890cdfaedccd2c5997ff7f2983b3b63feb7ec86427461e33f7cc5516bfa043d8"
+        "research_response_sha256": "5cf34c6520049451ad55265e3b2cb61f4f26f49d0486d4e0fdff79e4d5f2cc35"
       }
     },
     "positions": {
@@ -317,7 +344,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.positions",
         "terminal": true,
-        "research_response_sha256": "890cdfaedccd2c5997ff7f2983b3b63feb7ec86427461e33f7cc5516bfa043d8"
+        "research_response_sha256": "5cf34c6520049451ad55265e3b2cb61f4f26f49d0486d4e0fdff79e4d5f2cc35"
       }
     },
     "orders": {
@@ -397,7 +424,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.orders",
         "terminal": true,
-        "research_response_sha256": "890cdfaedccd2c5997ff7f2983b3b63feb7ec86427461e33f7cc5516bfa043d8"
+        "research_response_sha256": "5cf34c6520049451ad55265e3b2cb61f4f26f49d0486d4e0fdff79e4d5f2cc35"
       }
     },
     "records": {
@@ -437,7 +464,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.records",
         "terminal": true,
-        "research_response_sha256": "890cdfaedccd2c5997ff7f2983b3b63feb7ec86427461e33f7cc5516bfa043d8"
+        "research_response_sha256": "5cf34c6520049451ad55265e3b2cb61f4f26f49d0486d4e0fdff79e4d5f2cc35"
       }
     },
     "risk": {
@@ -514,7 +541,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.risk",
         "terminal": true,
-        "research_response_sha256": "890cdfaedccd2c5997ff7f2983b3b63feb7ec86427461e33f7cc5516bfa043d8"
+        "research_response_sha256": "5cf34c6520049451ad55265e3b2cb61f4f26f49d0486d4e0fdff79e4d5f2cc35"
       }
     },
     "period_risks": {
@@ -549,7 +576,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.period_risks",
         "terminal": true,
-        "research_response_sha256": "890cdfaedccd2c5997ff7f2983b3b63feb7ec86427461e33f7cc5516bfa043d8"
+        "research_response_sha256": "5cf34c6520049451ad55265e3b2cb61f4f26f49d0486d4e0fdff79e4d5f2cc35"
       }
     },
     "official_summary": {
@@ -600,7 +627,11 @@
       "required": false,
       "status": "unsupported_api_version",
       "evidence": {
-        "source": "live page did not expose a free profile export"
+        "enable_profile_call": true,
+        "code_sha256": "e8b5376da36b47a3ff5a5e53278c5d7e68eacbd99d0fb5f794ac5c6c024fd09b",
+        "official_reference": "JoinQuantAPI.pdf#enable_profile",
+        "profile_surface_supported": false,
+        "reason": "the current page does not expose a performance profile surface"
       }
     },
     "error_log": {
@@ -643,8 +674,8 @@
     }
   },
   "collection_fence": {
-    "collection_before_sha256": "55788ada8bfa0e769c5697afed4bed3e2922c653409e9d9d3ed97990bb09a3a7",
-    "collection_after_sha256": "55788ada8bfa0e769c5697afed4bed3e2922c653409e9d9d3ed97990bb09a3a7"
+    "collection_before_sha256": "3914c04a56541e25bdf9b2968c4c5c58cbef7d1f76530c75bac64761a9610e13",
+    "collection_after_sha256": "3914c04a56541e25bdf9b2968c4c5c58cbef7d1f76530c75bac64761a9610e13"
   },
   "gate": {
     "status": "pass",
