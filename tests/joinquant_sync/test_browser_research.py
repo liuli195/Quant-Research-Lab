@@ -43,6 +43,74 @@ def test_research_transport_leaves_xsrf_to_jupyter_ajax() -> None:
     assert "utils.ajax" in scripts
 
 
+def test_research_fetch_reads_all_requested_attribution_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import joinquant_sync.research_cloud as research_cloud
+
+    class Frame:
+        def evaluate(self, _script: str, _payload: dict[str, object]) -> dict[str, object]:
+            return {"ok": True}
+
+    def read_file(_frame: object, path: str, *, remove: bool) -> str:
+        if remove:
+            return json.dumps({"metadata": {}, "results": []})
+
+    def read_files(_frame: object, paths: list[str]) -> dict[str, str]:
+        return {
+            "audit/run-old.jsonl": '{"audit_token":"run-old"}\n',
+            "audit/run-new.jsonl": '{"audit_token":"run-new"}\n',
+        }
+
+    monkeypatch.setattr(research_cloud, "_research_frame", lambda _page: Frame())
+    monkeypatch.setattr(research_cloud, "_read_research_file", read_file)
+    monkeypatch.setattr(research_cloud, "_read_research_files", read_files)
+
+    result = research_cloud.fetch_research_backtest(
+        object(),
+        "simulation",
+        attribution_paths=["audit/run-old.jsonl", "audit/run-new.jsonl"],
+    )
+
+    assert result["attributions"] == {
+        "audit/run-old.jsonl": b'{"audit_token":"run-old"}\n',
+        "audit/run-new.jsonl": b'{"audit_token":"run-new"}\n',
+    }
+
+
+def test_simulation_history_fetches_each_distinct_source_code() -> None:
+    from joinquant_sync.browser import fetch_simulation_code_versions
+
+    class Page:
+        def __init__(self) -> None:
+            self.urls: list[str] = []
+
+        def evaluate(self, _script: str, payload: dict[str, str]) -> dict[str, object]:
+            self.urls.append(payload["url"])
+            source_id = payload["url"].split("=")[-1]
+            return {
+                "ok": True,
+                "value": {"data": {"source": f"# code {source_id}\n"}},
+                "raw_text": "raw",
+            }
+
+    page = Page()
+    result = fetch_simulation_code_versions(
+        page,
+        [
+            {"sourceBacktestId": "new"},
+            {"sourceBacktestId": "old"},
+            {"sourceBacktestId": "new"},
+        ],
+    )
+
+    assert result == ["# code new\n", "# code old\n"]
+    assert page.urls == [
+        "/algorithm/backtest/source?backtestId=new",
+        "/algorithm/backtest/source?backtestId=old",
+    ]
+
+
 def test_log_transport_captures_original_response_text() -> None:
     import joinquant_sync.browser as browser
 

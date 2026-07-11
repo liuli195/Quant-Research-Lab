@@ -706,6 +706,38 @@ def reuse_simulation_code_history(
     return list(fresh_items), [fresh_document], False
 
 
+def fetch_simulation_code_versions(
+    page: Page, history: Iterable[object]
+) -> list[str]:
+    """Resolve history metadata to the complete source of every code version."""
+    source_ids: list[str] = []
+    for item in history:
+        if not isinstance(item, dict):
+            raise TargetDiscoveryError("simulation code history row is invalid")
+        source_id = str(item.get("sourceBacktestId") or "").strip()
+        if not source_id:
+            raise TargetDiscoveryError("simulation code history source is missing")
+        if source_id not in source_ids:
+            source_ids.append(source_id)
+    versions: list[str] = []
+    for source_id in source_ids:
+        result = page.evaluate(
+            _CY_AJAX_JS,
+            {
+                "url": "/algorithm/backtest/source?"
+                + urlencode({"backtestId": source_id})
+            },
+        )
+        document = result.get("value") if result.get("ok") else None
+        data = document.get("data") if isinstance(document, dict) else None
+        if not isinstance(data, dict) or not isinstance(data.get("source"), str):
+            raise TargetDiscoveryError(
+                f"simulation code history source is invalid: {source_id}"
+            )
+        versions.append(str(data["source"]))
+    return versions
+
+
 def fetch_simulation_browser_evidence(
     page: Page,
     candidate: dict[str, object],
@@ -906,13 +938,7 @@ def fetch_simulation_browser_evidence(
         + ("\n" if records else "")
     ).encode("utf-8")
 
-    code_versions = [
-        str(item.get("code"))
-        for item in history
-        if isinstance(item, dict)
-        and isinstance(item.get("code"), str)
-        and str(item.get("code")).strip()
-    ]
+    code_versions = fetch_simulation_code_versions(page, history)
     source_backtest = next(
         (
             str(item.get("sourceBacktestId"))

@@ -167,16 +167,21 @@ def _commit_test_simulation(
     browser_start_date: str = "2026-01-01",
     history_includes_current: bool = True,
     profile: bool = False,
+    rotated_writer: bool = False,
 ) -> dict[str, object]:
-    from joinquant_sync.archive import commit_manifest, detect_attribution_writer
+    from joinquant_sync.archive import (
+        commit_manifest,
+        detect_attribution_writer,
+        detect_attribution_writers,
+    )
     from joinquant_sync.sync_pipeline import (
         _build_simulation_batch,
         _update_simulation_pointers,
     )
 
-    token = "run-1"
+    token = "run-new" if rotated_writer else "run-1"
     code = (
-        'JQ_AUTO_AUDIT_TOKEN = "run-1"\n'
+        f'JQ_AUTO_AUDIT_TOKEN = "{token}"\n'
         'JQ_AUTO_AUDIT_DIR = "audit"\n'
         "def audit_event(event):\n    write_file(g.audit_path, event, append=True)\n"
         if writer
@@ -252,7 +257,12 @@ def _commit_test_simulation(
         ),
         "performance_profile_surface_supported": profile,
     }
-    attribution = detect_attribution_writer(code)
+    old_code = code.replace("run-new", "run-old") if rotated_writer else code
+    attribution = (
+        detect_attribution_writers([code, old_code])
+        if rotated_writer
+        else detect_attribution_writer(code)
+    )
     attribution_rows = [
         {
             "audit_token": token,
@@ -277,6 +287,46 @@ def _commit_test_simulation(
         if writer
         else b""
     )
+    attributions = None
+    if rotated_writer:
+        old_rows = [
+            {
+                "audit_token": "run-old",
+                "seq": 1,
+                "event": "run_start",
+                "current_dt": "2026-01-01T00:00:00",
+            }
+        ]
+        new_rows = [
+            {
+                "audit_token": "run-new",
+                "seq": 1,
+                "event": "run_start",
+                "current_dt": "2025-01-01T00:00:00",
+            },
+            {
+                "audit_token": "run-new",
+                "seq": 2,
+                "event": "run_end",
+                "current_dt": "2025-12-31T23:59:59",
+            },
+            {
+                "audit_token": "run-new",
+                "seq": 3,
+                "event": "schedule_reset_after_code_changed",
+                "current_dt": "2026-01-01T00:01:00",
+            },
+        ]
+        attributions = {
+            "audit/run-new.jsonl": (
+                "".join(json.dumps(row, separators=(",", ":")) + "\n" for row in new_rows)
+            ).encode(),
+            "audit/run-old.jsonl": (
+                "".join(json.dumps(row, separators=(",", ":")) + "\n" for row in old_rows)
+            ).encode(),
+        }
+        raw = b""
+        browser["code_versions"] = [code, old_code]
     stage = object_dir.parent / "stage"
     manifest, staged = _build_simulation_batch(
         stage,
@@ -295,12 +345,36 @@ def _commit_test_simulation(
             "bundle": bundle,
             "raw": json.dumps(bundle, separators=(",", ":")).encode(),
             "attribution": raw,
+            "attributions": attributions or {},
         },
         attribution,
     )
     commit_manifest(object_dir, manifest, staged)
     _update_simulation_pointers(object_dir, manifest)
     return manifest
+
+
+def test_simulation_rotated_writer_archives_all_source_logs(tmp_path: Path) -> None:
+    from joinquant_sync.archive import verify_existing_manifest
+
+    object_dir = tmp_path / "simulation"
+    manifest = _commit_test_simulation(
+        object_dir,
+        writer=True,
+        rotated_writer=True,
+    )
+
+    dataset = manifest["datasets"]["attribution_log"]
+    assert dataset["rows"] == 2
+    assert dataset["evidence"]["tokens"] == ["run-new", "run-old"]
+    assert len(
+        [
+            item
+            for item in dataset["files"]
+            if item.get("format") == "attribution-source-jsonl.gz"
+        ]
+    ) == 2
+    assert verify_existing_manifest(object_dir)["gate"]["status"] == "pass"
 
 
 def _datasets(kind: str = "simulation") -> dict[str, dict[str, object]]:
@@ -1343,6 +1417,7 @@ def test_production_simulation_core_runs_incrementally_in_memory(
         _backtest_id: str,
         *,
         attribution_path: str = "",
+        attribution_paths: list[str] | None = None,
         after_times: dict[str, str] | None = None,
     ) -> dict[str, object]:
         after = dict(after_times or {})
@@ -1406,6 +1481,7 @@ def test_production_simulation_core_runs_incrementally_in_memory(
             "bundle": rows,
             "raw": json.dumps(rows, separators=(",", ":")).encode(),
             "attribution": b"",
+            "attributions": {},
         }
 
     monkeypatch.setattr(

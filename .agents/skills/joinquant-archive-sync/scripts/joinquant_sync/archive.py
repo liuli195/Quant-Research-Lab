@@ -196,6 +196,163 @@ def detect_attribution_writer(code: str) -> dict[str, object]:
     }
 
 
+def detect_attribution_writers(codes: Iterable[str]) -> dict[str, object]:
+    """Collect every distinct attribution path used by simulation code history."""
+    writers: list[dict[str, object]] = []
+    code_versions = 0
+    seen: set[str] = set()
+    for code in codes:
+        if not str(code).strip():
+            continue
+        code_versions += 1
+        writer = detect_attribution_writer(str(code))
+        if not writer["writer_present"]:
+            continue
+        path = str(writer.get("path") or "")
+        if not path:
+            raise AttributionIncomplete("simulation attribution path is unresolved")
+        if path in seen:
+            continue
+        seen.add(path)
+        evidence = writer.get("evidence")
+        writers.append(
+            {
+                "path": path,
+                "token": str(evidence.get("token") or "")
+                if isinstance(evidence, dict)
+                else "",
+            }
+        )
+    return {
+        "writer_present": bool(writers),
+        "path": str(writers[0]["path"]) if writers else "",
+        "writers": writers,
+        "evidence": {"code_versions": code_versions, "writers": writers},
+    }
+
+
+def prepare_simulation_attribution(
+    sources: dict[str, bytes],
+    attribution: dict[str, object],
+    *,
+    start_date: str,
+    status: str,
+    end_date: str = "",
+) -> tuple[bytes, dict[str, object]]:
+    """Validate full source logs and select only rows belonging to one simulation."""
+    writers = attribution.get("writers")
+    if not isinstance(writers, list) or not writers:
+        raise AttributionIncomplete("simulation attribution writers are missing")
+    expected_paths = [
+        str(item.get("path") or "") for item in writers if isinstance(item, dict)
+    ]
+    if not expected_paths or set(sources) != set(expected_paths):
+        raise AttributionIncomplete("simulation attribution sources are incomplete")
+
+    selected: list[tuple[str, int, int, dict[str, object]]] = []
+    source_evidence: list[dict[str, object]] = []
+    tokens: list[str] = []
+    start = start_date[:10]
+    end = end_date[:10]
+    for writer_order, writer in enumerate(writers):
+        if not isinstance(writer, dict):
+            raise AttributionIncomplete("simulation attribution writer is invalid")
+        path = str(writer.get("path") or "")
+        expected_token = str(writer.get("token") or "")
+        raw = sources[path]
+        raw_lines = [line.rstrip(b"\r\n") for line in raw.splitlines() if line.strip()]
+        try:
+            rows = [json.loads(line) for line in raw_lines]
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise AttributionIncomplete(
+                f"simulation attribution source is malformed: {path}"
+            ) from error
+        if not rows or not all(isinstance(row, dict) for row in rows):
+            raise AttributionIncomplete(
+                f"simulation attribution source is empty or non-object: {path}"
+            )
+        row_tokens = {row.get("token") or row.get("audit_token") for row in rows}
+        if row_tokens != {expected_token}:
+            raise AttributionIncomplete(
+                f"simulation attribution source token mismatch: {path}"
+            )
+        if PurePosixPath(path).stem != expected_token:
+            raise AttributionIncomplete(
+                f"simulation attribution source path mismatch: {path}"
+            )
+        sequence = [row.get("seq") for row in rows]
+        if not all(type(value) is int for value in sequence) or sequence != list(
+            range(1, len(rows) + 1)
+        ):
+            raise AttributionIncomplete(
+                f"simulation attribution source sequence is not contiguous: {path}"
+            )
+        times = [str(row.get("current_dt") or "") for row in rows]
+        if any(not value for value in times) or times != sorted(times):
+            raise AttributionIncomplete(
+                f"simulation attribution source time order is invalid: {path}"
+            )
+        selected_rows = 0
+        for row in rows:
+            current = str(row["current_dt"])
+            current_date = current[:10]
+            if start and current_date < start:
+                continue
+            if end and current_date > end:
+                continue
+            selected.append((current, writer_order, int(row["seq"]), row))
+            selected_rows += 1
+        tokens.append(expected_token)
+        source_evidence.append(
+            {
+                "source_path": path,
+                "token": expected_token,
+                "source_rows": len(rows),
+                "selected_rows": selected_rows,
+                "sha256": hashlib.sha256(raw).hexdigest(),
+            }
+        )
+
+    selected.sort(key=lambda item: item[:3])
+    rows = [item[3] for item in selected]
+    if not rows:
+        raise AttributionIncomplete("simulation attribution has no rows in run range")
+    first_date = str(rows[0].get("current_dt") or "")[:10]
+    if rows[0].get("event") != "run_start" or (start and first_date != start):
+        raise AttributionIncomplete(
+            "simulation attribution start time does not match target run"
+        )
+    if status == "closed":
+        last_date = str(rows[-1].get("current_dt") or "")[:10]
+        if rows[-1].get("event") != "run_end":
+            raise AttributionIncomplete("simulation attribution run_end is missing")
+        if end and last_date != end:
+            raise AttributionIncomplete(
+                "simulation attribution end time does not match target run"
+            )
+    payload = (
+        "\n".join(
+            json.dumps(row, ensure_ascii=False, separators=(",", ":")) for row in rows
+        )
+        + "\n"
+    ).encode("utf-8")
+    checked = {
+        "required": True,
+        "status": "complete",
+        "rows": len(rows),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "tokens": tokens,
+        "run_start": True,
+        "run_end": rows[-1].get("event") == "run_end",
+        "evidence": {
+            "expected_start": start_date,
+            "expected_end": end_date,
+            "sources": source_evidence,
+        },
+    }
+    return payload, checked
+
+
 @dataclass(frozen=True)
 class DatasetPolicy:
     required: bool = True
@@ -839,22 +996,64 @@ def _verify_attribution_dataset(
     except OSError as error:
         raise IntegrityError("attribution raw evidence is invalid") from error
     status = str((manifest.get("object") or {}).get("status") or "active")
-    expected_token = str((writer.get("evidence") or {}).get("token") or "")
     expected_start = str(params.get("start_date") or "")
+    expected_end = str(params.get("end_date") or "")
     if (manifest.get("object") or {}).get("kind") == "simulation":
         results = (manifest.get("datasets") or {}).get("results")
         result_range = results.get("time_range") if isinstance(results, dict) else None
         if isinstance(result_range, dict) and result_range.get("start"):
             expected_start = str(result_range["start"])
-    checked = validate_attribution(
-        raw.splitlines(),
-        "done" if status == "closed" else status,
-        True,
-        expected_token=expected_token,
-        expected_path=str(writer.get("path") or ""),
-        expected_start=expected_start,
-        expected_end=str(params.get("end_date") or ""),
-    )
+        if isinstance(result_range, dict) and result_range.get("end"):
+            expected_end = str(result_range["end"])
+    source_items = [
+        item
+        for item in files
+        if isinstance(item, dict)
+        and item.get("format") == "attribution-source-jsonl.gz"
+    ]
+    if source_items:
+        sources: dict[str, bytes] = {}
+        try:
+            for item in source_items:
+                source_path = str(item.get("source_path") or "")
+                if not source_path or source_path in sources:
+                    raise IntegrityError(
+                        "simulation attribution source identity is invalid"
+                    )
+                with gzip.open(
+                    _object_path(object_dir, str(item.get("path") or "")), "rb"
+                ) as stream:
+                    sources[source_path] = stream.read()
+        except OSError as error:
+            raise IntegrityError(
+                "simulation attribution source evidence is invalid"
+            ) from error
+        try:
+            selected, checked = prepare_simulation_attribution(
+                sources,
+                writer,
+                start_date=expected_start,
+                status=status,
+                end_date=expected_end,
+            )
+        except AttributionIncomplete as error:
+            raise IntegrityError(str(error)) from error
+        if selected != raw:
+            raise IntegrityError("simulation attribution selected view mismatch")
+    else:
+        writers = writer.get("writers")
+        if isinstance(writers, list) and len(writers) > 1:
+            raise IntegrityError("simulation attribution source evidence is missing")
+        expected_token = str((writer.get("evidence") or {}).get("token") or "")
+        checked = validate_attribution(
+            raw.splitlines(),
+            "done" if status == "closed" else status,
+            True,
+            expected_token=expected_token,
+            expected_path=str(writer.get("path") or ""),
+            expected_start=expected_start,
+            expected_end=str(params.get("end_date") or ""),
+        )
     raw_rows = [json.loads(line) for line in raw.splitlines() if line.strip()]
     parquet_rows: list[dict[str, object]] = []
     for item in parquet_items:
@@ -1050,6 +1249,23 @@ def _verify_run_contents(object_dir: Path, manifest: dict[str, object]) -> None:
     except (OSError, UnicodeDecodeError) as error:
         raise IntegrityError("run code is not valid UTF-8") from error
     writer = detect_attribution_writer(code_text)
+    if object_state.get("kind") == "simulation":
+        version_codes: list[str] = []
+        versions = code.get("versions")
+        if not isinstance(versions, list):
+            raise IntegrityError("simulation code versions are invalid")
+        for item in versions:
+            if not isinstance(item, dict):
+                raise IntegrityError("simulation code version record is invalid")
+            try:
+                version_codes.append(
+                    _object_path(object_dir, str(item.get("path") or "")).read_text(
+                        encoding="utf-8"
+                    )
+                )
+            except (OSError, UnicodeDecodeError) as error:
+                raise IntegrityError("simulation code version is not valid UTF-8") from error
+        writer = detect_attribution_writers([*version_codes, code_text])
     datasets = manifest.get("datasets")
     if not isinstance(datasets, dict):
         raise IntegrityError("run datasets are missing")

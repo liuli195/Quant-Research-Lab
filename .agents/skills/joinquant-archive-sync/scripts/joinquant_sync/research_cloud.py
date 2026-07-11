@@ -227,6 +227,42 @@ async ({ path, remove }) => {
 """
 
 
+_FILES_JS = r"""
+async ({ paths }) => {
+  const match = location.pathname.match(/^\/user\/[^/]+\//);
+  if (!match) return {ok: false, error: `unexpected workspace path: ${location.pathname}`};
+  const base = match[0];
+  let utils;
+  try {
+    utils = await new Promise((resolve, reject) => {
+      require(["base/js/utils"], resolve, reject);
+    });
+  } catch (error) {
+    return {ok: false, error: error && error.message ? error.message : String(error)};
+  }
+  const ajax = (url) => new Promise((resolve, reject) => {
+    utils.ajax(url).done(resolve).fail(response => {
+      reject(new Error(`${response.status} ${url}`));
+    });
+  });
+  const contents = {};
+  try {
+    for (const path of paths) {
+      const encoded = String(path).split("/").map(encodeURIComponent).join("/");
+      const data = await ajax(`${base}api/contents/${encoded}?content=1&type=file`);
+      if (data.format !== "text" || typeof data.content !== "string") {
+        return {ok: false, error: `unexpected file format: ${data.format}`};
+      }
+      contents[path] = data.content;
+    }
+  } catch (error) {
+    return {ok: false, error: error && error.message ? error.message : String(error)};
+  }
+  return {ok: true, contents};
+}
+"""
+
+
 def _read_research_file(frame: Frame, path: str, *, remove: bool) -> str:
     result = frame.evaluate(_FILE_JS, {"path": path, "remove": remove})
     if not result.get("ok"):
@@ -236,11 +272,24 @@ def _read_research_file(frame: Frame, path: str, *, remove: bool) -> str:
     return str(result["content"])
 
 
+def _read_research_files(frame: Frame, paths: list[str]) -> dict[str, str]:
+    result = frame.evaluate(_FILES_JS, {"paths": paths})
+    contents = result.get("contents") if result.get("ok") else None
+    if not isinstance(contents, dict) or set(contents) != set(paths):
+        raise ResearchCloudError(
+            str(result.get("error") or "research files read failed")
+        )
+    if not all(isinstance(path, str) and isinstance(value, str) for path, value in contents.items()):
+        raise ResearchCloudError("research files response is invalid")
+    return {str(path): str(value) for path, value in contents.items()}
+
+
 def fetch_research_backtest(
     page: Page,
     backtest_id: str,
     *,
     attribution_path: str = "",
+    attribution_paths: list[str] | None = None,
     after_times: dict[str, str] | None = None,
 ) -> dict[str, object]:
     export_path = f"jq_auto_exports/archive_sync_{uuid.uuid4().hex}.json"
@@ -264,6 +313,15 @@ def fetch_research_backtest(
         raise ResearchCloudError("research export is invalid JSON") from error
     if not isinstance(bundle, dict):
         raise ResearchCloudError("research export root is not an object")
+    if attribution_path and attribution_paths:
+        raise ResearchCloudError("attribution path arguments are mutually exclusive")
+    requested_paths = list(dict.fromkeys(attribution_paths or []))
+    attributions = {
+        path: content.encode("utf-8")
+        for path, content in (
+            _read_research_files(frame, requested_paths) if requested_paths else {}
+        ).items()
+    }
     attribution = (
         _read_research_file(frame, attribution_path, remove=False).encode("utf-8")
         if attribution_path
@@ -273,5 +331,6 @@ def fetch_research_backtest(
         "bundle": bundle,
         "raw": raw_text.encode("utf-8"),
         "attribution": attribution,
+        "attributions": attributions,
         "execution": execution,
     }

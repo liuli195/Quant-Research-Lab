@@ -734,6 +734,64 @@ def audit_event(event):
     }
 
 
+def test_simulation_attribution_collects_and_filters_all_code_version_sources() -> None:
+    from joinquant_sync.archive import (
+        detect_attribution_writers,
+        prepare_simulation_attribution,
+    )
+
+    old_code = (
+        'JQ_AUTO_AUDIT_TOKEN = "run-old"\n'
+        'JQ_AUTO_AUDIT_DIR = "audit"\n'
+        "def audit_event(event):\n    write_file(g.audit_path, event, append=True)\n"
+    )
+    new_code = old_code.replace("run-old", "run-new")
+    writers = detect_attribution_writers([new_code, old_code, new_code])
+    assert [item["path"] for item in writers["writers"]] == [
+        "audit/run-new.jsonl",
+        "audit/run-old.jsonl",
+    ]
+
+    sources = {
+        "audit/run-old.jsonl": (
+            b'{"audit_token":"run-old","seq":1,"event":"run_start",'
+            b'"current_dt":"2026-05-19T00:00:00"}\n'
+            b'{"audit_token":"run-old","seq":2,"event":"rebalance",'
+            b'"current_dt":"2026-07-01T09:30:00"}\n'
+        ),
+        "audit/run-new.jsonl": (
+            b'{"audit_token":"run-new","seq":1,"event":"run_start",'
+            b'"current_dt":"2021-01-01T00:00:00"}\n'
+            b'{"audit_token":"run-new","seq":2,"event":"run_end",'
+            b'"current_dt":"2026-04-30T23:59:59"}\n'
+            b'{"audit_token":"run-new","seq":3,'
+            b'"event":"schedule_reset_after_code_changed",'
+            b'"current_dt":"2026-07-10T16:06:38"}\n'
+        ),
+    }
+
+    selected, checked = prepare_simulation_attribution(
+        sources,
+        writers,
+        start_date="2026-05-19",
+        status="active",
+    )
+    rows = [json.loads(line) for line in selected.splitlines()]
+
+    assert [(row["audit_token"], row["seq"]) for row in rows] == [
+        ("run-old", 1),
+        ("run-old", 2),
+        ("run-new", 3),
+    ]
+    assert checked["status"] == "complete"
+    assert checked["rows"] == 3
+    assert checked["tokens"] == ["run-new", "run-old"]
+    assert [item["selected_rows"] for item in checked["evidence"]["sources"]] == [
+        1,
+        2,
+    ]
+
+
 def test_code_without_attribution_writer_is_missing_at_source() -> None:
     from joinquant_sync.archive import detect_attribution_writer
 
