@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.vibe-trading/manifest.schema.json",
+  "title": "JoinQuant archive manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "object",
+    "source",
+    "fence",
+    "code",
+    "datasets",
+    "gate"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "object": {
+      "type": "object",
+      "required": ["kind", "local_id", "status"],
+      "properties": {
+        "kind": {"enum": ["strategy", "backtest", "simulation"]},
+        "local_id": {"type": "string", "minLength": 1},
+        "status": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": true
+    },
+    "source": {
+      "type": "object",
+      "required": ["url", "aliases", "observed_at"],
+      "properties": {
+        "url": {"type": "string"},
+        "aliases": {"type": "array", "items": {"type": "object"}},
+        "observed_at": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "fence": {
+      "type": "object",
+      "required": ["before_sha256", "after_sha256"],
+      "properties": {
+        "before_sha256": {"type": "string"},
+        "after_sha256": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "collection_fence": {
+      "type": "object",
+      "required": ["collection_before_sha256", "collection_after_sha256"],
+      "properties": {
+        "collection_before_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "collection_after_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "research_response": {
+      "type": "object",
+      "required": ["path", "sha256", "format"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "format": {"const": "json.gz"}
+      },
+      "additionalProperties": true
+    },
+    "research_lineage": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256", "format"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "format": {"const": "json.gz"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "code": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": true
+    },
+    "datasets": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/dataset"}
+    },
+    "tracking": {"enum": ["active", "stopped"]},
+    "final_sync": {"enum": ["complete"]},
+    "streams": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["cursor", "sha256"],
+        "properties": {
+          "cursor": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "gate": {
+      "type": "object",
+      "required": ["status", "exceptions"],
+      "properties": {
+        "status": {"enum": ["pass", "fail"]},
+        "exceptions": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "object": {
+            "properties": {
+              "kind": {"enum": ["backtest", "simulation"]}
+            },
+            "required": ["kind"]
+          }
+        },
+        "required": ["object"]
+      },
+      "then": {"required": ["collection_fence", "research_response", "research_lineage"]}
+    }
+  ],
+  "$defs": {
+    "dataset": {
+      "type": "object",
+      "required": ["required", "status"],
+      "properties": {
+        "required": {"type": "boolean"},
+        "status": {
+          "enum": [
+            "complete",
+            "capped_free",
+            "missing_at_source",
+            "unsupported_api_version",
+            "failed"
+          ]
+        },
+        "rows": {"type": "integer", "minimum": 0},
+        "bytes": {"type": "integer", "minimum": 0},
+        "verified_empty": {"type": "boolean"},
+        "time_range": {"type": ["object", "null"]},
+        "pagination": {"type": "object"},
+        "files": {"type": "array", "items": {"type": "object"}},
+        "evidence": {"type": "object"}
+      },
+      "additionalProperties": true
+    }
+  }
+}

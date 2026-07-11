@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "object": {
+    "kind": "strategy",
+    "local_id": "strategy-002",
+    "status": "active",
+    "name": "ETF动态调仓"
+  },
+  "source": {
+    "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=4bc73b7d3eb0d38811f5332ed8a206fa&backtest=12",
+    "aliases": [
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=4bc73b7d3eb0d38811f5332ed8a206fa&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=c3943e9410862a0e5a5b04d74fe364ee&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=047e7aa1c21b713d00ec3d15f9e67353&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=b90ad58baaa3f8f199495c6cac684bfa&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=f5f2b92b1df04f87c18e65a6cd54a747&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=e077db5d8d26456712b0dbb9b27ec16c&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=496b053635f842bf3b8d890e51d4d95e&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=4e3c52d473003225faf97b751dc92996&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=8e5e232de53a5176a13b98c350d32359&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=acf1d7c26a575227e0e5aeb9ed29680a&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=fe86a2995df0a4bc869130e56c97331e&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=b903b7a7adc2ce3db37c45669769277b&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=dcaa4539c0ad10788d61fa3766648b78&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=0ea022900d289d5094f5300174e22039&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=886d0a631b35d345ed788c25523ff30f&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=0e1f90ab5166c320632c67cd892dbd7b&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=d98e6d9dae9b2bf63d3ee4e90d54ed3f&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=e50368c4fc69c73cb303b2889c925abe&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=6aa9cd8298f7baae7b4593c8590cc3c6&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=67caf239b0878d4c263717fcbf77917f&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=9a02c0a579c4397cf131de0278c148cd&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=fc4b37fda683a5829c1a0a474f221c04&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=9bb57d08fee4f849075daf0589e664ba&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=68e32ad4ebefaa3eb238c0298818961b&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=a4918da4262077156cb04e31be169895&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=c57fcc9eeb34b39428c46f5c87bfe77f&backtest=12"
+      }
+    ],
+    "observed_at": "2026-07-11T21:50:13+08:00"
+  },
+  "fence": {
+    "before_sha256": "9f25381bdf78a8b0a42a71d09fa8f359bfa1e53855c829526607f6e4b254b731",
+    "after_sha256": "9f25381bdf78a8b0a42a71d09fa8f359bfa1e53855c829526607f6e4b254b731"
+  },
+  "code": {
+    "path": "code_versions/9f25381bdf78a8b0a42a71d09fa8f359bfa1e53855c829526607f6e4b254b731.py",
+    "sha256": "9f25381bdf78a8b0a42a71d09fa8f359bfa1e53855c829526607f6e4b254b731",
+    "bytes": 25831,
+    "versions": [
+      {
+        "path": "code_versions/9f25381bdf78a8b0a42a71d09fa8f359bfa1e53855c829526607f6e4b254b731.py",
+        "sha256": "9f25381bdf78a8b0a42a71d09fa8f359bfa1e53855c829526607f6e4b254b731",
+        "bytes": 25831
+      }
+    ]
+  },
+  "datasets": {
+    "page_metadata": {
+      "required": true,
+      "status": "complete",
+      "rows": 0,
+      "verified_empty": true
+    }
+  },
+  "gate": {
+    "status": "pass",
+    "exceptions": []
+  }
+}

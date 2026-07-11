@@ -1,7 +1,1 @@
-numpy==2.4.4
-pandas==3.0.2
-requests
-beautifulsoup4
-pyyaml==6.0.3
-playwright>=1.40,<2
-pyarrow>=23.0.1,<24
+-r .agents/skills/joinquant-archive-sync/requirements.txt
