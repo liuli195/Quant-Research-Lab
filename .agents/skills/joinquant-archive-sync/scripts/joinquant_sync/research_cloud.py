@@ -4,7 +4,7 @@ import json
 import uuid
 from urllib.parse import urlsplit
 
-from playwright.sync_api import Frame, Page
+from playwright.sync_api import Frame, Page, TimeoutError as PlaywrightTimeoutError
 
 from .browser import ensure_authenticated
 
@@ -119,7 +119,18 @@ def _research_frame(page: Page) -> Frame:
             if last_path.startswith("/user/") and not last_path.startswith(
                 "/hub/user/"
             ):
-                frame.evaluate("document.readyState")
+                try:
+                    frame.wait_for_load_state("load", timeout=60_000)
+                    frame.wait_for_function(
+                        '''() => document.readyState === "complete"
+                        && typeof require === "function"
+                        && typeof requirejs === "function"''',
+                        timeout=60_000,
+                    )
+                except PlaywrightTimeoutError as error:
+                    raise ResearchCloudError(
+                        f"research runtime did not become ready: {last_path}"
+                    ) from error
                 return frame
         page.wait_for_timeout(500)
     raise ResearchCloudError(

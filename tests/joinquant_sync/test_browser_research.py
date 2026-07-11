@@ -43,6 +43,89 @@ def test_research_transport_leaves_xsrf_to_jupyter_ajax() -> None:
     assert "utils.ajax" in scripts
 
 
+def test_research_frame_waits_for_runtime_after_workspace_url() -> None:
+    from joinquant_sync.research_cloud import _research_frame
+
+    class Frame:
+        url = "https://www.joinquant.com/user/1/tree"
+
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, object]] = []
+
+        def evaluate(self, expression: str) -> str:
+            self.calls.append(("evaluate", expression))
+            return "loading"
+
+        def wait_for_load_state(self, state: str, *, timeout: int) -> None:
+            self.calls.append(("load", (state, timeout)))
+
+        def wait_for_function(self, expression: str, *, timeout: int) -> None:
+            self.calls.append(("runtime", (expression, timeout)))
+
+    class Page:
+        url = "https://www.joinquant.com/research"
+
+        def __init__(self) -> None:
+            self.research = Frame()
+
+        def goto(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def wait_for_selector(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def frame(self, *, name: str) -> Frame:
+            assert name == "research"
+            return self.research
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = Page()
+    assert _research_frame(page) is page.research
+    assert page.research.calls[0][0] == "load"
+    assert page.research.calls[1][0] == "runtime"
+    expression = str(page.research.calls[1][1][0])
+    assert 'document.readyState === "complete"' in expression
+    assert 'typeof require === "function"' in expression
+    assert 'typeof requirejs === "function"' in expression
+
+
+def test_research_frame_reports_runtime_readiness_timeout() -> None:
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    from joinquant_sync.research_cloud import ResearchCloudError, _research_frame
+
+    class Frame:
+        url = "https://www.joinquant.com/user/1/tree"
+
+        def wait_for_load_state(self, _state: str, *, timeout: int) -> None:
+            assert timeout == 60_000
+            raise PlaywrightTimeoutError("timeout")
+
+    class Page:
+        url = "https://www.joinquant.com/research"
+
+        def __init__(self) -> None:
+            self.research = Frame()
+
+        def goto(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def wait_for_selector(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def frame(self, *, name: str) -> Frame:
+            assert name == "research"
+            return self.research
+
+    with pytest.raises(
+        ResearchCloudError,
+        match=r"research runtime did not become ready: /user/1/tree",
+    ):
+        _research_frame(Page())
+
+
 def test_research_fetch_reads_only_requested_attribution_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
