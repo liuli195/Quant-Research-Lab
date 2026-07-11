@@ -1,6 +1,6 @@
 workflow: full
 language: zh-CN
-phase: verify
+phase: archive
 context_compression: beta
 build_mode: executing-plans
 build_pause: null
@@ -13,11 +13,11 @@ auto_transition: true
 base_ref: 1318db74acbe665286a9f137ed9efd95205a5018
 design_doc: docs/superpowers/specs/2026-07-11-joinquant-archive-sync-design.md
 plan: docs/superpowers/plans/2026-07-11-joinquant-archive-sync.md
-verify_result: pending
+verify_result: pass
 verification_report: docs/superpowers/reports/2026-07-11-add-joinquant-archive-sync-verify.md
-branch_status: pending
+branch_status: handled
 created_at: 2026-07-10
-verified_at: null
+verified_at: 2026-07-11
 archived: false
 direct_override: null
 handoff_context: openspec/changes/add-joinquant-archive-sync/.comet/handoff/spec-context.json
