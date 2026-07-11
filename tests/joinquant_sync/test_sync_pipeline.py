@@ -8,6 +8,18 @@ import hashlib
 import pytest
 
 
+def test_simulation_index_is_flushed_before_atomic_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import joinquant_sync.sync_pipeline as pipeline
+
+    flushed: list[int] = []
+    monkeypatch.setattr(pipeline.os, "fsync", flushed.append)
+
+    assert pipeline._simulation_id(tmp_path / "index.json", "space-1") == "simulation-001"
+    assert flushed
+
+
 def test_atomic_replace_retries_transient_windows_permission_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1856,10 +1856,14 @@ def _simulation_id(index_path: Path, page_space_id: str) -> str:
         local_id = f"simulation-{len(objects) + 1:03d}"
         objects.append({"local_id": local_id, "page_space_id": page_space_id})
         temporary = index_path.with_name(f".{index_path.name}.{uuid.uuid4().hex}.tmp")
-        temporary.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
-        _replace_with_retry(temporary, index_path)
+        try:
+            with temporary.open("w", encoding="utf-8") as stream:
+                stream.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            _replace_with_retry(temporary, index_path)
+        finally:
+            temporary.unlink(missing_ok=True)
         return local_id
 
 

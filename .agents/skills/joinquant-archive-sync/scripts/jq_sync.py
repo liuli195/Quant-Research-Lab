@@ -269,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
             for name, item in manifest.get("datasets", {}).items()
         }
         print(json.dumps(result, ensure_ascii=False))
+        return 0
     if args.command == "sync-active-simulations":
         repository = Path(args.repository).resolve()
         try:
@@ -305,6 +306,7 @@ def main(argv: list[str] | None = None) -> int:
                 ensure_ascii=False,
             )
         )
+        return 0
     if args.command == "query":
         path = Path(args.object)
         manifest = path / "manifest.json" if path.is_dir() else path
@@ -315,6 +317,7 @@ def main(argv: list[str] | None = None) -> int:
                 default=str,
             )
         )
+        return 0
     if args.command == "export-csv":
         path = Path(args.object)
         manifest = path / "manifest.json" if path.is_dir() else path
@@ -327,6 +330,7 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.destination),
         )
         print(json.dumps(result, ensure_ascii=False))
+        return 0
     if args.command == "paid-log":
         try:
             profile = _profile_path(args.profile)
@@ -463,6 +467,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"status": "failed", "error": str(error)}))
             return 1
         print(json.dumps({"status": "installed", "task_name": args.task_name}))
+        return 0
     if args.command == "schedule-status":
         result = scheduler_status(args.task_name)
         print(json.dumps(result, ensure_ascii=False))
@@ -474,8 +479,10 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"status": "failed", "error": str(error)}))
             return 1
         print(json.dumps({"status": "uninstalled", "task_name": args.task_name}))
+        return 0
     if args.command == "self-test":
         print(json.dumps(run_self_test(), ensure_ascii=False))
+        return 0
     return 0
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import duckdb
 import pandas as pd
@@ -220,6 +221,38 @@ def test_cli_query_and_csv_use_manifest_only(
         == 0
     )
     assert pd.read_csv(output)["id"].tolist() == [2]
+
+
+def test_cli_returns_immediately_after_matching_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import jq_sync
+
+    class CommandProbe:
+        matched = False
+
+        def __eq__(self, other: object) -> bool:
+            if self.matched:
+                raise AssertionError("command dispatch continued after a successful match")
+            if other == "query":
+                self.matched = True
+                return True
+            return False
+
+    arguments = SimpleNamespace(
+        command=CommandProbe(),
+        object=str(tmp_path / "manifest.json"),
+        dataset="orders",
+        limit=10,
+    )
+    parser = SimpleNamespace(parse_args=lambda _argv: arguments)
+    monkeypatch.setattr(jq_sync, "build_parser", lambda: parser)
+    monkeypatch.setattr(jq_sync, "query_rows", lambda *_args: [{"id": 1}])
+
+    assert jq_sync.main([]) == 0
+    assert json.loads(capsys.readouterr().out) == [{"id": 1}]
 
 
 def test_csv_uses_one_manifest_snapshot(
