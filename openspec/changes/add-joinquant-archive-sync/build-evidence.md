@@ -8,11 +8,10 @@
 - 真实活动模拟交易 `ETF动态调仓` 的 PoC 已取得连续 1000 条免费日志窗口并确认源代码未实现归因写入器，因此归因应为 `missing_at_source`。
 - `etf_factor_rotation` 活动模拟交易的归因文件属于其他运行，系统返回 `AttributionIncomplete` 并拒绝提交，没有把陈旧归因误标完整。
 - Windows 临时计划任务已真实创建、执行同一 `self-test`、读取退出码并清理；正式 `JoinQuantArchiveSync` 任务未安装。
-- Git LFS（大文件存储）属性覆盖 gzip、Parquet 和 CSV；远端 LFS locks 接口可用。提交前隔离 detached checkout（分离检出）已把远端现有 LFS CSV 还原为真实内容而非指针，并从 Codex、Claude 两个入口通过 `self-test`。
+- Git LFS（大文件存储）属性覆盖 gzip、Parquet 和 CSV；远端 LFS locks 接口可用。当前分支已上传 45 个 LFS 对象（974 KB）；随后从远端分支创建隔离 detached checkout（分离检出）、执行 `git lfs pull`，回测 115 和 `ETF动态调仓` 均从恢复文件通过严格校验，证明新归档可远端恢复。
 - 已验证认证成功后生成 2266 字节 DPAPI 密文，并由全新无界面进程恢复登录、列出策略 `etf_factor_rotation` 的 115 个回测候选；未消费积分，未保存或提交账号、密码、明文 Cookie、Token 或浏览器配置。
 
 ## 外部受限 / 待验证
 
 - 已用生产入口严格重同步回测 115：1289 行结果、1289 行资金、2386 行持仓、378 行订单、10 行分期风险、1000 条完整普通日志、1631 条完整归因日志和 1756 行性能分析均通过清单与文件摘要校验，门禁无例外。清单引用的原始证据为 5,208,355 字节，落盘引用文件为 831,073 字节，约压缩 6.267 倍。
 - `ETF动态调仓` 已完成新版清单迁移并通过严格门禁；页面未提供性能面板，故以页面能力证据标记 `unsupported_api_version`，代码没有归因写入器，故归因标记 `missing_at_source`。`etf_factor_rotation` 因源端归因文件时间范围属于历史回测而被拒绝提交，游标和清单未推进。正式 04:00 任务因此仍未安装。
-- 新归档 LFS 对象的远端恢复必须在获得 push（推送）授权并实际上传后才能最终证明。
