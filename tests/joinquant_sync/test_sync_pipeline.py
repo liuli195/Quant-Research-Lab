@@ -1596,6 +1596,17 @@ def test_rolling_capped_log_keeps_prior_raw_pages_and_commits(tmp_path: Path) ->
     assert verified["datasets"]["normal_log"]["status"] == "complete"
     assert verified["datasets"]["normal_log"]["rows"] == 1001
     assert len(verified["research_lineage"]) == 2
+    assert (
+        bundle["metadata"]["transfer_modes"]["results"]
+        == "compacted_after_time_overlap"
+    )
+    response_path = object_dir / str(verified["research_response"]["path"])
+    with gzip.open(response_path, "rt", encoding="utf-8") as stream:
+        source_response = json.load(stream)
+    assert (
+        source_response["metadata"]["transfer_modes"]["results"]
+        == "after_time_overlap"
+    )
 
 
 def test_production_simulation_core_runs_incrementally_in_memory(
