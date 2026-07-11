@@ -14,7 +14,7 @@
 & .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py auth
 ```
 
-认证状态只保存在 `%LOCALAPPDATA%\QuantResearchLab\joinquant-playwright` 的 Persistent Context（持久化浏览器上下文）中；不导出或加载 `storage-state.json`，也不读取或打印 Cookie（浏览器凭证）。`--profile` 指向仓库内时会在浏览器启动前拒绝。已有有效状态时可用 `auth --headless` 做无界面复核；失效时返回 `auth_required`，重新执行可见认证。
+认证状态只保存在 `%LOCALAPPDATA%\QuantResearchLab\joinquant-playwright`。`auth` 成功后只筛选 JoinQuant 域的会话 Cookie（浏览器凭证），立即用 Windows DPAPI（数据保护接口）加密；只有当前 Windows 用户能解密。实现不保存账号密码，不导出或加载明文 `storage-state.json`，也不打印 Cookie。`--profile` 指向仓库内时会在浏览器启动前拒绝。已有有效状态时可用 `auth --headless` 做无界面复核；失效时返回 `auth_required`，重新执行一次可见认证。
 
 ## 边界
 

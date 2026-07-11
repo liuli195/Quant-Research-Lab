@@ -383,7 +383,8 @@ def _stage_research_response(
     if not isinstance(raw, bytes) or not raw:
         raise IntegrityError("original research response is missing")
     archive_root = root or stage
-    path = stage / "raw" / "research-response.json.gz"
+    digest = hashlib.sha256(raw).hexdigest()[:24]
+    path = stage / "raw" / f"research-response-{digest}.json.gz"
     record = _gzip_record(raw, path, archive_root, "json.gz")
     for name in (
         "results",
@@ -608,6 +609,23 @@ def _manifest_time_cursors(manifest: dict[str, object] | None) -> dict[str, str]
         for name, value in cursors.items()
         if name in _INCREMENTAL_TABLES and isinstance(value, str) and value
     }
+
+
+def _research_after_times(manifest: dict[str, object] | None) -> dict[str, str]:
+    if not isinstance(manifest, dict):
+        return {}
+    response = manifest.get("research_response")
+    lineage = manifest.get("research_lineage")
+    if (
+        not isinstance(response, dict)
+        or not isinstance(lineage, list)
+        or not lineage
+        or not isinstance(lineage[-1], dict)
+        or lineage[-1].get("path") != response.get("path")
+        or lineage[-1].get("sha256") != response.get("sha256")
+    ):
+        return {}
+    return _manifest_time_cursors(manifest)
 
 
 def _bundle_time_cursors(
@@ -835,8 +853,9 @@ def _stage_attribution(
         rows.extend(_rows([value], "attribution_log"))
     if len(rows) != int(checked.get("rows") or 0):
         raise AttributionIncomplete("attribution validation row count changed")
-    raw_path = stage / "raw" / "attribution-log.jsonl.gz"
-    parquet_path = stage / "data" / "attribution_log.parquet"
+    digest = hashlib.sha256(raw).hexdigest()[:24]
+    raw_path = stage / "raw" / f"attribution-log-{digest}.jsonl.gz"
+    parquet_path = stage / "data" / f"attribution_log-{digest}.parquet"
     files = [_gzip_record(raw, raw_path, archive_root, "jsonl.gz")]
     staged = [raw_path]
     if rows:
@@ -1551,7 +1570,10 @@ def sync_selected_backtest(
     if _research_remote_fingerprint(research_before) != _research_remote_fingerprint(
         research_after
     ):
-        raise IntegrityError("backtest research data changed during synchronization")
+        changed = ",".join(_research_changed_sections(research_before, research_after))
+        raise IntegrityError(
+            f"backtest research data changed during synchronization: {changed}"
+        )
     final = next(
         (
             item
@@ -1691,8 +1713,17 @@ def _validate_simulation_attribution(
         )
     except AttributionIncomplete as error:
         if "start time" in str(error):
+            observed_start = "unknown"
+            try:
+                first = json.loads(next(line for line in raw.splitlines() if line.strip()))
+                if isinstance(first, dict) and first.get("current_dt"):
+                    observed_start = str(first["current_dt"])[:10]
+            except (StopIteration, json.JSONDecodeError, UnicodeDecodeError):
+                pass
             raise AttributionIncomplete(
-                "simulation attribution file belongs to a different run"
+                "simulation attribution file belongs to a different run: "
+                f"expected_start={start_date[:10] or 'unknown'} "
+                f"observed_start={observed_start}"
             ) from error
         raise
 
@@ -1729,7 +1760,9 @@ def _research_remote_fingerprint(research: dict[str, object]) -> str:
     metadata = normalized.get("metadata")
     if isinstance(metadata, dict):
         normalized["metadata"] = {
-            key: value for key, value in metadata.items() if key != "generated_at"
+            key: value
+            for key, value in metadata.items()
+            if key not in {"generated_at", "backtest_id"}
         }
     return _canonical_sha256(
         {
@@ -1739,6 +1772,53 @@ def _research_remote_fingerprint(research: dict[str, object]) -> str:
             ).hexdigest(),
         }
     )
+
+
+def _research_changed_sections(
+    before: dict[str, object], after: dict[str, object]
+) -> list[str]:
+    before_bundle = before.get("bundle")
+    after_bundle = after.get("bundle")
+    if not isinstance(before_bundle, dict) or not isinstance(after_bundle, dict):
+        return ["bundle"]
+    changed: list[str] = []
+    for name in sorted(set(before_bundle) | set(after_bundle)):
+        left = before_bundle.get(name)
+        right = after_bundle.get(name)
+        if name == "metadata":
+            left = (
+                {
+                    key: value
+                    for key, value in left.items()
+                    if key not in {"generated_at", "backtest_id"}
+                }
+                if isinstance(left, dict)
+                else left
+            )
+            right = (
+                {
+                    key: value
+                    for key, value in right.items()
+                    if key not in {"generated_at", "backtest_id"}
+                }
+                if isinstance(right, dict)
+                else right
+            )
+            if isinstance(left, dict) and isinstance(right, dict):
+                changed.extend(
+                    f"metadata.{key}"
+                    for key in sorted(set(left) | set(right))
+                    if _canonical_sha256(left.get(key))
+                    != _canonical_sha256(right.get(key))
+                )
+                continue
+        if _canonical_sha256(left) != _canonical_sha256(right):
+            changed.append(name)
+    if hashlib.sha256(bytes(before.get("attribution") or b"")).digest() != hashlib.sha256(
+        bytes(after.get("attribution") or b"")
+    ).digest():
+        changed.append("attribution")
+    return changed
 
 
 def _build_simulation_batch(
@@ -1779,7 +1859,10 @@ def _build_simulation_batch(
             "version_sha256": sorted(
                 {
                     hashlib.sha256(str(version).encode("utf-8")).hexdigest()
-                    for version in browser.get("code_versions") or []
+                    for version in [
+                        *(browser.get("code_versions") or []),
+                        browser["code"],
+                    ]
                     if str(version).strip()
                 }
             ),
@@ -1873,9 +1956,15 @@ def _build_simulation_batch(
     )
     if writer_present:
         attribution_raw = bytes(research["attribution"])
+        result_range = datasets["results"].get("time_range")
+        attribution_start = (
+            str(result_range.get("start") or "")
+            if isinstance(result_range, dict)
+            else str((browser.get("params") or {}).get("start_date") or "")
+        )
         checked = _validate_simulation_attribution(
             attribution_raw,
-            str((browser.get("params") or {}).get("start_date") or ""),
+            attribution_start,
             status,
             expected_token=str((attribution.get("evidence") or {}).get("token") or ""),
             expected_path=str(attribution.get("path") or ""),
@@ -1893,20 +1982,26 @@ def _build_simulation_batch(
         source_backtest=str(browser["source_backtest"] or "unknown"),
         versions=list(browser.get("code_versions") or []),
     )
-    history_path = stage / "raw" / "code-history.json.gz"
+    history_payload = json.dumps(
+        browser.get("code_history_pages") or [],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    history_digest = hashlib.sha256(history_payload).hexdigest()[:24]
+    history_path = stage / "raw" / f"code-history-{history_digest}.json.gz"
     code["history"] = _gzip_record(
-        json.dumps(
-            browser.get("code_history_pages") or [],
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8"),
+        history_payload,
         history_path,
         stage,
         "json.gz",
     )
-    source_response_path = stage / "raw" / "code-source-response.bin.gz"
+    source_payload = bytes(browser.get("source_raw") or b"")
+    source_digest = hashlib.sha256(source_payload).hexdigest()[:24]
+    source_response_path = (
+        stage / "raw" / f"code-source-response-{source_digest}.bin.gz"
+    )
     code["source_response"] = _gzip_record(
-        bytes(browser.get("source_raw") or b""),
+        source_payload,
         source_response_path,
         stage,
         "binary.gz",
@@ -2161,7 +2256,7 @@ def sync_all_active_simulations(
             attribution = detect_attribution_writer(str(browser["code"]))
             if attribution["writer_present"] and not attribution["path"]:
                 raise AttributionIncomplete("simulation attribution path is unresolved")
-            after_times = _manifest_time_cursors(existing)
+            after_times = _research_after_times(existing)
             research_before = fetch_research_backtest(
                 page,
                 str(browser["research_id"]),

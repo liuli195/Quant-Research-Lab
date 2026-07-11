@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import gzip
 import json
+import os
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -150,6 +151,55 @@ def test_persistent_context_ignores_exported_storage_state(tmp_path: Path) -> No
     assert cookies == []
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows DPAPI only")
+def test_authenticated_session_is_encrypted_and_restored(tmp_path: Path) -> None:
+    from joinquant_sync.browser import (
+        persist_authenticated_session,
+        restore_authenticated_session,
+    )
+
+    secret = "temporary-session-secret"
+    joinquant_cookie = {
+        "name": "session",
+        "value": secret,
+        "domain": ".joinquant.com",
+        "path": "/",
+    }
+
+    class FakeContext:
+        def __init__(self, cookies: list[dict[str, object]] | None = None) -> None:
+            self._cookies = list(cookies or [])
+            self.restored: list[dict[str, object]] = []
+
+        def cookies(self) -> list[dict[str, object]]:
+            return self._cookies
+
+        def add_cookies(self, cookies: list[dict[str, object]]) -> None:
+            self.restored.extend(cookies)
+
+    profile = tmp_path / "profile"
+    persist_authenticated_session(
+        FakeContext(
+            [
+                joinquant_cookie,
+                {
+                    "name": "unrelated",
+                    "value": "do-not-save",
+                    "domain": "example.com",
+                    "path": "/",
+                },
+            ]
+        ),
+        profile,
+    )
+
+    encrypted = (profile / "joinquant-session.dpapi").read_bytes()
+    assert secret.encode() not in encrypted
+    restored = FakeContext()
+    assert restore_authenticated_session(restored, profile) is True
+    assert restored.restored == [joinquant_cookie]
+
+
 def test_verify_import_stages_file(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -209,6 +259,16 @@ def test_auth_uses_external_persistent_profile(
     class FakeContext:
         pages = [FakePage()]
 
+        def cookies(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "name": "session",
+                    "value": "test-only",
+                    "domain": ".joinquant.com",
+                    "path": "/",
+                }
+            ]
+
     opened: dict[str, object] = {}
 
     @contextmanager
@@ -224,6 +284,12 @@ def test_auth_uses_external_persistent_profile(
         "profile_dir": tmp_path / "QuantResearchLab" / "joinquant-playwright",
         "headless": True,
     }
+    assert (
+        tmp_path
+        / "QuantResearchLab"
+        / "joinquant-playwright"
+        / "joinquant-session.dpapi"
+    ).is_file()
     assert json.loads(capsys.readouterr().out)["status"] == "authenticated"
 
 
@@ -344,6 +410,59 @@ def test_inventory_drift_retries_once_and_returns_stable_result() -> None:
     assert (
         sync_with_fence(lambda: next(inventories), lambda: next(collected)) == "second"
     )
+
+
+def test_research_change_diagnostics_name_only_stable_sections() -> None:
+    from joinquant_sync.sync_pipeline import _research_changed_sections
+
+    before = {
+        "bundle": {
+            "metadata": {"generated_at": "first", "schema_version": 1},
+            "results": [{"time": "2026-01-01", "value": 1}],
+        },
+        "attribution": b"same",
+    }
+    after = {
+        "bundle": {
+            "metadata": {"generated_at": "second", "schema_version": 1},
+            "results": [{"time": "2026-01-01", "value": 2}],
+        },
+        "attribution": b"same",
+    }
+
+    assert _research_changed_sections(before, after) == ["results"]
+
+
+def test_research_change_diagnostics_name_metadata_field() -> None:
+    from joinquant_sync.sync_pipeline import _research_changed_sections
+
+    before = {"bundle": {"metadata": {"schema_version": 1}}}
+    after = {"bundle": {"metadata": {"schema_version": 2}}}
+
+    assert _research_changed_sections(before, after) == ["metadata.schema_version"]
+
+
+def test_research_fence_ignores_rotating_backtest_alias() -> None:
+    from joinquant_sync.sync_pipeline import (
+        _research_changed_sections,
+        _research_remote_fingerprint,
+    )
+
+    before = {
+        "bundle": {
+            "metadata": {"backtest_id": "alias-one", "schema_version": 1},
+            "results": [{"time": "2026-01-01", "value": 1}],
+        }
+    }
+    after = {
+        "bundle": {
+            "metadata": {"backtest_id": "alias-two", "schema_version": 1},
+            "results": [{"time": "2026-01-01", "value": 1}],
+        }
+    }
+
+    assert _research_remote_fingerprint(before) == _research_remote_fingerprint(after)
+    assert _research_changed_sections(before, after) == []
 
 
 def _make_log_fetcher(count: int, probe: str):

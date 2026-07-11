@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "object": {
+    "kind": "strategy",
+    "local_id": "strategy-001",
+    "status": "active",
+    "name": "etf_factor_rotation"
+  },
+  "source": {
+    "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=098c93e3052c169f9b10af22afc63337&backtest=115",
+    "aliases": [
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=098c93e3052c169f9b10af22afc63337&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=9f1085709d9de07408e2c81bbe02ffc4&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=79561c3b86c384fa40ad5700f9afa78f&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=9fe27c27e1f35203356b88da340725ec&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=0b535e3a30c158608205c210dbb618d1&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=6f34f82e0210b4384f8b21017530b6e5&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=2497215f2ec5d795da6cf1fbba7955df&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=c3e378ab148422207c1b48b2836c66ba&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=821db0f66101eaf27cdfa9cf392c4f85&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=6fb6203fa0c1fbfa470481762482e240&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=45bc0922caf9af9efdfe928c82e61ef8&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=dbbe7fd486d78768c4ed1f216c49e127&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=d23946650231242c77e0cca4a73b8118&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=b2d9b5c7116e9e549f1c16bde4bcfa9f&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=26587a56e72c8b45996de645bdc535e3&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=35d982155e61bcd7aeee87e45c677c62&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=662a82e4e80d915a45fdd2d68eea2a4d&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=0b972afa26c98f4313d31161f915cc22&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=111ae914b9965de49b27825b80daf505&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=a731cf1b482ef8ab19728f055eb440a2&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=690ca64c7cf88227de1ce89a28679809&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=694cf8ad5cc4855f5ab8fdb16478a4ad&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=01b739cead2377df9ab0feac393286c2&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=5abaa8d19ec6c57f0ecbd797853ec60b&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=e863427c7020ce5724fe4732189b565a&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=f9aff860d92f5750cfec1455185d2e8f&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=90e51a9a249ef7fd98c2f735bd6cdb64&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=3a630bad657fee86ed7957042e050e1a&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=e64f5553557ef2e099b91da519412cbe&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=f7e09e1210b09c2fe5041616addea33c&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=f51b4655e5d25505b1a3dc651dda5174&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=e827d83cddcd9c35d269f8bc4c425796&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=05d8070463bd0c212db54eed317288a1&backtest=115"
+      }
+    ],
+    "observed_at": "2026-07-11T16:03:12+08:00"
+  },
+  "fence": {
+    "before_sha256": "79b2bdb2c82de35a722741b34292df7ed012f8348a19f1b0acfb209020322857",
+    "after_sha256": "79b2bdb2c82de35a722741b34292df7ed012f8348a19f1b0acfb209020322857"
+  },
+  "code": {
+    "path": "code_versions/79b2bdb2c82de35a722741b34292df7ed012f8348a19f1b0acfb209020322857.py",
+    "sha256": "79b2bdb2c82de35a722741b34292df7ed012f8348a19f1b0acfb209020322857",
+    "bytes": 62965,
+    "versions": [
+      {
+        "path": "code_versions/79b2bdb2c82de35a722741b34292df7ed012f8348a19f1b0acfb209020322857.py",
+        "sha256": "79b2bdb2c82de35a722741b34292df7ed012f8348a19f1b0acfb209020322857",
+        "bytes": 62965
+      }
+    ]
+  },
+  "datasets": {
+    "page_metadata": {
+      "required": true,
+      "status": "complete",
+      "rows": 0,
+      "verified_empty": true
+    }
+  },
+  "gate": {
+    "status": "pass",
+    "exceptions": []
+  }
+}

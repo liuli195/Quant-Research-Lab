@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import hmac
 import json
@@ -16,6 +17,93 @@ from typing import Protocol
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 
 from playwright.sync_api import BrowserContext, Page, sync_playwright
+
+
+class _DataBlob(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_uint32),
+        ("data", ctypes.POINTER(ctypes.c_ubyte)),
+    ]
+
+
+_SESSION_FILE = "joinquant-session.dpapi"
+
+
+def _dpapi(payload: bytes, *, protect: bool) -> bytes:
+    if os.name != "nt":
+        raise OSError("Windows DPAPI is unavailable")
+    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    operation = crypt32.CryptProtectData if protect else crypt32.CryptUnprotectData
+    operation.argtypes = [
+        ctypes.POINTER(_DataBlob),
+        ctypes.c_wchar_p if protect else ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.POINTER(_DataBlob),
+    ]
+    operation.restype = ctypes.c_int
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
+
+    source = ctypes.create_string_buffer(payload)
+    source_blob = _DataBlob(
+        len(payload), ctypes.cast(source, ctypes.POINTER(ctypes.c_ubyte))
+    )
+    destination = _DataBlob()
+    description = "QuantResearchLab JoinQuant session" if protect else None
+    if not operation(
+        ctypes.byref(source_blob),
+        description,
+        None,
+        None,
+        None,
+        0,
+        ctypes.byref(destination),
+    ):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return ctypes.string_at(destination.data, destination.size)
+    finally:
+        kernel32.LocalFree(destination.data)
+
+
+def persist_authenticated_session(context: BrowserContext, profile_dir: Path) -> bool:
+    cookies = [
+        cookie
+        for cookie in context.cookies()
+        if (domain := str(cookie.get("domain") or "").lstrip(".").lower())
+        == "joinquant.com"
+        or domain.endswith(".joinquant.com")
+    ]
+    if not cookies:
+        return False
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    destination = profile_dir / _SESSION_FILE
+    temporary = destination.with_suffix(".tmp")
+    payload = json.dumps({"cookies": cookies}, ensure_ascii=False).encode("utf-8")
+    temporary.write_bytes(_dpapi(payload, protect=True))
+    os.replace(temporary, destination)
+    return True
+
+
+def restore_authenticated_session(context: BrowserContext, profile_dir: Path) -> bool:
+    source = profile_dir / _SESSION_FILE
+    if not source.is_file():
+        return False
+    try:
+        payload = json.loads(_dpapi(source.read_bytes(), protect=False).decode("utf-8"))
+        cookies = payload.get("cookies")
+        if not isinstance(cookies, list) or not all(
+            isinstance(cookie, dict) for cookie in cookies
+        ):
+            return False
+        context.add_cookies(cookies)
+    except (OSError, UnicodeDecodeError, ValueError):
+        return False
+    return True
 
 
 class PageLike(Protocol):
@@ -350,6 +438,7 @@ def open_authenticated_context(
             headless=headless,
         )
         try:
+            restore_authenticated_session(context, profile_dir)
             yield context
         finally:
             context.close()

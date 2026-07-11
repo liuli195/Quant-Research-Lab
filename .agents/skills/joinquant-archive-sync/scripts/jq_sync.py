@@ -28,6 +28,7 @@ from joinquant_sync.browser import (
     open_authenticated_context,
     load_paid_preview,
     open_paid_log_quote,
+    persist_authenticated_session,
 )
 from joinquant_sync.query import export_csv, query_rows
 from joinquant_sync.scheduler import (
@@ -145,6 +146,7 @@ def _run_auth(args: argparse.Namespace) -> int:
         while "/login" in page.url.lower() and time.monotonic() < deadline:
             page.wait_for_timeout(500)
         ensure_authenticated(page)
+        persist_authenticated_session(context, profile)
     print(json.dumps({"status": "authenticated", "profile": str(profile)}))
     return 0
 

@@ -745,13 +745,19 @@ def _verify_attribution_dataset(
         raise IntegrityError("attribution raw evidence is invalid") from error
     status = str((manifest.get("object") or {}).get("status") or "active")
     expected_token = str((writer.get("evidence") or {}).get("token") or "")
+    expected_start = str(params.get("start_date") or "")
+    if (manifest.get("object") or {}).get("kind") == "simulation":
+        results = (manifest.get("datasets") or {}).get("results")
+        result_range = results.get("time_range") if isinstance(results, dict) else None
+        if isinstance(result_range, dict) and result_range.get("start"):
+            expected_start = str(result_range["start"])
     checked = validate_attribution(
         raw.splitlines(),
         "done" if status == "closed" else status,
         True,
         expected_token=expected_token,
         expected_path=str(writer.get("path") or ""),
-        expected_start=str(params.get("start_date") or ""),
+        expected_start=expected_start,
         expected_end=str(params.get("end_date") or ""),
     )
     raw_rows = [json.loads(line) for line in raw.splitlines() if line.strip()]
@@ -763,6 +769,15 @@ def _verify_attribution_dataset(
     if len(parquet_rows) != len(raw_rows) or len(parquet_rows) != dataset.get("rows"):
         raise IntegrityError("attribution row count mismatch")
     normalized_raw = _raw_fact_rows(raw_rows, "attribution_log")
+    fields = sorted(
+        {key for row in [*normalized_raw, *parquet_rows] for key in row}
+    )
+    normalized_raw = [
+        {field: row.get(field) for field in fields} for row in normalized_raw
+    ]
+    parquet_rows = [
+        {field: row.get(field) for field in fields} for row in parquet_rows
+    ]
     if json.dumps(
         normalized_raw, ensure_ascii=False, sort_keys=True, default=str
     ) != json.dumps(parquet_rows, ensure_ascii=False, sort_keys=True, default=str):

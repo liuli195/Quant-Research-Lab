@@ -9,7 +9,13 @@ import pytest
 
 
 def _commit_test_simulation(
-    object_dir: Path, *, writer: bool = False, capped: bool = False
+    object_dir: Path,
+    *,
+    writer: bool = False,
+    capped: bool = False,
+    sparse_attribution: bool = False,
+    browser_start_date: str = "2026-01-01",
+    history_includes_current: bool = True,
 ) -> dict[str, object]:
     from joinquant_sync.archive import commit_manifest, detect_attribution_writer
     from joinquant_sync.sync_pipeline import (
@@ -82,26 +88,30 @@ def _commit_test_simulation(
         ],
         "normal_log_raw_pages": raw_pages,
         "code": code,
-        "params": {"start_date": "2026-01-01"},
+        "params": {"start_date": browser_start_date},
         "source_backtest": "source",
-        "code_versions": [code],
+        "code_versions": [code] if history_includes_current else [],
     }
     attribution = detect_attribution_writer(code)
+    attribution_rows = [
+        {
+            "audit_token": token,
+            "seq": seq,
+            "event": event,
+            "current_dt": current_dt,
+        }
+        for seq, event, current_dt in (
+            (1, "run_start", "2026-01-01T00:00:00"),
+            (2, "run_end", "2026-01-01T00:01:00"),
+        )
+    ]
+    if sparse_attribution:
+        attribution_rows[0]["start_date"] = "2026-01-01"
+        attribution_rows[1]["reason"] = "completed"
     raw = (
         b"\n".join(
-            json.dumps(
-                {
-                    "audit_token": token,
-                    "seq": seq,
-                    "event": event,
-                    "current_dt": current_dt,
-                },
-                separators=(",", ":"),
-            ).encode()
-            for seq, event, current_dt in (
-                (1, "run_start", "2026-01-01T00:00:00"),
-                (2, "run_end", "2026-01-01T00:01:00"),
-            )
+            json.dumps(row, separators=(",", ":")).encode()
+            for row in attribution_rows
         )
         + b"\n"
         if writer
@@ -202,6 +212,87 @@ def test_attribution_is_saved_as_raw_and_queryable_parquet(tmp_path: Path) -> No
     staged = _stage_attribution(tmp_path, raw, datasets, {"rows": 1})
     assert {path.suffix for path in staged} == {".gz", ".parquet"}
     assert len(datasets["attribution_log"]["files"]) == 2
+    paths = {item["path"] for item in datasets["attribution_log"]["files"]}
+    assert any(path.startswith("raw/attribution-log-") for path in paths)
+    assert any(path.startswith("data/attribution_log-") for path in paths)
+
+
+def test_research_response_path_is_content_addressed(tmp_path: Path) -> None:
+    from joinquant_sync.sync_pipeline import _stage_research_response
+
+    first_datasets = _datasets()
+    second_datasets = _datasets()
+    for datasets in (first_datasets, second_datasets):
+        for name in (
+            "results",
+            "balances",
+            "positions",
+            "orders",
+            "records",
+            "risk",
+            "period_risks",
+        ):
+            datasets[name]["pagination"] = {}
+
+    first_record, _ = _stage_research_response(
+        tmp_path / "first", {"raw": b'{"revision":1}'}, first_datasets
+    )
+    second_record, _ = _stage_research_response(
+        tmp_path / "second", {"raw": b'{"revision":2}'}, second_datasets
+    )
+
+    assert first_record["path"].startswith("raw/research-response-")
+    assert first_record["path"] != second_record["path"]
+
+
+def test_simulation_raw_code_evidence_is_content_addressed(tmp_path: Path) -> None:
+    manifest = _commit_test_simulation(tmp_path / "simulation")
+
+    assert manifest["code"]["history"]["path"].startswith("raw/code-history-")
+    assert manifest["code"]["source_response"]["path"].startswith(
+        "raw/code-source-response-"
+    )
+
+
+def test_simulation_attribution_uses_first_result_date_as_run_start(
+    tmp_path: Path,
+) -> None:
+    from joinquant_sync.archive import verify_existing_manifest
+
+    object_dir = tmp_path / "simulation"
+    _commit_test_simulation(
+        object_dir,
+        writer=True,
+        browser_start_date="2025-12-31",
+    )
+
+    assert verify_existing_manifest(object_dir)["gate"]["status"] == "pass"
+
+
+def test_simulation_attribution_mismatch_reports_date_evidence_only() -> None:
+    from joinquant_sync.archive import AttributionIncomplete
+    from joinquant_sync.sync_pipeline import _validate_simulation_attribution
+
+    raw = (
+        b'{"audit_token":"run-1","seq":1,"event":"run_start",'
+        b'"current_dt":"2021-01-01T00:00:00"}\n'
+    )
+    with pytest.raises(
+        AttributionIncomplete,
+        match="expected_start=2026-01-01 observed_start=2021-01-01",
+    ):
+        _validate_simulation_attribution(raw, "2026-01-01")
+
+
+def test_simulation_code_digest_includes_current_code_missing_from_history(
+    tmp_path: Path,
+) -> None:
+    from joinquant_sync.archive import verify_existing_manifest
+
+    object_dir = tmp_path / "simulation"
+    _commit_test_simulation(object_dir, history_includes_current=False)
+
+    assert verify_existing_manifest(object_dir)["gate"]["status"] == "pass"
 
 
 def test_simulation_snapshot_id_is_content_addressed_not_date_based(
@@ -544,6 +635,15 @@ def test_verify_compares_attribution_raw_and_parquet_values(tmp_path: Path) -> N
         verify_existing_manifest(object_dir)
 
 
+def test_sparse_attribution_events_round_trip_through_parquet(tmp_path: Path) -> None:
+    from joinquant_sync.archive import verify_existing_manifest
+
+    object_dir = tmp_path / "simulation"
+    _commit_test_simulation(object_dir, writer=True, sparse_attribution=True)
+
+    assert verify_existing_manifest(object_dir)["gate"]["status"] == "pass"
+
+
 def test_verify_rejects_tampered_original_research_response(tmp_path: Path) -> None:
     from joinquant_sync.archive import IntegrityError, verify_existing_manifest
 
@@ -778,6 +878,25 @@ def test_bundle_time_cursors_never_move_backwards() -> None:
         {"results": [{"time": "2026-07-11"}], "orders": []},
         {"results": "2026-07-10", "orders": "2026-07-09"},
     ) == {"results": "2026-07-11", "orders": "2026-07-09"}
+
+
+def test_legacy_simulation_without_research_lineage_forces_full_refresh() -> None:
+    from joinquant_sync.sync_pipeline import _research_after_times
+
+    cursors = {
+        "streams": {
+            "data": {"cursors": {"results": "2026-07-11"}}
+        }
+    }
+    assert _research_after_times(cursors) == {}
+
+    response = {"path": "raw/response.json.gz", "sha256": "a" * 64}
+    current = {
+        **cursors,
+        "research_response": response,
+        "research_lineage": [response],
+    }
+    assert _research_after_times(current) == {"results": "2026-07-11"}
 
 
 def test_existing_attribution_raw_is_upgraded_to_queryable_parquet(

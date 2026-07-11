@@ -34,6 +34,12 @@ def write_parquet(
     root: Path | None = None,
 ) -> dict[str, object]:
     materialized = list(rows)
+    fields = list(
+        dict.fromkeys(key for row in materialized for key in row)
+    )
+    materialized = [
+        {field: row.get(field) for field in fields} for row in materialized
+    ]
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
     try:
