@@ -43,7 +43,7 @@ def test_research_transport_leaves_xsrf_to_jupyter_ajax() -> None:
     assert "utils.ajax" in scripts
 
 
-def test_research_fetch_reads_all_requested_attribution_sources(
+def test_research_fetch_reads_only_requested_attribution_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import joinquant_sync.research_cloud as research_cloud
@@ -52,30 +52,25 @@ def test_research_fetch_reads_all_requested_attribution_sources(
         def evaluate(self, _script: str, _payload: dict[str, object]) -> dict[str, object]:
             return {"ok": True}
 
+    requested: list[str] = []
+
     def read_file(_frame: object, path: str, *, remove: bool) -> str:
         if remove:
             return json.dumps({"metadata": {}, "results": []})
-
-    def read_files(_frame: object, paths: list[str]) -> dict[str, str]:
-        return {
-            "audit/run-old.jsonl": '{"audit_token":"run-old"}\n',
-            "audit/run-new.jsonl": '{"audit_token":"run-new"}\n',
-        }
+        requested.append(path)
+        return '{"audit_token":"run-owned"}\n'
 
     monkeypatch.setattr(research_cloud, "_research_frame", lambda _page: Frame())
     monkeypatch.setattr(research_cloud, "_read_research_file", read_file)
-    monkeypatch.setattr(research_cloud, "_read_research_files", read_files)
 
     result = research_cloud.fetch_research_backtest(
         object(),
         "simulation",
-        attribution_paths=["audit/run-old.jsonl", "audit/run-new.jsonl"],
+        attribution_path="audit/run-owned.jsonl",
     )
 
-    assert result["attributions"] == {
-        "audit/run-old.jsonl": b'{"audit_token":"run-old"}\n',
-        "audit/run-new.jsonl": b'{"audit_token":"run-new"}\n',
-    }
+    assert requested == ["audit/run-owned.jsonl"]
+    assert result["attribution"] == b'{"audit_token":"run-owned"}\n'
 
 
 def test_simulation_history_fetches_each_distinct_source_code() -> None:

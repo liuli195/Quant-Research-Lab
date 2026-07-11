@@ -220,6 +220,39 @@ def test_simulation_incremental_state_reuses_verified_code_sources(
     assert list(state["code_history_cache"].values()) == [code_text]
 
 
+def _test_code_history(code: str) -> dict[str, object]:
+    return {
+        "code_versions": [code],
+        "code_history_versions": [
+            {
+                "history_ordinal": 1,
+                "live_history_id": "history-1",
+                "source_backtest_id": "source-1",
+                "add_time": "2026-01-01 00:00:00",
+                "mod_time": "2026-01-01 00:00:00",
+                "code": code,
+            }
+        ],
+        "code_history_pages": [
+            {
+                "data": {
+                    "totalCount": 1,
+                    "list": [
+                        {
+                            "liveHistoryId": "history-1",
+                            "sourceBacktestId": "source-1",
+                            "addTime": "2026-01-01 00:00:00",
+                            "modTime": "2026-01-01 00:00:00",
+                            "code": 0,
+                        }
+                    ],
+                }
+            }
+        ],
+        "code_history_total": 1,
+    }
+
+
 def _commit_test_simulation(
     object_dir: Path,
     *,
@@ -234,8 +267,7 @@ def _commit_test_simulation(
 ) -> dict[str, object]:
     from joinquant_sync.archive import (
         commit_manifest,
-        detect_attribution_writer,
-        detect_attribution_writers,
+        detect_simulation_attribution_writer,
     )
     from joinquant_sync.sync_pipeline import (
         _build_simulation_batch,
@@ -311,7 +343,7 @@ def _commit_test_simulation(
         "code": code,
         "params": {"start_date": browser_start_date},
         "source_backtest": "source",
-        "code_versions": [code] if history_includes_current else [],
+        "code_versions": [code],
         "performance_profile": (
             b"Timer unit: 1e-06 s\nTotal time: 1 s\n"
             b"Line # Hits Time Per Hit % Time Line Contents\n"
@@ -321,14 +353,36 @@ def _commit_test_simulation(
         "performance_profile_surface_supported": profile,
     }
     old_code = code.replace("run-new", "run-old") if rotated_writer else code
-    attribution = (
-        detect_attribution_writers([code, old_code])
-        if rotated_writer
-        else detect_attribution_writer(code)
+    if rotated_writer:
+        browser["code_versions"] = [code, old_code]
+    elif not history_includes_current:
+        browser["code_versions"] = [code + "# historical\n"]
+    browser["code_history_versions"] = [
+        {
+            "history_ordinal": ordinal,
+            "live_history_id": f"history-{ordinal}",
+            "source_backtest_id": f"source-{ordinal}",
+            "add_time": (
+                "2026-02-01 00:00:00"
+                if rotated_writer and ordinal == 1
+                else f"{browser_start_date} 00:00:00"
+            ),
+            "mod_time": (
+                "2026-02-01 00:00:00"
+                if rotated_writer and ordinal == 1
+                else f"{browser_start_date} 00:00:00"
+            ),
+            "code": version,
+        }
+        for ordinal, version in enumerate(browser["code_versions"], start=1)
+    ]
+    attribution = detect_simulation_attribution_writer(
+        browser["code_history_versions"], start_date=browser_start_date
     )
+    attribution_token = str((attribution.get("evidence") or {}).get("token") or "")
     attribution_rows = [
         {
-            "audit_token": token,
+            "audit_token": attribution_token,
             "seq": seq,
             "event": event,
             "current_dt": current_dt,
@@ -350,57 +404,15 @@ def _commit_test_simulation(
         if writer
         else b""
     )
-    attributions = None
     if rotated_writer:
-        old_rows = [
-            {
-                "audit_token": "run-old",
-                "seq": 1,
-                "event": "run_start",
-                "current_dt": "2026-01-01T00:00:00",
-            }
-        ]
-        new_rows = [
-            {
-                "audit_token": "run-new",
-                "seq": 1,
-                "event": "run_start",
-                "current_dt": "2025-01-01T00:00:00",
-            },
-            {
-                "audit_token": "run-new",
-                "seq": 2,
-                "event": "run_end",
-                "current_dt": "2025-12-31T23:59:59",
-            },
-            {
-                "audit_token": "run-new",
-                "seq": 3,
-                "event": rotated_tail_event,
-                "current_dt": "2026-01-01T00:01:00",
-            },
-        ]
-        attributions = {
-            "audit/run-new.jsonl": (
-                "".join(json.dumps(row, separators=(",", ":")) + "\n" for row in new_rows)
-            ).encode(),
-            "audit/run-old.jsonl": (
-                "".join(json.dumps(row, separators=(",", ":")) + "\n" for row in old_rows)
-            ).encode(),
-        }
-        raw = b""
-        browser["code_versions"] = [code, old_code]
-    browser["code_history_versions"] = [
-        {
-            "history_ordinal": ordinal,
-            "live_history_id": f"history-{ordinal}",
-            "source_backtest_id": f"source-{ordinal}",
-            "add_time": f"2026-01-0{ordinal} 00:00:00",
-            "mod_time": f"2026-01-0{ordinal} 00:00:00",
-            "code": version,
-        }
-        for ordinal, version in enumerate(browser["code_versions"], start=1)
-    ]
+        attribution_rows[-1]["event"] = rotated_tail_event
+        raw = (
+            b"\n".join(
+                json.dumps(row, separators=(",", ":")).encode()
+                for row in attribution_rows
+            )
+            + b"\n"
+        )
     browser["code_history_total"] = len(browser["code_history_versions"])
     browser["code_history_pages"] = [
         {
@@ -437,7 +449,6 @@ def _commit_test_simulation(
             "bundle": bundle,
             "raw": json.dumps(bundle, separators=(",", ":")).encode(),
             "attribution": raw,
-            "attributions": attributions or {},
         },
         attribution,
     )
@@ -446,7 +457,7 @@ def _commit_test_simulation(
     return manifest
 
 
-def test_simulation_rotated_writer_archives_all_source_logs(tmp_path: Path) -> None:
+def test_simulation_rotated_writer_archives_lifecycle_source_only(tmp_path: Path) -> None:
     from joinquant_sync.archive import verify_existing_manifest
 
     object_dir = tmp_path / "simulation"
@@ -458,14 +469,11 @@ def test_simulation_rotated_writer_archives_all_source_logs(tmp_path: Path) -> N
 
     dataset = manifest["datasets"]["attribution_log"]
     assert dataset["rows"] == 2
-    assert dataset["evidence"]["tokens"] == ["run-new", "run-old"]
-    assert len(
-        [
-            item
-            for item in dataset["files"]
-            if item.get("format") == "attribution-source-jsonl.gz"
-        ]
-    ) == 2
+    assert dataset["evidence"]["token"] == "run-old"
+    assert not any(
+        item.get("format") == "attribution-source-jsonl.gz"
+        for item in dataset["files"]
+    )
     assert [
         (item["history_ordinal"], item["source_backtest_id"])
         for item in manifest["code"]["history_versions"]
@@ -474,7 +482,7 @@ def test_simulation_rotated_writer_archives_all_source_logs(tmp_path: Path) -> N
     assert verify_existing_manifest(object_dir)["gate"]["status"] == "pass"
 
 
-def test_simulation_fence_changes_when_only_attribution_source_changes(
+def test_simulation_fence_changes_when_lifecycle_attribution_changes(
     tmp_path: Path,
 ) -> None:
     first = _commit_test_simulation(
@@ -505,6 +513,21 @@ def test_simulation_code_history_mapping_is_verified_against_raw_pages(
         rotated_writer=True,
     )
     manifest["code"]["history_versions"][0]["source_backtest_id"] = "forged"
+    (object_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(IntegrityError, match="code history mapping"):
+        verify_existing_manifest(object_dir)
+
+
+def test_simulation_code_history_mapping_is_required(tmp_path: Path) -> None:
+    from joinquant_sync.archive import IntegrityError, verify_existing_manifest
+
+    object_dir = tmp_path / "simulation"
+    manifest = _commit_test_simulation(object_dir)
+    del manifest["code"]["history_versions"]
     (object_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -800,15 +823,16 @@ def test_simulation_snapshot_id_is_content_addressed_not_date_based(
         "aliases": ["x"],
         "fence": {"before_sha256": "0" * 64, "after_sha256": "0" * 64},
     }
+    code = "def initialize(context):\n    pass\n"
     browser = {
         "normal_log": b"line\n",
         "normal_log_status": "complete",
         "normal_log_rows": 1,
         "log_pages": [{"cursor": 0, "rows": 1}],
-        "code": "def initialize(context):\n    pass\n",
+        "code": code,
         "params": {},
         "source_backtest": "source",
-        "code_versions": [],
+        **_test_code_history(code),
     }
     research = {
         "bundle": bundle,
@@ -860,6 +884,7 @@ def test_research_fingerprint_ignores_generation_time_but_detects_data_change() 
 def test_simulation_fingerprint_uses_code_history_content_not_rotating_alias() -> None:
     from joinquant_sync.sync_pipeline import _simulation_remote_fingerprint
 
+    code = "def initialize(context):\n    pass\n"
     browser = {
         "code": "# current\n",
         "code_versions": ["# old\n"],
@@ -928,15 +953,16 @@ def test_simulation_manifest_fence_includes_research_data(tmp_path: Path) -> Non
         "aliases": ["x"],
         "fence": {"before_sha256": "0" * 64, "after_sha256": "0" * 64},
     }
+    code = "def initialize(context):\n    pass\n"
     browser = {
         "normal_log": b"line\n",
         "normal_log_status": "complete",
         "normal_log_rows": 1,
         "log_pages": [{"cursor": 0, "rows": 1}],
-        "code": "def initialize(context):\n    pass\n",
+        "code": code,
         "params": {},
         "source_backtest": "source",
-        "code_versions": [],
+        **_test_code_history(code),
     }
     attribution = {"writer_present": False, "path": ""}
     first, _ = _build_simulation_batch(
@@ -1500,7 +1526,7 @@ def test_rolling_capped_log_keeps_prior_raw_pages_and_commits(tmp_path: Path) ->
         "params": {"start_date": "2026-01-01"},
         "source_backtest": "source",
         "source_raw": b"",
-        "code_versions": [code],
+        **_test_code_history(code),
     }
     bundle = {
         "metadata": {
@@ -1626,7 +1652,6 @@ def test_production_simulation_core_runs_incrementally_in_memory(
         _backtest_id: str,
         *,
         attribution_path: str = "",
-        attribution_paths: list[str] | None = None,
         after_times: dict[str, str] | None = None,
     ) -> dict[str, object]:
         after = dict(after_times or {})

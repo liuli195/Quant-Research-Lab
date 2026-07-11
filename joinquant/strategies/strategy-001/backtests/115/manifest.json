@@ -6,8 +6,17 @@
     "status": "done"
   },
   "source": {
-    "url": "https://www.joinquant.com/algorithm/backtest/detail?backtestId=472022767d45bbf2c56fd29ad2bf617f",
+    "url": "https://www.joinquant.com/algorithm/backtest/detail?backtestId=878e70a57a883c41dec5b0882c2bd377",
     "aliases": [
+      {
+        "remote_id": "878e70a57a883c41dec5b0882c2bd377"
+      },
+      {
+        "remote_id": "7730c7f5ccda48b5ff95fd2472c05cf3"
+      },
+      {
+        "remote_id": "45e3fa79fe4565ebe98ff23209bbf340"
+      },
       {
         "remote_id": "472022767d45bbf2c56fd29ad2bf617f"
       },
@@ -45,30 +54,30 @@
         "remote_id": "c6914b942be9a384b737e0644ff129e3"
       }
     ],
-    "observed_at": "2026-07-11T16:46:18+08:00"
+    "observed_at": "2026-07-11T21:48:24+08:00"
   },
   "fence": {
-    "before_sha256": "89ebfd63c5084533dcb28325f9ac8cd42f6000b2b1ba5535ca1ad148fd4bedab",
-    "after_sha256": "89ebfd63c5084533dcb28325f9ac8cd42f6000b2b1ba5535ca1ad148fd4bedab"
+    "before_sha256": "06e5ff0c68a83edf6d5417644bdc684f165d074c8974d928f720ee341ce1f75e",
+    "after_sha256": "06e5ff0c68a83edf6d5417644bdc684f165d074c8974d928f720ee341ce1f75e"
   },
   "collection_fence": {
-    "collection_before_sha256": "9710c3bd8e2eb0abf153bc5f04781faa33787c8a413f8b87cc1410044109c27b",
-    "collection_after_sha256": "9710c3bd8e2eb0abf153bc5f04781faa33787c8a413f8b87cc1410044109c27b"
+    "collection_before_sha256": "c3913379adb3cfbceac89664d27950ed893ab60c2d265ffc3652e1b4f3539508",
+    "collection_after_sha256": "c3913379adb3cfbceac89664d27950ed893ab60c2d265ffc3652e1b4f3539508"
   },
   "research_response": {
-    "path": "raw/research-response-0cb5314a85205a67259d1207.json.gz",
-    "sha256": "20acd73cc91687140a1051500cfbc035e698ebbcda5e19c7e0361b369e929ef4",
-    "bytes": 130649,
-    "raw_sha256": "0cb5314a85205a67259d1207f10547daf6d9c029658ca0652294275a328afca3",
+    "path": "raw/research-response-cea77549b2a311b15a45d0e1.json.gz",
+    "sha256": "ade8f878914d3cb0c48104ce928fbf9f33ac26eea4fb3946252816f8a9a9760c",
+    "bytes": 130644,
+    "raw_sha256": "cea77549b2a311b15a45d0e1cf0009fbac06726003a00a50735ca06ad6034d72",
     "raw_bytes": 1293779,
     "format": "json.gz"
   },
   "research_lineage": [
     {
-      "path": "raw/research-response-0cb5314a85205a67259d1207.json.gz",
-      "sha256": "20acd73cc91687140a1051500cfbc035e698ebbcda5e19c7e0361b369e929ef4",
-      "bytes": 130649,
-      "raw_sha256": "0cb5314a85205a67259d1207f10547daf6d9c029658ca0652294275a328afca3",
+      "path": "raw/research-response-cea77549b2a311b15a45d0e1.json.gz",
+      "sha256": "ade8f878914d3cb0c48104ce928fbf9f33ac26eea4fb3946252816f8a9a9760c",
+      "bytes": 130644,
+      "raw_sha256": "cea77549b2a311b15a45d0e1cf0009fbac06726003a00a50735ca06ad6034d72",
       "raw_bytes": 1293779,
       "format": "json.gz"
     }
@@ -150,7 +159,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.results",
         "terminal": true,
-        "research_response_sha256": "20acd73cc91687140a1051500cfbc035e698ebbcda5e19c7e0361b369e929ef4"
+        "research_response_sha256": "ade8f878914d3cb0c48104ce928fbf9f33ac26eea4fb3946252816f8a9a9760c"
       }
     },
     "balances": {
@@ -210,7 +219,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.balances",
         "terminal": true,
-        "research_response_sha256": "20acd73cc91687140a1051500cfbc035e698ebbcda5e19c7e0361b369e929ef4"
+        "research_response_sha256": "ade8f878914d3cb0c48104ce928fbf9f33ac26eea4fb3946252816f8a9a9760c"
       }
     },
     "positions": {
@@ -282,7 +291,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.positions",
         "terminal": true,
-        "research_response_sha256": "20acd73cc91687140a1051500cfbc035e698ebbcda5e19c7e0361b369e929ef4"
+        "research_response_sha256": "ade8f878914d3cb0c48104ce928fbf9f33ac26eea4fb3946252816f8a9a9760c"
       }
     },
     "orders": {
@@ -362,7 +371,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.orders",
         "terminal": true,
-        "research_response_sha256": "20acd73cc91687140a1051500cfbc035e698ebbcda5e19c7e0361b369e929ef4"
+        "research_response_sha256": "ade8f878914d3cb0c48104ce928fbf9f33ac26eea4fb3946252816f8a9a9760c"
       }
     },
     "records": {
@@ -402,7 +411,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.records",
         "terminal": true,
-        "research_response_sha256": "20acd73cc91687140a1051500cfbc035e698ebbcda5e19c7e0361b369e929ef4"
+        "research_response_sha256": "ade8f878914d3cb0c48104ce928fbf9f33ac26eea4fb3946252816f8a9a9760c"
       }
     },
     "risk": {
@@ -477,7 +486,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.risk",
         "terminal": true,
-        "research_response_sha256": "20acd73cc91687140a1051500cfbc035e698ebbcda5e19c7e0361b369e929ef4"
+        "research_response_sha256": "ade8f878914d3cb0c48104ce928fbf9f33ac26eea4fb3946252816f8a9a9760c"
       }
     },
     "period_risks": {
@@ -523,7 +532,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.period_risks",
         "terminal": true,
-        "research_response_sha256": "20acd73cc91687140a1051500cfbc035e698ebbcda5e19c7e0361b369e929ef4"
+        "research_response_sha256": "ade8f878914d3cb0c48104ce928fbf9f33ac26eea4fb3946252816f8a9a9760c"
       }
     },
     "official_summary": {
@@ -646,7 +655,12 @@
           "expected_token": "etf_factor_rotation-s05-official-current-baseline-20260709173450-b83d054a",
           "source_path": "jq_auto_audit/etf_factor_rotation-s05-official-current-baseline-20260709173450-b83d054a.jsonl",
           "expected_start": "2021-01-01",
-          "expected_end": "2026-04-30"
+          "expected_end": "2026-04-30",
+          "final_balance": {
+            "total_value": 227572.6,
+            "cash": 163681.3
+          },
+          "final_balance_tolerance": 0.01
         }
       },
       "verified_empty": false

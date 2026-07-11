@@ -61,6 +61,33 @@ def _archive_with_rows(
         "source_backtest": "query-source",
         "source_raw": b'{"query_fixture":true}',
         "code_versions": [code],
+        "code_history_versions": [
+            {
+                "history_ordinal": 1,
+                "live_history_id": "query-history",
+                "source_backtest_id": "query-source",
+                "add_time": f"{dates[0]} 00:00:00",
+                "mod_time": f"{dates[0]} 00:00:00",
+                "code": code,
+            }
+        ],
+        "code_history_pages": [
+            {
+                "data": {
+                    "totalCount": 1,
+                    "list": [
+                        {
+                            "liveHistoryId": "query-history",
+                            "sourceBacktestId": "query-source",
+                            "addTime": f"{dates[0]} 00:00:00",
+                            "modTime": f"{dates[0]} 00:00:00",
+                            "code": 0,
+                        }
+                    ],
+                }
+            }
+        ],
+        "code_history_total": 1,
     }
     commit_simulation_evidence(
         tmp_path,

@@ -534,6 +534,29 @@ def test_attribution_must_match_expected_run_identity() -> None:
         )
 
 
+def test_backtest_attribution_must_match_research_final_balance() -> None:
+    import inspect
+
+    from joinquant_sync.archive import AttributionIncomplete, validate_attribution
+
+    assert "expected_final_balance" in inspect.signature(validate_attribution).parameters
+    lines = [
+        b'{"token":"run-a","seq":1,"event":"run_start","current_dt":"2026-01-01"}',
+        b'{"token":"run-a","seq":2,"event":"run_end","current_dt":"2026-01-31","total_value":101.0,"cash":51.0}',
+    ]
+    with pytest.raises(AttributionIncomplete, match="final balance"):
+        validate_attribution(
+            lines,
+            "done",
+            True,
+            expected_token="run-a",
+            expected_path="audit/run-a.jsonl",
+            expected_start="2026-01-01",
+            expected_end="2026-01-31",
+            expected_final_balance={"total_value": 100.0, "cash": 50.0},
+        )
+
+
 def test_attribution_path_must_name_the_expected_token() -> None:
     from joinquant_sync.archive import AttributionIncomplete, validate_attribution
 
@@ -734,97 +757,42 @@ def audit_event(event):
     }
 
 
-def test_simulation_attribution_collects_and_filters_all_code_version_sources() -> None:
-    from joinquant_sync.archive import (
-        detect_attribution_writers,
-        prepare_simulation_attribution,
-    )
+def test_simulation_attribution_writer_comes_from_lifecycle_start_code() -> None:
+    import joinquant_sync.archive as archive
 
-    old_code = (
-        'JQ_AUTO_AUDIT_TOKEN = "run-old"\n'
-        'JQ_AUTO_AUDIT_DIR = "audit"\n'
-        "def audit_event(event):\n    write_file(g.audit_path, event, append=True)\n"
-    )
-    new_code = old_code.replace("run-old", "run-new")
-    writers = detect_attribution_writers([new_code, old_code, new_code])
-    assert [item["path"] for item in writers["writers"]] == [
-        "audit/run-new.jsonl",
-        "audit/run-old.jsonl",
-    ]
-
-    sources = {
-        "audit/run-old.jsonl": (
-            b'{"audit_token":"run-old","seq":1,"event":"run_start",'
-            b'"current_dt":"2026-05-19T00:00:00"}\n'
-            b'{"audit_token":"run-old","seq":2,"event":"rebalance",'
-            b'"current_dt":"2026-07-01T09:30:00"}\n'
-        ),
-        "audit/run-new.jsonl": (
-            b'{"audit_token":"run-new","seq":1,"event":"run_start",'
-            b'"current_dt":"2021-01-01T00:00:00"}\n'
-            b'{"audit_token":"run-new","seq":2,"event":"run_end",'
-            b'"current_dt":"2026-04-30T23:59:59"}\n'
-            b'{"audit_token":"run-new","seq":3,'
-            b'"event":"schedule_reset_after_code_changed",'
-            b'"current_dt":"2026-07-10T16:06:38"}\n'
-        ),
-    }
-
-    selected, checked = prepare_simulation_attribution(
-        sources,
-        writers,
+    selector = getattr(archive, "detect_simulation_attribution_writer", None)
+    assert selector is not None
+    old_code = """
+JQ_AUTO_AUDIT_TOKEN = "run-start"
+JQ_AUTO_AUDIT_DIR = "audit"
+def audit_event(event):
+    write_file(g.audit_path, event, append=True)
+"""
+    current_code = old_code.replace("run-start", "historical-backtest")
+    earlier_code = old_code.replace("run-start", "older-experiment")
+    writer = selector(
+        [
+            {
+                "history_ordinal": 1,
+                "add_time": "2026-07-10 16:06:38",
+                "code": current_code,
+            },
+            {
+                "history_ordinal": 2,
+                "add_time": "2026-05-18 16:20:38",
+                "code": old_code,
+            },
+            {
+                "history_ordinal": 3,
+                "add_time": "2026-05-01 12:00:00",
+                "code": earlier_code,
+            },
+        ],
         start_date="2026-05-19",
-        status="active",
-    )
-    rows = [json.loads(line) for line in selected.splitlines()]
-
-    assert [(row["audit_token"], row["seq"]) for row in rows] == [
-        ("run-old", 1),
-        ("run-old", 2),
-        ("run-new", 3),
-    ]
-    assert checked["status"] == "complete"
-    assert checked["rows"] == 3
-    assert checked["tokens"] == ["run-new", "run-old"]
-    assert [item["selected_rows"] for item in checked["evidence"]["sources"]] == [
-        1,
-        2,
-    ]
-
-
-def test_simulation_attribution_rejects_two_run_starts_in_selected_range() -> None:
-    from joinquant_sync.archive import (
-        AttributionIncomplete,
-        detect_attribution_writers,
-        prepare_simulation_attribution,
     )
 
-    code = (
-        'JQ_AUTO_AUDIT_TOKEN = "TOKEN"\n'
-        'JQ_AUTO_AUDIT_DIR = "audit"\n'
-        "def audit_event(event):\n    write_file(g.audit_path, event, append=True)\n"
-    )
-    writers = detect_attribution_writers(
-        [code.replace('"TOKEN"', '"run-one"'), code.replace('"TOKEN"', '"run-two"')]
-    )
-    sources = {
-        "audit/run-one.jsonl": (
-            b'{"audit_token":"run-one","seq":1,"event":"run_start",'
-            b'"current_dt":"2026-05-19T00:00:00"}\n'
-        ),
-        "audit/run-two.jsonl": (
-            b'{"audit_token":"run-two","seq":1,"event":"run_start",'
-            b'"current_dt":"2026-07-10T00:00:00"}\n'
-        ),
-    }
-
-    with pytest.raises(AttributionIncomplete, match="exactly one run_start"):
-        prepare_simulation_attribution(
-            sources,
-            writers,
-            start_date="2026-05-19",
-            status="active",
-        )
+    assert writer["path"] == "audit/run-start.jsonl"
+    assert writer["evidence"]["history_ordinal"] == 2
 
 
 def test_code_without_attribution_writer_is_missing_at_source() -> None:

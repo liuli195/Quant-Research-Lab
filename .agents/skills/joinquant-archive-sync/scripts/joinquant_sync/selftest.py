@@ -134,7 +134,33 @@ def _simulation_evidence() -> tuple[
         "research_id": "self-test-source",
         "source_raw": b'{"code":"self-test"}',
         "code_versions": [code],
-        "code_history_pages": [{"page": 1, "totalCount": 1}],
+        "code_history_versions": [
+            {
+                "history_ordinal": 1,
+                "live_history_id": "self-test-history",
+                "source_backtest_id": "self-test-source",
+                "add_time": "2026-01-01 00:00:00",
+                "mod_time": "2026-01-01 00:00:00",
+                "code": code,
+            }
+        ],
+        "code_history_pages": [
+            {
+                "data": {
+                    "totalCount": 1,
+                    "list": [
+                        {
+                            "liveHistoryId": "self-test-history",
+                            "sourceBacktestId": "self-test-source",
+                            "addTime": "2026-01-01 00:00:00",
+                            "modTime": "2026-01-01 00:00:00",
+                            "code": 0,
+                        }
+                    ],
+                }
+            }
+        ],
+        "code_history_total": 1,
     }
     research = {
         "bundle": {

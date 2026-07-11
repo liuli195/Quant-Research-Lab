@@ -23,11 +23,10 @@ from .archive import (
     classify_performance_profile,
     commit_manifest,
     detect_attribution_writer,
-    detect_attribution_writers,
+    detect_simulation_attribution_writer,
     evaluate_gate,
     expected_datasets,
     object_lock,
-    prepare_simulation_attribution,
     recover_malformed_json,
     validate_attribution,
     verify_existing_manifest,
@@ -1028,28 +1027,6 @@ def _stage_attribution(
     return staged
 
 
-def _stage_attribution_sources(
-    stage: Path,
-    sources: dict[str, bytes],
-    datasets: dict[str, dict[str, object]],
-    *,
-    root: Path | None = None,
-) -> list[Path]:
-    archive_root = root or stage
-    staged: list[Path] = []
-    files = datasets["attribution_log"].get("files")
-    if not isinstance(files, list):
-        raise AttributionIncomplete("attribution dataset files are missing")
-    for source_path, raw in sources.items():
-        digest = hashlib.sha256(source_path.encode("utf-8") + raw).hexdigest()[:24]
-        path = stage / "raw" / f"attribution-source-{digest}.jsonl.gz"
-        record = _gzip_record(raw, path, archive_root, "attribution-source-jsonl.gz")
-        record["source_path"] = source_path
-        files.append(record)
-        staged.append(path)
-    return staged
-
-
 def _ensure_queryable_attribution(
     object_dir: Path, manifest: dict[str, object]
 ) -> dict[str, object]:
@@ -1624,6 +1601,12 @@ def _build_backtest_batch(
         attribution_raw = bytes(research["attribution"])
         expected_token = str((attribution.get("evidence") or {}).get("token") or "")
         expected_path = str(attribution.get("path") or "")
+        balances = bundle.get("balances")
+        expected_final_balance = (
+            balances[-1]
+            if status == "done" and isinstance(balances, list) and balances
+            else None
+        )
         checked = validate_attribution(
             attribution_raw.splitlines(),
             status,
@@ -1632,6 +1615,7 @@ def _build_backtest_batch(
             expected_path=expected_path,
             expected_start=str(params["start_date"]),
             expected_end=str(params["end_date"]),
+            expected_final_balance=expected_final_balance,
         )
         staged.extend(_stage_attribution(stage, attribution_raw, datasets, checked))
     code = write_code_context(stage, "backtest", str(browser["code"]), params)
@@ -2175,51 +2159,20 @@ def _build_simulation_batch(
             if isinstance(result_range, dict)
             else str((browser.get("params") or {}).get("start_date") or "")
         )
-        attribution_end = (
-            str(result_range.get("end") or "")
-            if isinstance(result_range, dict)
-            else str((browser.get("params") or {}).get("end_date") or "")
+        attribution_raw = bytes(research["attribution"])
+        checked = _validate_simulation_attribution(
+            attribution_raw,
+            attribution_start,
+            status,
+            expected_token=str(
+                (attribution.get("evidence") or {}).get("token") or ""
+            ),
+            expected_path=str(attribution.get("path") or ""),
+            end_date=str((browser.get("params") or {}).get("end_date") or ""),
         )
-        source_map = research.get("attributions")
-        if isinstance(attribution.get("writers"), list):
-            if not isinstance(source_map, dict) or not all(
-                isinstance(path, str) and isinstance(raw, bytes)
-                for path, raw in source_map.items()
-            ):
-                raise AttributionIncomplete(
-                    "simulation attribution source bundle is invalid"
-                )
-            attribution_raw, checked = prepare_simulation_attribution(
-                source_map,
-                attribution,
-                start_date=attribution_start,
-                status=status,
-                end_date=attribution_end,
-            )
-        else:
-            attribution_raw = bytes(research["attribution"])
-            checked = _validate_simulation_attribution(
-                attribution_raw,
-                attribution_start,
-                status,
-                expected_token=str(
-                    (attribution.get("evidence") or {}).get("token") or ""
-                ),
-                expected_path=str(attribution.get("path") or ""),
-                end_date=str((browser.get("params") or {}).get("end_date") or ""),
-            )
         staged.extend(
             _stage_attribution(snapshot, attribution_raw, datasets, checked, root=stage)
         )
-        if isinstance(attribution.get("writers"), list):
-            staged.extend(
-                _stage_attribution_sources(
-                    snapshot,
-                    source_map,
-                    datasets,
-                    root=stage,
-                )
-            )
 
     code = write_code_context(
         stage,
@@ -2230,11 +2183,13 @@ def _build_simulation_batch(
         versions=list(browser.get("code_versions") or []),
     )
     history_versions = browser.get("code_history_versions")
-    if history_versions is not None:
-        if not isinstance(history_versions, list) or not all(
-            isinstance(item, dict) for item in history_versions
-        ):
-            raise IntegrityError("simulation code history version mapping is invalid")
+    if (
+        not isinstance(history_versions, list)
+        or not history_versions
+        or not all(isinstance(item, dict) for item in history_versions)
+    ):
+        raise IntegrityError("simulation code history version mapping is invalid")
+    if history_versions:
         version_paths = {
             str(item.get("sha256")): str(item.get("path"))
             for item in code.get("versions") or []
@@ -2569,22 +2524,16 @@ def sync_all_active_simulations(
                     "code_history_cache": browser.get("code_history_cache") or {},
                 }
             )
-            attribution = detect_attribution_writers(
-                [
-                    *(str(code) for code in browser.get("code_versions") or []),
-                    str(browser["code"]),
-                ]
+            attribution = detect_simulation_attribution_writer(
+                browser.get("code_history_versions") or [],
+                start_date=str((browser.get("params") or {}).get("start_date") or ""),
             )
-            attribution_paths = [
-                str(item["path"])
-                for item in attribution.get("writers") or []
-                if isinstance(item, dict) and item.get("path")
-            ]
+            attribution_path = str(attribution.get("path") or "")
             after_times = _research_after_times(existing)
             research_before = fetch_research_backtest(
                 page,
                 str(browser["research_id"]),
-                attribution_paths=attribution_paths,
+                attribution_path=attribution_path,
                 after_times=after_times,
             )
             browser_before_fingerprint = _simulation_remote_fingerprint(browser)
@@ -2608,7 +2557,7 @@ def sync_all_active_simulations(
             research_after = fetch_research_backtest(
                 page,
                 str(refreshed_browser["research_id"]),
-                attribution_paths=attribution_paths,
+                attribution_path=attribution_path,
                 after_times=after_times,
             )
             browser_after_fingerprint = _simulation_remote_fingerprint(
