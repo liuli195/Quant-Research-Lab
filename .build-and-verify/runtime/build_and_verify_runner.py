@@ -21,6 +21,8 @@ from collections.abc import Callable
 FRAMEWORK_VERSION = "0.1.0"
 CACHE_VERSION = "1"
 DEFAULT_CHECK_TIMEOUT_SECONDS = 300
+PYTEST_XDIST_AUTO_WORKERS_ENV = "PYTEST_XDIST_AUTO_NUM_WORKERS"
+DEFAULT_PYTEST_XDIST_AUTO_NUM_WORKERS = "4"
 Runner = Callable[..., subprocess.CompletedProcess[Any]]
 
 
@@ -114,6 +116,14 @@ def _command_with_pytest_xdist_workers(command: Any, workers: str | None) -> Any
                 tokens = tokens[:insert_at] + ["-n", workers] + tokens[insert_at:]
                 return shlex.join(tokens)
     return command
+
+
+def _pytest_xdist_env(workers: str | None) -> dict[str, str] | None:
+    if workers != "auto" or os.environ.get(PYTEST_XDIST_AUTO_WORKERS_ENV):
+        return None
+    env = os.environ.copy()
+    env[PYTEST_XDIST_AUTO_WORKERS_ENV] = DEFAULT_PYTEST_XDIST_AUTO_NUM_WORKERS
+    return env
 
 
 def _dependency_error(check: dict[str, Any]) -> str | None:
@@ -532,20 +542,21 @@ def _run_check(project: Path, check: dict[str, Any], runner: Runner) -> int:
     if dependency_error is not None:
         print(dependency_error, end="", file=sys.stderr)
         return 1
-    command = _command_with_pytest_xdist_workers(
-        command,
-        _pytest_xdist_workers(check.get("pytestXdistWorkers")),
-    )
+    workers = _pytest_xdist_workers(check.get("pytestXdistWorkers"))
+    command = _command_with_pytest_xdist_workers(command, workers)
     use_shell = isinstance(command, str)
+    run_kwargs = {
+        "cwd": project,
+        "check": False,
+        "text": True,
+        "capture_output": True,
+        "shell": use_shell,
+    }
+    env = _pytest_xdist_env(workers)
+    if env is not None:
+        run_kwargs["env"] = env
     try:
-        result = runner(
-            command,
-            cwd=project,
-            check=False,
-            text=True,
-            capture_output=True,
-            shell=use_shell,
-        )
+        result = runner(command, **run_kwargs)
     except FileNotFoundError:
         executable = command[0] if isinstance(command, list) else str(command)
         print(f"command_not_found: {check.get('id')}: {executable}", file=sys.stderr)
@@ -598,10 +609,8 @@ def _run_check_result(
             duration_seconds=time.monotonic() - started_at,
             cache_key=key,
         )
-    command = _command_with_pytest_xdist_workers(
-        command,
-        _pytest_xdist_workers(check.get("pytestXdistWorkers")),
-    )
+    workers = _pytest_xdist_workers(check.get("pytestXdistWorkers"))
+    command = _command_with_pytest_xdist_workers(command, workers)
     use_shell = isinstance(command, str)
     run_kwargs = {
         "cwd": project,
@@ -610,6 +619,9 @@ def _run_check_result(
         "capture_output": True,
         "shell": use_shell,
     }
+    env = _pytest_xdist_env(workers)
+    if env is not None:
+        run_kwargs["env"] = env
     if timeout_seconds is not None:
         run_kwargs["timeout"] = timeout_seconds
     try:
