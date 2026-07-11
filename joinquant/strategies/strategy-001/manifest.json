@@ -7,8 +7,26 @@
     "name": "etf_factor_rotation"
   },
   "source": {
-    "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=098c93e3052c169f9b10af22afc63337&backtest=115",
+    "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=650ea63247f3c5fc7bb1e2e264871952&backtest=115",
     "aliases": [
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=650ea63247f3c5fc7bb1e2e264871952&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=b9abc253e67ad0c86f58010eac50e54c&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=da454c4d7a94909fa6e93e00d37b4e68&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=f15f26d7f76de7f7e66a5faebd4bfb99&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=2696b5f4eddd6f9da0a7d7aeb5c3b216&backtest=115"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=0741871ce34841707ff3fe621e4c450f&backtest=115"
+      },
       {
         "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=098c93e3052c169f9b10af22afc63337&backtest=115"
       },
@@ -109,7 +127,7 @@
         "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=05d8070463bd0c212db54eed317288a1&backtest=115"
       }
     ],
-    "observed_at": "2026-07-11T16:03:12+08:00"
+    "observed_at": "2026-07-11T16:45:30+08:00"
   },
   "fence": {
     "before_sha256": "79b2bdb2c82de35a722741b34292df7ed012f8348a19f1b0acfb209020322857",

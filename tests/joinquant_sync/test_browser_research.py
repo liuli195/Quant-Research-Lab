@@ -541,6 +541,67 @@ def test_simulation_log_marks_cap_only_after_blocked_probe() -> None:
     assert status == "capped_free"
 
 
+def test_simulation_log_stops_at_verified_previous_offset() -> None:
+    from joinquant_sync.browser import collect_simulation_logs
+
+    calls: list[tuple[int, int]] = []
+
+    def fetch_older(offset: int, limit: int) -> dict[str, object]:
+        calls.append((offset, limit))
+        return {"rows": [f"older-{index}" for index in range(limit)]}
+
+    records, status = collect_simulation_logs(
+        1200,
+        [f"latest-{index}" for index in range(100)],
+        fetch_older,
+        stop_offset=1230,
+    )
+
+    assert calls == []
+    assert [record["offset"] for record in records] == list(range(1200, 1300))
+    assert status == "incremental"
+
+
+def test_simulation_log_fetches_only_gap_after_verified_offset() -> None:
+    from joinquant_sync.browser import collect_simulation_logs
+
+    calls: list[tuple[int, int]] = []
+
+    def fetch_older(offset: int, limit: int) -> dict[str, object]:
+        calls.append((offset, limit))
+        return {"rows": [f"older-{index}" for index in range(limit)]}
+
+    records, status = collect_simulation_logs(
+        1300,
+        [f"latest-{index}" for index in range(100)],
+        fetch_older,
+        stop_offset=1230,
+    )
+
+    assert calls == [(1230, 70)]
+    assert [record["offset"] for record in records] == list(range(1230, 1400))
+    assert status == "incremental"
+
+
+def test_unchanged_simulation_code_history_reuses_verified_old_pages() -> None:
+    from joinquant_sync.browser import reuse_simulation_code_history
+
+    first = {"data": {"list": [{"id": "newest", "code": "v2"}]}}
+    previous = [
+        first,
+        {"data": {"list": [{"id": "oldest", "code": "v1"}]}},
+    ]
+
+    history, pages, reused = reuse_simulation_code_history(first, previous, 2, 2)
+
+    assert reused is True
+    assert history == [
+        {"id": "newest", "code": "v2"},
+        {"id": "oldest", "code": "v1"},
+    ]
+    assert pages == previous
+
+
 def test_paid_preview_is_bound_and_one_time(tmp_path: Path) -> None:
     from joinquant_sync.browser import (
         PaidConfirmationRequired,

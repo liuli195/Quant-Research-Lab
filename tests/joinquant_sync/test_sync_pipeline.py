@@ -8,6 +8,156 @@ import hashlib
 import pytest
 
 
+def test_atomic_replace_retries_transient_windows_permission_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import joinquant_sync.sync_pipeline as pipeline
+
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.write_text("new", encoding="utf-8")
+    destination.write_text("old", encoding="utf-8")
+    calls = 0
+    real_replace = pipeline.os.replace
+
+    def flaky_replace(src: Path, dst: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise PermissionError(5, "transient lock")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(pipeline.os, "replace", flaky_replace)
+    monkeypatch.setattr(pipeline.time, "sleep", lambda _seconds: None)
+
+    pipeline._replace_with_retry(source, destination)
+
+    assert calls == 3
+    assert destination.read_text(encoding="utf-8") == "new"
+
+
+def test_backtest_fence_changes_when_performance_profile_changes() -> None:
+    from joinquant_sync.sync_pipeline import _backtest_browser_fingerprint
+
+    browser = {
+        "code": "enable_profile()\n",
+        "normal_log": b"log",
+        "official_summary": b"summary",
+        "params": {},
+        "performance_profile": b"profile-a",
+        "performance_profile_surface_supported": True,
+    }
+
+    before = _backtest_browser_fingerprint(browser)
+    browser["performance_profile"] = b"profile-b"
+
+    assert _backtest_browser_fingerprint(browser) != before
+
+
+def test_simulation_log_increment_uses_last_verified_offset_not_row_count(
+    tmp_path: Path,
+) -> None:
+    from joinquant_sync.sync_pipeline import _simulation_browser_incremental_state
+
+    log_path = tmp_path / "raw" / "normal-log.jsonl.gz"
+    log_path.parent.mkdir(parents=True)
+    with gzip.open(log_path, "wt", encoding="utf-8") as stream:
+        for offset in range(100, 1100):
+            stream.write(json.dumps({"offset": offset, "text": "line"}) + "\n")
+    manifest = {
+        "datasets": {
+            "normal_log": {
+                "rows": 1000,
+                "files": [
+                    {
+                        "path": "raw/normal-log.jsonl.gz",
+                        "format": "jsonl.gz",
+                    }
+                ],
+            }
+        },
+        "code": {"versions": [], "history": {}},
+    }
+
+    state = _simulation_browser_incremental_state(tmp_path, manifest)
+
+    assert state is not None
+    assert state["normal_log_stop_offset"] == 1100
+
+
+def test_capped_simulation_log_remains_capped_after_incremental_merge(
+    tmp_path: Path,
+) -> None:
+    from joinquant_sync.sync_pipeline import _merge_simulation_log
+
+    log_path = tmp_path / "raw" / "normal-log.jsonl.gz"
+    log_path.parent.mkdir(parents=True)
+    with gzip.open(log_path, "wt", encoding="utf-8") as stream:
+        for offset in range(100, 1100):
+            stream.write(json.dumps({"offset": offset, "text": "old"}) + "\n")
+    pages_path = tmp_path / "raw" / "normal-log-pages.json.gz"
+    with gzip.open(pages_path, "wt", encoding="utf-8") as stream:
+        json.dump([{"cursor": 0, "blocked_free": True}], stream)
+    previous = {
+        "datasets": {
+            "normal_log": {
+                "status": "capped_free",
+                "rows": 1000,
+                "files": [
+                    {
+                        "path": "raw/normal-log.jsonl.gz",
+                        "format": "jsonl.gz",
+                    },
+                    {
+                        "path": "raw/normal-log-pages.json.gz",
+                        "format": "json.gz",
+                    },
+                ],
+            }
+        }
+    }
+    browser = {
+        "normal_log": b'{"offset":1100,"text":"new"}\n',
+        "normal_log_records": [{"offset": 1100, "text": "new"}],
+        "normal_log_status": "incremental",
+        "normal_log_raw_pages": [],
+    }
+
+    _merge_simulation_log(browser, previous, tmp_path)
+
+    assert browser["normal_log_status"] == "capped_free"
+    assert browser["normal_log_rows"] == 1001
+    assert any(
+        page.get("blocked_free") is True
+        for page in browser["normal_log_raw_pages"]
+    )
+
+
+def test_simulation_code_history_cursor_uses_remote_history_count(
+    tmp_path: Path,
+) -> None:
+    from joinquant_sync.sync_pipeline import _simulation_browser_incremental_state
+
+    history_path = tmp_path / "raw" / "code-history.json.gz"
+    history_path.parent.mkdir(parents=True)
+    with gzip.open(history_path, "wt", encoding="utf-8") as stream:
+        json.dump(
+            [{"data": {"list": [{"id": 1}, {"id": 2}, {"id": 3}]}}], stream
+        )
+    manifest = {
+        "datasets": {"normal_log": {"rows": 0, "files": []}},
+        "code": {
+            "versions": [{"path": "one.py"}],
+            "history": {"path": "raw/code-history.json.gz", "rows": 3},
+        },
+    }
+
+    state = _simulation_browser_incremental_state(tmp_path, manifest)
+
+    assert state is not None
+    assert state["code_history_total"] == 3
+
+
 def _commit_test_simulation(
     object_dir: Path,
     *,
@@ -16,6 +166,7 @@ def _commit_test_simulation(
     sparse_attribution: bool = False,
     browser_start_date: str = "2026-01-01",
     history_includes_current: bool = True,
+    profile: bool = False,
 ) -> dict[str, object]:
     from joinquant_sync.archive import commit_manifest, detect_attribution_writer
     from joinquant_sync.sync_pipeline import (
@@ -31,6 +182,8 @@ def _commit_test_simulation(
         if writer
         else "def initialize(context):\n    pass\n"
     )
+    if profile:
+        code = "enable_profile()\n" + code
     bundle = {
         "metadata": {
             "schema_version": 1,
@@ -91,6 +244,13 @@ def _commit_test_simulation(
         "params": {"start_date": browser_start_date},
         "source_backtest": "source",
         "code_versions": [code] if history_includes_current else [],
+        "performance_profile": (
+            b"Timer unit: 1e-06 s\nTotal time: 1 s\n"
+            b"Line # Hits Time Per Hit % Time Line Contents\n"
+            if profile
+            else b""
+        ),
+        "performance_profile_surface_supported": profile,
     }
     attribution = detect_attribution_writer(code)
     attribution_rows = [
@@ -252,6 +412,109 @@ def test_simulation_raw_code_evidence_is_content_addressed(tmp_path: Path) -> No
     assert manifest["code"]["source_response"]["path"].startswith(
         "raw/code-source-response-"
     )
+
+
+def test_snapshot_cleanup_keeps_only_manifest_referenced_lineage_file(
+    tmp_path: Path,
+) -> None:
+    from joinquant_sync.sync_pipeline import _cleanup_unreferenced_snapshots
+
+    old = tmp_path / "snapshots" / "old"
+    response = old / "raw" / "research-response.json.gz"
+    stale = old / "data" / "results.parquet"
+    response.parent.mkdir(parents=True)
+    stale.parent.mkdir(parents=True)
+    response.write_bytes(b"response")
+    stale.write_bytes(b"stale")
+    manifest = {
+        "datasets": {},
+        "research_lineage": [
+            {"path": "snapshots/old/raw/research-response.json.gz"}
+        ],
+    }
+
+    _cleanup_unreferenced_snapshots(tmp_path, manifest)
+
+    assert response.is_file()
+    assert not stale.exists()
+
+
+def test_performance_profile_payload_is_archived_and_referenced(tmp_path: Path) -> None:
+    object_dir = tmp_path / "simulation-001"
+
+    manifest = _commit_test_simulation(object_dir, profile=True)
+
+    dataset = manifest["datasets"]["performance_profile"]
+    assert dataset["status"] == "complete"
+    assert dataset["rows"] == 3
+    assert len(dataset["files"]) == 1
+    path = object_dir / dataset["files"][0]["path"]
+    assert gzip.open(path, "rb").read() == (
+        b"Timer unit: 1e-06 s\nTotal time: 1 s\n"
+        b"Line # Hits Time Per Hit % Time Line Contents\n"
+    )
+
+
+def test_verify_rejects_placeholder_performance_profile_with_matching_hash(
+    tmp_path: Path,
+) -> None:
+    from joinquant_sync.archive import IntegrityError, verify_existing_manifest
+
+    object_dir = tmp_path / "simulation-001"
+    manifest = _commit_test_simulation(object_dir, profile=True)
+    dataset = manifest["datasets"]["performance_profile"]
+    record = dataset["files"][0]
+    path = object_dir / record["path"]
+    payload = b"No performance data available"
+    with gzip.open(path, "wb") as stream:
+        stream.write(payload)
+    compressed = path.read_bytes()
+    record.update(
+        sha256=hashlib.sha256(compressed).hexdigest(),
+        bytes=len(compressed),
+        raw_sha256=hashlib.sha256(payload).hexdigest(),
+        raw_bytes=len(payload),
+    )
+    dataset["rows"] = 1
+    dataset["evidence"].update(
+        payload_sha256=hashlib.sha256(payload).hexdigest(),
+        payload_bytes=len(payload),
+    )
+    (object_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(IntegrityError, match="performance profile"):
+        verify_existing_manifest(object_dir)
+
+
+def test_verify_rejects_enabled_profile_mislabeled_missing_at_source(
+    tmp_path: Path,
+) -> None:
+    from joinquant_sync.archive import (
+        IntegrityError,
+        evaluate_gate,
+        verify_existing_manifest,
+    )
+
+    object_dir = tmp_path / "simulation-001"
+    manifest = _commit_test_simulation(object_dir, profile=True)
+    dataset = manifest["datasets"]["performance_profile"]
+    dataset.update(
+        status="missing_at_source",
+        rows=0,
+        files=[],
+        evidence={"enable_profile_call": False},
+    )
+    manifest["gate"] = evaluate_gate(manifest["datasets"])
+    (object_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(IntegrityError, match="performance profile"):
+        verify_existing_manifest(object_dir)
 
 
 def test_simulation_attribution_uses_first_result_date_as_run_start(
@@ -1160,12 +1423,29 @@ def test_production_simulation_core_runs_incrementally_in_memory(
             "code": browser["code"],
         },
     )
-    monkeypatch.setattr(
-        pipeline, "fetch_simulation_browser_evidence", lambda *_: dict(browser)
-    )
+    browser_states: list[dict[str, object] | None] = []
+
+    def browser_evidence(
+        _page: object,
+        _candidate: dict[str, object],
+        incremental: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        browser_states.append(incremental)
+        return dict(browser)
+
+    monkeypatch.setattr(pipeline, "fetch_simulation_browser_evidence", browser_evidence)
     monkeypatch.setattr(pipeline, "fetch_research_backtest", research)
 
+    object_dir = (
+        tmp_path
+        / "joinquant"
+        / "strategies"
+        / "strategy-001"
+        / "simulations"
+        / "simulation-001"
+    )
     first = pipeline.sync_all_active_simulations(object(), tmp_path)
+    (object_dir / "current_code.py").unlink()
     second = pipeline.sync_all_active_simulations(object(), tmp_path)
     third = pipeline.sync_all_active_simulations(object(), tmp_path)
     assert [first[0]["status"], second[0]["status"], third[0]["status"]] == [
@@ -1175,13 +1455,12 @@ def test_production_simulation_core_runs_incrementally_in_memory(
     ]
     assert calls[:2] == [{}, {}]
     assert calls[2]["results"] == "2026-01-01"
-    object_dir = (
-        tmp_path
-        / "joinquant"
-        / "strategies"
-        / "strategy-001"
-        / "simulations"
-        / "simulation-001"
+    assert browser_states[:3] == [None, None, None]
+    assert all(
+        state is not None
+        and state["normal_log_stop_offset"] == 1
+        and state["code_history_total"] == 1
+        for state in browser_states[3:9]
     )
     assert len(query_rows(object_dir / "manifest.json", "results")) == 1
     assert len(list((object_dir / "snapshots").iterdir())) == 1

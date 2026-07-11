@@ -213,8 +213,10 @@ def _exercise_orchestration(repository: Path) -> str:
             "edit_url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=self-test",
             "code": browser["code"],
         }
-        sync_pipeline.fetch_simulation_browser_evidence = lambda _page, _candidate: (
-            dict(_simulation_evidence()[1])
+        sync_pipeline.fetch_simulation_browser_evidence = (
+            lambda _page, _candidate, _incremental=None: dict(
+                _simulation_evidence()[1]
+            )
         )
         sync_pipeline.fetch_research_backtest = lambda _page, _backtest_id, **_kwargs: (
             _simulation_evidence()[2]

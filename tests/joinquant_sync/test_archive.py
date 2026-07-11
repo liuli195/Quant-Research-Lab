@@ -744,6 +744,83 @@ def test_code_without_attribution_writer_is_missing_at_source() -> None:
     }
 
 
+def test_ambiguous_attribution_write_signal_fails_closed() -> None:
+    from joinquant_sync.archive import IntegrityError, detect_attribution_writer
+
+    code = """
+def persist_event(event):
+    write_file("audit/run.jsonl", event, append=True)
+"""
+    with pytest.raises(IntegrityError, match="attribution writer evidence is ambiguous"):
+        detect_attribution_writer(code)
+
+
+def test_performance_profile_is_missing_when_code_does_not_enable_it() -> None:
+    from joinquant_sync.archive import classify_performance_profile
+
+    result = classify_performance_profile("def initialize(context):\n    pass\n")
+
+    assert result["status"] == "missing_at_source"
+    assert result["evidence"]["enable_profile_call"] is False
+
+
+def test_performance_profile_fails_closed_when_enabled_but_not_collected() -> None:
+    from joinquant_sync.archive import classify_performance_profile
+
+    result = classify_performance_profile(
+        "enable_profile()\n\ndef initialize(context):\n    pass\n"
+    )
+
+    assert result["status"] == "failed"
+    assert result["evidence"]["enable_profile_call"] is True
+
+
+def test_performance_profile_is_complete_when_page_payload_is_collected() -> None:
+    from joinquant_sync.archive import classify_performance_profile
+
+    result = classify_performance_profile(
+        "enable_profile()\n",
+        payload=(
+            b"Timer unit: 1e-06 s\nTotal time: 1 s\n"
+            b"Line # Hits Time Per Hit % Time Line Contents\n"
+        ),
+        surface_supported=True,
+    )
+
+    assert result["status"] == "complete"
+    assert result["rows"] == 3
+
+
+def test_performance_profile_is_unsupported_only_with_page_capability_evidence() -> None:
+    from joinquant_sync.archive import classify_performance_profile
+
+    result = classify_performance_profile(
+        "enable_profile()\n", payload=b"", surface_supported=False
+    )
+
+    assert result["status"] == "unsupported_api_version"
+    assert result["evidence"]["profile_surface_supported"] is False
+
+
+@pytest.mark.parametrize(
+    ("code", "payload"),
+    [
+        ("def initialize(context):\n    pass\n", b"Timer unit: 1e-06 s\n"),
+        ("enable_profile()\n", b"No performance data available"),
+    ],
+)
+def test_performance_profile_rejects_unproven_or_placeholder_payload(
+    code: str, payload: bytes
+) -> None:
+    from joinquant_sync.archive import classify_performance_profile
+
+    result = classify_performance_profile(
+        code, payload=payload, surface_supported=True
+    )
+
+    assert result["status"] == "failed"
+
+
 def test_verify_cli_checks_manifest_gate(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

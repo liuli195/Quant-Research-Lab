@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,7 @@ from playwright.sync_api import Page
 from .archive import (
     AttributionIncomplete,
     IntegrityError,
+    classify_performance_profile,
     commit_manifest,
     detect_attribution_writer,
     evaluate_gate,
@@ -69,6 +71,17 @@ def _load_existing_for_sync(
 
 def _now() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def _replace_with_retry(source: Path, destination: Path) -> None:
+    for attempt in range(8):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if attempt == 7:
+                raise
+            time.sleep(0.05 * (2**attempt))
 
 
 def persist_failure_evidence(
@@ -135,6 +148,12 @@ def _backtest_browser_fingerprint(browser: dict[str, object]) -> str:
             "official_summary": hashlib.sha256(
                 bytes(browser["official_summary"])
             ).hexdigest(),
+            "performance_profile": hashlib.sha256(
+                bytes(browser.get("performance_profile") or b"")
+            ).hexdigest(),
+            "performance_profile_surface_supported": browser.get(
+                "performance_profile_surface_supported"
+            ),
             "params": browser.get("params") or {},
         }
     )
@@ -195,7 +214,7 @@ def _strategy_id(index_path: Path, name: str, url: str) -> str:
                 writer.writerows(rows)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, index_path)
+            _replace_with_retry(temporary, index_path)
         finally:
             temporary.unlink(missing_ok=True)
     return strategy_id
@@ -223,7 +242,7 @@ def _update_strategy_latest(
                 writer.writerows(rows)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, index_path)
+            _replace_with_retry(temporary, index_path)
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -249,7 +268,7 @@ def _write_strategy(strategy_dir: Path, identity: dict[str, object]) -> None:
                     stream.write(payload)
                     stream.flush()
                     os.fsync(stream.fileno())
-                os.replace(temporary_version, version)
+                _replace_with_retry(temporary_version, version)
             finally:
                 temporary_version.unlink(missing_ok=True)
         existing_aliases: list[dict[str, object]] = []
@@ -313,7 +332,7 @@ def _write_strategy(strategy_dir: Path, identity: dict[str, object]) -> None:
                 stream.write("\n")
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, target)
+            _replace_with_retry(temporary, target)
         finally:
             temporary.unlink(missing_ok=True)
         default_code = strategy_dir / "default_code.py"
@@ -323,7 +342,7 @@ def _write_strategy(strategy_dir: Path, identity: dict[str, object]) -> None:
                 stream.write(payload)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary_default, default_code)
+            _replace_with_retry(temporary_default, default_code)
         finally:
             temporary_default.unlink(missing_ok=True)
         verify_existing_manifest(strategy_dir)
@@ -370,6 +389,35 @@ def _gzip_record(raw: bytes, path: Path, root: Path, format_: str) -> dict[str, 
         "raw_bytes": evidence["raw_bytes"],
         "format": format_,
     }
+
+
+def _stage_performance_profile(
+    stage: Path,
+    browser: dict[str, object],
+    datasets: dict[str, dict[str, object]],
+    *,
+    root: Path | None = None,
+) -> list[Path]:
+    raw = browser.get("performance_profile")
+    if raw is None:
+        payload = b""
+    elif isinstance(raw, bytes):
+        payload = raw
+    else:
+        raise IntegrityError("performance profile payload is invalid")
+    classified = classify_performance_profile(
+        str(browser["code"]),
+        payload=payload,
+        surface_supported=browser.get("performance_profile_surface_supported"),
+    )
+    datasets["performance_profile"].update(**classified)
+    if classified["status"] != "complete":
+        return []
+    archive_root = root or stage
+    path = stage / "raw" / "performance-profile.txt.gz"
+    record = _gzip_record(payload, path, archive_root, "text.gz")
+    datasets["performance_profile"]["files"] = [record]
+    return [path]
 
 
 def _stage_research_response(
@@ -628,6 +676,63 @@ def _research_after_times(manifest: dict[str, object] | None) -> dict[str, str]:
     return _manifest_time_cursors(manifest)
 
 
+def _simulation_browser_incremental_state(
+    object_dir: Path, previous: dict[str, object] | None
+) -> dict[str, object] | None:
+    if previous is None:
+        return None
+    datasets = previous.get("datasets")
+    normal_log = datasets.get("normal_log") if isinstance(datasets, dict) else None
+    code = previous.get("code")
+    if not isinstance(normal_log, dict) or not isinstance(code, dict):
+        raise IntegrityError("simulation incremental browser state is invalid")
+    rows = normal_log.get("rows")
+    versions = code.get("versions")
+    history = code.get("history")
+    if type(rows) is not int or rows < 0 or not isinstance(versions, list):
+        raise IntegrityError("simulation incremental browser cursor is invalid")
+    log_files = [
+        item
+        for item in normal_log.get("files") or []
+        if isinstance(item, dict)
+        and item.get("format") == "jsonl.gz"
+        and "pages" not in str(item.get("path"))
+    ]
+    stop_offset = 0
+    if rows:
+        if len(log_files) != 1:
+            raise IntegrityError("simulation incremental log evidence is missing")
+        with gzip.open(
+            object_dir / str(log_files[0]["path"]), "rb"
+        ) as stream:
+            records = _read_log_records(stream.read())
+        offsets = [
+            item.get("offset")
+            for item in records
+            if type(item.get("offset")) is int
+        ]
+        if len(records) != rows or len(offsets) != rows:
+            raise IntegrityError("simulation incremental log evidence is invalid")
+        stop_offset = max(offsets) + 1
+    history_pages: list[dict[str, object]] = []
+    if isinstance(history, dict) and history.get("path"):
+        with gzip.open(
+            object_dir / str(history["path"]), "rt", encoding="utf-8"
+        ) as stream:
+            value = json.load(stream)
+        if not isinstance(value, list) or not all(
+            isinstance(item, dict) for item in value
+        ):
+            raise IntegrityError("simulation code history evidence is invalid")
+        history_pages = value
+    history_rows = history.get("rows") if isinstance(history, dict) else None
+    return {
+        "normal_log_stop_offset": stop_offset,
+        "code_history_total": history_rows if type(history_rows) is int else None,
+        "code_history_pages": history_pages,
+    }
+
+
 def _bundle_time_cursors(
     bundle: dict[str, object], previous: dict[str, str]
 ) -> dict[str, str]:
@@ -756,6 +861,7 @@ def _merge_simulation_log(
         ]
     prior: list[dict[str, object]] = []
     prior_pages: list[dict[str, object]] = []
+    normal: dict[str, object] | None = None
     if previous and object_dir is not None:
         datasets = previous.get("datasets")
         normal = datasets.get("normal_log") if isinstance(datasets, dict) else None
@@ -800,7 +906,14 @@ def _merge_simulation_log(
     )
     complete_from_start = contiguous and min(offsets) == 0
     observed_status = str(browser["normal_log_status"])
-    status = "complete" if complete_from_start else observed_status
+    previous_status = str(normal.get("status")) if isinstance(normal, dict) else ""
+    status = (
+        "complete"
+        if complete_from_start
+        else "capped_free"
+        if "capped_free" in {observed_status, previous_status}
+        else observed_status
+    )
     current_pages = [
         item
         for item in browser.get("normal_log_raw_pages") or []
@@ -813,9 +926,12 @@ def _merge_simulation_log(
             successful_pages[int(cursor)] = page
     merged_pages = [successful_pages[key] for key in sorted(successful_pages)]
     if status == "capped_free":
-        merged_pages.extend(
-            page for page in current_pages if page.get("blocked_free") is True
-        )
+        blocked_pages: dict[int, dict[str, object]] = {}
+        for page in [*prior_pages, *current_pages]:
+            cursor = page.get("offset", page.get("cursor"))
+            if type(cursor) is int and page.get("blocked_free") is True:
+                blocked_pages[int(cursor)] = page
+        merged_pages.extend(blocked_pages[key] for key in sorted(blocked_pages))
     browser["normal_log_records"] = records
     browser["normal_log_rows"] = len(records)
     browser["normal_log_status"] = status
@@ -1075,7 +1191,7 @@ def _version_simulation_code_context(
         relative = f"{directory}/{digest}{suffix}"
         destination = stage / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(source, destination)
+        _replace_with_retry(source, destination)
         record[key] = relative
         staged.append(destination)
     for item in code.get("versions") or []:
@@ -1111,7 +1227,7 @@ def _update_simulation_pointers(object_dir: Path, manifest: dict[str, object]) -
                     stream.write(payload)
                     stream.flush()
                     os.fsync(stream.fileno())
-                os.replace(temporary, object_dir / target_name)
+                _replace_with_retry(temporary, object_dir / target_name)
             finally:
                 temporary.unlink(missing_ok=True)
 
@@ -1120,7 +1236,7 @@ def _cleanup_unreferenced_snapshots(
     object_dir: Path, manifest: dict[str, object]
 ) -> None:
     datasets = manifest.get("datasets")
-    referenced: set[str] = set()
+    referenced_files: set[str] = set()
     if isinstance(datasets, dict):
         for dataset in datasets.values():
             if not isinstance(dataset, dict):
@@ -1128,22 +1244,33 @@ def _cleanup_unreferenced_snapshots(
             for item in dataset.get("files") or []:
                 if not isinstance(item, dict):
                     continue
-                parts = Path(str(item.get("path") or "")).parts
-                if len(parts) > 1 and parts[0] == "snapshots":
-                    referenced.add(parts[1])
+                relative = str(item.get("path") or "")
+                if relative.startswith("snapshots/"):
+                    referenced_files.add(relative)
     for item in manifest.get("research_lineage") or []:
-        if isinstance(item, dict):
-            parts = Path(str(item.get("path") or "")).parts
-            if len(parts) > 1 and parts[0] == "snapshots":
-                referenced.add(parts[1])
+        relative = str(item.get("path") or "") if isinstance(item, dict) else ""
+        if relative.startswith("snapshots/"):
+            referenced_files.add(relative)
     root = object_dir / "snapshots"
     if not root.is_dir():
         return
     for path in root.iterdir():
-        if path.is_dir() and path.name not in referenced:
+        if not path.is_dir():
+            continue
+        prefix = f"snapshots/{path.name}/"
+        if not any(relative.startswith(prefix) for relative in referenced_files):
             resolved = path.resolve()
             resolved.relative_to(root.resolve())
             shutil.rmtree(resolved)
+            continue
+        for file_path in path.rglob("*"):
+            if file_path.is_file() and file_path.relative_to(object_dir).as_posix() not in referenced_files:
+                file_path.unlink()
+        for directory in sorted(
+            (item for item in path.rglob("*") if item.is_dir()), reverse=True
+        ):
+            if not any(directory.iterdir()):
+                directory.rmdir()
 
 
 def _backtest_params(
@@ -1182,7 +1309,7 @@ def _version_backtest_params(stage: Path, code: dict[str, object]) -> Path:
     relative = f"params_versions/{digest}.json"
     destination = stage / relative
     destination.parent.mkdir(parents=True, exist_ok=True)
-    os.replace(source, destination)
+    _replace_with_retry(source, destination)
     record["path"] = relative
     code["params_path"] = relative
     return destination
@@ -1298,7 +1425,7 @@ def _update_backtest_params_pointer(
                 stream.write(payload)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, object_dir / "params.json")
+            _replace_with_retry(temporary, object_dir / "params.json")
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -1428,10 +1555,7 @@ def _build_backtest_batch(
             datasets,
         )
     )
-    datasets["performance_profile"].update(
-        status="unsupported_api_version",
-        evidence={"source": "detail page did not expose a free profile export"},
-    )
+    staged.extend(_stage_performance_profile(stage, browser, datasets))
 
     if writer_present:
         attribution_raw = bytes(research["attribution"])
@@ -1688,7 +1812,7 @@ def _simulation_id(index_path: Path, page_space_id: str) -> str:
         temporary.write_text(
             json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
-        os.replace(temporary, index_path)
+        _replace_with_retry(temporary, index_path)
         return local_id
 
 
@@ -1747,6 +1871,12 @@ def _simulation_remote_fingerprint(browser: dict[str, object]) -> str:
             ),
             "code_history_total": browser.get("code_history_total"),
             "log": log_value,
+            "performance_profile": hashlib.sha256(
+                bytes(browser.get("performance_profile") or b"")
+            ).hexdigest(),
+            "performance_profile_surface_supported": browser.get(
+                "performance_profile_surface_supported"
+            ),
             "params": browser.get("params") or {},
         }
     )
@@ -1950,9 +2080,8 @@ def _build_simulation_batch(
     )
     staged.append(log_path)
     staged.append(log_pages_path)
-    datasets["performance_profile"].update(
-        status="unsupported_api_version",
-        evidence={"source": "live page did not expose a free profile export"},
+    staged.extend(
+        _stage_performance_profile(snapshot, browser, datasets, root=stage)
     )
     if writer_present:
         attribution_raw = bytes(research["attribution"])
@@ -1995,6 +2124,15 @@ def _build_simulation_batch(
         stage,
         "json.gz",
     )
+    history_total = browser.get("code_history_total")
+    if type(history_total) is not int:
+        code_history = browser.get("code_history")
+        history_total = (
+            len(code_history)
+            if isinstance(code_history, list)
+            else len(browser.get("code_versions") or [])
+        )
+    code["history"]["rows"] = history_total
     source_payload = bytes(browser.get("source_raw") or b"")
     source_digest = hashlib.sha256(source_payload).hexdigest()[:24]
     source_response_path = (
@@ -2098,6 +2236,7 @@ def commit_simulation_evidence(
         and previous.get("fence") == manifest.get("fence")
         and previous.get("tracking") == manifest.get("tracking")
     ):
+        _update_simulation_pointers(object_dir, previous)
         verify_existing_manifest(object_dir)
         _cleanup_unreferenced_snapshots(object_dir, previous)
         return {"status": "unchanged", "manifest": previous}
@@ -2252,7 +2391,12 @@ def sync_all_active_simulations(
                             ]
                         )
                     )
-            browser = fetch_simulation_browser_evidence(page, candidate)
+            browser_incremental = _simulation_browser_incremental_state(
+                object_dir, existing
+            )
+            browser = fetch_simulation_browser_evidence(
+                page, candidate, browser_incremental
+            )
             attribution = detect_attribution_writer(str(browser["code"]))
             if attribution["writer_present"] and not attribution["path"]:
                 raise AttributionIncomplete("simulation attribution path is unresolved")
@@ -2279,7 +2423,7 @@ def sync_all_active_simulations(
                 refreshed_candidate = matches[0]
                 refreshed_candidate["local_id"] = simulation_id
             refreshed_browser = fetch_simulation_browser_evidence(
-                page, refreshed_candidate
+                page, refreshed_candidate, browser_incremental
             )
             research_after = fetch_research_backtest(
                 page,
@@ -2310,7 +2454,9 @@ def sync_all_active_simulations(
                     )
                 final_candidate = final_matches[0]
                 final_candidate["local_id"] = simulation_id
-            final_browser = fetch_simulation_browser_evidence(page, final_candidate)
+            final_browser = fetch_simulation_browser_evidence(
+                page, final_candidate, browser_incremental
+            )
             final_browser_fingerprint = _simulation_remote_fingerprint(final_browser)
             if browser_after_fingerprint != final_browser_fingerprint:
                 raise IntegrityError(

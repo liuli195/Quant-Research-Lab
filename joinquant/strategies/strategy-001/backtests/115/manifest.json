@@ -6,8 +6,17 @@
     "status": "done"
   },
   "source": {
-    "url": "https://www.joinquant.com/algorithm/backtest/detail?backtestId=d1ee137a6487a24bd65b42d1173418da",
+    "url": "https://www.joinquant.com/algorithm/backtest/detail?backtestId=472022767d45bbf2c56fd29ad2bf617f",
     "aliases": [
+      {
+        "remote_id": "472022767d45bbf2c56fd29ad2bf617f"
+      },
+      {
+        "remote_id": "8e94db09fa813e21c9a9ff45f42e0432"
+      },
+      {
+        "remote_id": "1e9cd380cdbafd22a2015b4d27b802b2"
+      },
       {
         "remote_id": "d1ee137a6487a24bd65b42d1173418da"
       },
@@ -36,30 +45,30 @@
         "remote_id": "c6914b942be9a384b737e0644ff129e3"
       }
     ],
-    "observed_at": "2026-07-11T15:52:06+08:00"
+    "observed_at": "2026-07-11T16:46:18+08:00"
   },
   "fence": {
-    "before_sha256": "a209575bbc2f844aae889042cd9ebc6b47bae8757623750c230baf4e855c1f57",
-    "after_sha256": "a209575bbc2f844aae889042cd9ebc6b47bae8757623750c230baf4e855c1f57"
+    "before_sha256": "89ebfd63c5084533dcb28325f9ac8cd42f6000b2b1ba5535ca1ad148fd4bedab",
+    "after_sha256": "89ebfd63c5084533dcb28325f9ac8cd42f6000b2b1ba5535ca1ad148fd4bedab"
   },
   "collection_fence": {
-    "collection_before_sha256": "dcdc8a10509617c435d439165bd4000d97f4e71c89b3136bd0d99d6c03270b40",
-    "collection_after_sha256": "dcdc8a10509617c435d439165bd4000d97f4e71c89b3136bd0d99d6c03270b40"
+    "collection_before_sha256": "9710c3bd8e2eb0abf153bc5f04781faa33787c8a413f8b87cc1410044109c27b",
+    "collection_after_sha256": "9710c3bd8e2eb0abf153bc5f04781faa33787c8a413f8b87cc1410044109c27b"
   },
   "research_response": {
-    "path": "raw/research-response-4c86e2505b778f051a421be1.json.gz",
-    "sha256": "8e211accba5a84242d5f66cac7e6718a50a652efef59cab9921fa9f76ee73906",
-    "bytes": 130644,
-    "raw_sha256": "4c86e2505b778f051a421be10d4f464317206f62fcb3221f80e6805d7b48dd28",
+    "path": "raw/research-response-0cb5314a85205a67259d1207.json.gz",
+    "sha256": "20acd73cc91687140a1051500cfbc035e698ebbcda5e19c7e0361b369e929ef4",
+    "bytes": 130649,
+    "raw_sha256": "0cb5314a85205a67259d1207f10547daf6d9c029658ca0652294275a328afca3",
     "raw_bytes": 1293779,
     "format": "json.gz"
   },
   "research_lineage": [
     {
-      "path": "raw/research-response-4c86e2505b778f051a421be1.json.gz",
-      "sha256": "8e211accba5a84242d5f66cac7e6718a50a652efef59cab9921fa9f76ee73906",
-      "bytes": 130644,
-      "raw_sha256": "4c86e2505b778f051a421be10d4f464317206f62fcb3221f80e6805d7b48dd28",
+      "path": "raw/research-response-0cb5314a85205a67259d1207.json.gz",
+      "sha256": "20acd73cc91687140a1051500cfbc035e698ebbcda5e19c7e0361b369e929ef4",
+      "bytes": 130649,
+      "raw_sha256": "0cb5314a85205a67259d1207f10547daf6d9c029658ca0652294275a328afca3",
       "raw_bytes": 1293779,
       "format": "json.gz"
     }
@@ -141,7 +150,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.results",
         "terminal": true,
-        "research_response_sha256": "8e211accba5a84242d5f66cac7e6718a50a652efef59cab9921fa9f76ee73906"
+        "research_response_sha256": "20acd73cc91687140a1051500cfbc035e698ebbcda5e19c7e0361b369e929ef4"
       }
     },
     "balances": {
@@ -201,7 +210,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.balances",
         "terminal": true,
-        "research_response_sha256": "8e211accba5a84242d5f66cac7e6718a50a652efef59cab9921fa9f76ee73906"
+        "research_response_sha256": "20acd73cc91687140a1051500cfbc035e698ebbcda5e19c7e0361b369e929ef4"
       }
     },
     "positions": {
@@ -273,7 +282,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.positions",
         "terminal": true,
-        "research_response_sha256": "8e211accba5a84242d5f66cac7e6718a50a652efef59cab9921fa9f76ee73906"
+        "research_response_sha256": "20acd73cc91687140a1051500cfbc035e698ebbcda5e19c7e0361b369e929ef4"
       }
     },
     "orders": {
@@ -353,7 +362,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.orders",
         "terminal": true,
-        "research_response_sha256": "8e211accba5a84242d5f66cac7e6718a50a652efef59cab9921fa9f76ee73906"
+        "research_response_sha256": "20acd73cc91687140a1051500cfbc035e698ebbcda5e19c7e0361b369e929ef4"
       }
     },
     "records": {
@@ -393,7 +402,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.records",
         "terminal": true,
-        "research_response_sha256": "8e211accba5a84242d5f66cac7e6718a50a652efef59cab9921fa9f76ee73906"
+        "research_response_sha256": "20acd73cc91687140a1051500cfbc035e698ebbcda5e19c7e0361b369e929ef4"
       }
     },
     "risk": {
@@ -468,7 +477,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.risk",
         "terminal": true,
-        "research_response_sha256": "8e211accba5a84242d5f66cac7e6718a50a652efef59cab9921fa9f76ee73906"
+        "research_response_sha256": "20acd73cc91687140a1051500cfbc035e698ebbcda5e19c7e0361b369e929ef4"
       }
     },
     "period_risks": {
@@ -514,7 +523,7 @@
         "mode": "single_complete_method_return",
         "source": "get_backtest.period_risks",
         "terminal": true,
-        "research_response_sha256": "8e211accba5a84242d5f66cac7e6718a50a652efef59cab9921fa9f76ee73906"
+        "research_response_sha256": "20acd73cc91687140a1051500cfbc035e698ebbcda5e19c7e0361b369e929ef4"
       }
     },
     "official_summary": {
@@ -574,10 +583,26 @@
     },
     "performance_profile": {
       "required": false,
-      "status": "unsupported_api_version",
+      "status": "complete",
+      "rows": 1756,
       "evidence": {
-        "source": "detail page did not expose a free profile export"
-      }
+        "enable_profile_call": true,
+        "code_sha256": "79b2bdb2c82de35a722741b34292df7ed012f8348a19f1b0acfb209020322857",
+        "official_reference": "JoinQuantAPI.pdf#enable_profile",
+        "profile_surface_supported": true,
+        "payload_sha256": "f80d5a70ea51f870e4cb67da13edeaef6b5a638c35b36a9396c6646a7e110a9a",
+        "payload_bytes": 136738
+      },
+      "files": [
+        {
+          "path": "raw/performance-profile.txt.gz",
+          "sha256": "84f7469c70e5e7e0079080ae9902982ed42d9529a506d09c81cc09b2b19e12c5",
+          "bytes": 23898,
+          "raw_sha256": "f80d5a70ea51f870e4cb67da13edeaef6b5a638c35b36a9396c6646a7e110a9a",
+          "raw_bytes": 136738,
+          "format": "text.gz"
+        }
+      ]
     },
     "error_log": {
       "required": false,
@@ -629,8 +654,6 @@
   },
   "gate": {
     "status": "pass",
-    "exceptions": [
-      "performance_profile:unsupported_api_version"
-    ]
+    "exceptions": []
   }
 }

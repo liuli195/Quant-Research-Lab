@@ -473,6 +473,29 @@ _CY_AJAX_JS = r"""
 """
 
 
+def _performance_profile_evidence(page: Page) -> dict[str, object]:
+    tab = page.locator("a[href='#tab-profile']")
+    surface_supported = tab.count() == 1
+    payload = b""
+    if surface_supported:
+        page.wait_for_function(
+            """() => {
+                const element = document.querySelector("#profile-tab");
+                return element && element.style.cursor === "pointer";
+            }""",
+            timeout=60_000,
+        )
+        tab.click()
+        profile = page.locator("#profile pre")
+        if profile.count() == 1:
+            profile.wait_for(state="visible", timeout=60_000)
+            payload = profile.inner_text().encode("utf-8")
+    return {
+        "performance_profile": payload,
+        "performance_profile_surface_supported": surface_supported,
+    }
+
+
 def fetch_backtest_browser_evidence(page: Page, target_url: str) -> dict[str, object]:
     page.goto(target_url, wait_until="networkidle")
     ensure_authenticated(page)
@@ -551,6 +574,8 @@ def fetch_backtest_browser_evidence(page: Page, target_url: str) -> dict[str, ob
         + ("\n" if logs else "")
     ).encode("utf-8")
 
+    performance = _performance_profile_evidence(page)
+
     with TemporaryDirectory(prefix="joinquant-summary-") as directory:
         destination = Path(directory) / "official-summary.xls"
         page.locator("#backtest-menu-toggle").click()
@@ -570,6 +595,7 @@ def fetch_backtest_browser_evidence(page: Page, target_url: str) -> dict[str, ob
         "normal_log_records": logs,
         "normal_log_raw_pages": raw_log_pages,
         "official_summary": official_summary,
+        **performance,
         "params": {
             "start_date": page.locator("#start_date").input_value()
             if page.locator("#start_date").count()
@@ -609,8 +635,10 @@ def collect_simulation_logs(
     initial_offset: int,
     initial_lines: list[str],
     fetch_older: Callable[[int, int], dict[str, object]],
+    *,
+    stop_offset: int = 0,
 ) -> tuple[list[dict[str, object]], str]:
-    if initial_offset < 0:
+    if initial_offset < 0 or stop_offset < 0:
         raise FreeLogIncomplete("simulation log offset is invalid")
     cursor = initial_offset
     records: list[dict[str, object]] = [
@@ -618,10 +646,13 @@ def collect_simulation_logs(
         for index, line in enumerate(initial_lines)
     ]
     for _ in range(10_000):
+        if stop_offset and cursor <= stop_offset:
+            records.sort(key=lambda item: int(item["offset"]))
+            return records, "incremental"
         if cursor <= 0:
             records.sort(key=lambda item: int(item["offset"]))
             return records, "complete"
-        offset = max(0, cursor - 100)
+        offset = max(stop_offset, 0, cursor - 100)
         limit = cursor - offset
         page = fetch_older(offset, limit)
         if page.get("blocked_free"):
@@ -638,8 +669,47 @@ def collect_simulation_logs(
     raise FreeLogIncomplete("simulation log pagination exceeded safety limit")
 
 
+def reuse_simulation_code_history(
+    fresh_document: dict[str, object],
+    previous_pages: object,
+    history_total: int,
+    known_total: object,
+) -> tuple[list[object], list[dict[str, object]], bool]:
+    fresh_data = fresh_document.get("data")
+    fresh_items = fresh_data.get("list") if isinstance(fresh_data, dict) else None
+    if not isinstance(fresh_items, list):
+        raise TargetDiscoveryError("simulation code history is invalid")
+    previous_history: list[object] = []
+    valid_pages = (
+        list(previous_pages)
+        if isinstance(previous_pages, list)
+        and all(isinstance(item, dict) for item in previous_pages)
+        else []
+    )
+    for document in valid_pages:
+        data = document.get("data")
+        items = data.get("list") if isinstance(data, dict) else None
+        if isinstance(items, list):
+            previous_history.extend(items)
+    reusable = (
+        type(known_total) is int
+        and known_total == history_total
+        and len(previous_history) == history_total
+        and previous_history[: len(fresh_items)] == fresh_items
+    )
+    if reusable:
+        return (
+            previous_history,
+            [fresh_document, *valid_pages[1:]],
+            True,
+        )
+    return list(fresh_items), [fresh_document], False
+
+
 def fetch_simulation_browser_evidence(
-    page: Page, candidate: dict[str, object]
+    page: Page,
+    candidate: dict[str, object],
+    incremental: dict[str, object] | None = None,
 ) -> dict[str, object]:
     with page.expect_response(
         lambda response: "/algorithm/live/getLiveHistoryList" in response.url,
@@ -653,14 +723,28 @@ def fetch_simulation_browser_evidence(
         history_data.get("list"), list
     ):
         raise TargetDiscoveryError("simulation code history is invalid")
-    history = history_data["list"]
     try:
         history_total = int(history_data.get("totalCount"))
     except (TypeError, ValueError) as error:
         raise TargetDiscoveryError(
             "simulation code history total is invalid"
         ) from error
-    history_pages: list[dict[str, object]] = [history_document]
+    previous_pages = (
+        incremental.get("code_history_pages")
+        if isinstance(incremental, dict)
+        else None
+    )
+    known_total = (
+        incremental.get("code_history_total")
+        if isinstance(incremental, dict)
+        else None
+    )
+    history, history_pages, reuse_previous = reuse_simulation_code_history(
+        history_document,
+        previous_pages,
+        history_total,
+        known_total,
+    )
     history_url = urlsplit(history_info.value.url)
     history_query = parse_qs(history_url.query)
     history_alias = history_query.get("backtestId", [""])[0]
@@ -669,9 +753,12 @@ def fetch_simulation_browser_evidence(
         raise TargetDiscoveryError(
             "simulation code history request identity is invalid"
         )
-    for page_number in range(
-        2, (history_total + history_limit - 1) // history_limit + 1
-    ):
+    page_numbers = (
+        []
+        if reuse_previous
+        else range(2, (history_total + history_limit - 1) // history_limit + 1)
+    )
+    for page_number in page_numbers:
         result = page.evaluate(
             _CY_AJAX_JS,
             {
@@ -798,7 +885,19 @@ def fetch_simulation_browser_evidence(
         pages.append({"cursor": offset, "rows": len(older_lines), "mode": "older"})
         return {"rows": older_lines}
 
-    records, log_status = collect_simulation_logs(cursor, initial_lines, fetch_older)
+    stop_offset = (
+        incremental.get("normal_log_stop_offset", 0)
+        if isinstance(incremental, dict)
+        else 0
+    )
+    if type(stop_offset) is not int:
+        raise TargetDiscoveryError("simulation incremental log offset is invalid")
+    records, log_status = collect_simulation_logs(
+        cursor,
+        initial_lines,
+        fetch_older,
+        stop_offset=stop_offset,
+    )
     log_bytes = (
         "\n".join(
             json.dumps(item, ensure_ascii=False, separators=(",", ":"))
@@ -827,6 +926,7 @@ def fetch_simulation_browser_evidence(
         if page.locator("#backtestId").count()
         else str((candidate.get("aliases") or [""])[0])
     )
+    performance = _performance_profile_evidence(page)
     return {
         "code": str(source_data["source"]),
         "source_raw": source_info.value.body(),
@@ -842,6 +942,7 @@ def fetch_simulation_browser_evidence(
         "normal_log_records": records,
         "normal_log_raw_pages": raw_log_pages,
         "log_pages": pages,
+        **performance,
         "params": {
             "start_date": page.locator("#startDate").input_value()
             if page.locator("#startDate").count()

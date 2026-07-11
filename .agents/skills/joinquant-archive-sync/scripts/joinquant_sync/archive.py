@@ -54,19 +54,114 @@ class SimulationIncrementError(RuntimeError):
     """Raised when a simulation increment lacks verifiable stream evidence."""
 
 
+def classify_performance_profile(
+    code: str,
+    *,
+    payload: bytes = b"",
+    surface_supported: bool | None = None,
+) -> dict[str, object]:
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return {
+            "status": "failed",
+            "evidence": {
+                "enable_profile_call": "unknown",
+                "reason": "strategy code could not be parsed",
+            },
+        }
+    enabled = any(
+        isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Name) and node.func.id == "enable_profile")
+            or (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == "enable_profile"
+            )
+        )
+        for node in ast.walk(tree)
+    )
+    evidence = {
+        "enable_profile_call": enabled,
+        "code_sha256": hashlib.sha256(code.encode("utf-8")).hexdigest(),
+        "official_reference": "JoinQuantAPI.pdf#enable_profile",
+        "profile_surface_supported": surface_supported,
+    }
+    if payload:
+        text = payload.decode("utf-8", errors="replace")
+        valid_payload = (
+            enabled
+            and surface_supported is True
+            and all(
+                marker in text
+                for marker in ("Timer unit:", "Total time:", "Line #")
+            )
+        )
+        if not valid_payload:
+            evidence["reason"] = (
+                "performance profile payload lacks source or format evidence"
+            )
+            return {"status": "failed", "evidence": evidence}
+        evidence["payload_sha256"] = hashlib.sha256(payload).hexdigest()
+        evidence["payload_bytes"] = len(payload)
+        return {
+            "status": "complete",
+            "rows": len(payload.splitlines()),
+            "evidence": evidence,
+        }
+    if enabled:
+        if surface_supported is False:
+            evidence["reason"] = "the current page does not expose a performance profile surface"
+            return {"status": "unsupported_api_version", "evidence": evidence}
+        evidence["reason"] = "performance profiling was enabled but no profile payload was collected"
+        return {"status": "failed", "evidence": evidence}
+    evidence["reason"] = "strategy code does not enable performance profiling"
+    return {"status": "missing_at_source", "evidence": evidence}
+
+
 def detect_attribution_writer(code: str) -> dict[str, object]:
     writer_present = "def audit_event" in code and "write_file" in code
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        tree = ast.Module(body=[], type_ignores=[])
     if not writer_present:
+        attribution_signal = any(
+            (
+                isinstance(node, ast.Call)
+                and (
+                    (
+                        isinstance(node.func, ast.Name)
+                        and (
+                            node.func.id == "write_file"
+                            or "audit" in node.func.id.lower()
+                            or "attribution" in node.func.id.lower()
+                        )
+                    )
+                    or (
+                        isinstance(node.func, ast.Attribute)
+                        and (
+                            "audit" in node.func.attr.lower()
+                            or "attribution" in node.func.attr.lower()
+                        )
+                    )
+                )
+            )
+            or (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value.lower().endswith(".jsonl")
+            )
+            for node in ast.walk(tree)
+        )
+        if attribution_signal:
+            raise IntegrityError("attribution writer evidence is ambiguous")
         return {
             "writer_present": False,
             "path": "",
             "evidence": {"code_writer": False},
         }
     constants: dict[str, str] = {}
-    try:
-        tree = ast.parse(code)
-    except SyntaxError:
-        tree = ast.Module(body=[], type_ignores=[])
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.Assign)
@@ -900,6 +995,45 @@ def _verify_normal_log(object_dir: Path, dataset: dict[str, object]) -> None:
         raise IntegrityError("normal log pagination evidence mismatch")
 
 
+def _verify_performance_profile(
+    object_dir: Path, dataset: dict[str, object], code_text: str
+) -> None:
+    files = dataset.get("files")
+    profile_files = [
+        item
+        for item in files or []
+        if isinstance(item, dict) and item.get("format") == "text.gz"
+    ]
+    payload = b""
+    if dataset.get("status") == "complete":
+        if len(profile_files) != 1:
+            raise IntegrityError("performance profile evidence is incomplete")
+        try:
+            with gzip.open(
+                _object_path(object_dir, str(profile_files[0].get("path") or "")),
+                "rb",
+            ) as stream:
+                payload = stream.read()
+        except OSError as error:
+            raise IntegrityError("performance profile evidence is invalid") from error
+    elif profile_files:
+        raise IntegrityError("non-complete performance profile has payload files")
+    evidence = dataset.get("evidence")
+    if not isinstance(evidence, dict):
+        raise IntegrityError("performance profile evidence is missing")
+    checked = classify_performance_profile(
+        code_text,
+        payload=payload,
+        surface_supported=evidence.get("profile_surface_supported"),
+    )
+    if (
+        dataset.get("status") != checked.get("status")
+        or int(dataset.get("rows") or 0) != int(checked.get("rows") or 0)
+        or evidence != checked.get("evidence")
+    ):
+        raise IntegrityError("performance profile evidence mismatch")
+
+
 def _verify_run_contents(object_dir: Path, manifest: dict[str, object]) -> None:
     object_state = manifest.get("object")
     if not isinstance(object_state, dict) or object_state.get("kind") not in {
@@ -1025,6 +1159,10 @@ def _verify_run_contents(object_dir: Path, manifest: dict[str, object]) -> None:
     if not isinstance(normal_log, dict):
         raise IntegrityError("normal log dataset is missing")
     _verify_normal_log(object_dir, normal_log)
+    performance_profile = datasets.get("performance_profile")
+    if not isinstance(performance_profile, dict):
+        raise IntegrityError("performance profile dataset is missing")
+    _verify_performance_profile(object_dir, performance_profile, code_text)
 
 
 def _validate_manifest_contract(manifest: dict[str, object]) -> None:
@@ -1295,7 +1433,9 @@ def verify_existing_manifest_files(object_dir: Path) -> dict[str, object]:
         raise IntegrityError(f"invalid manifest: {error.msg}") from error
     if not isinstance(manifest, dict):
         raise IntegrityError("manifest root must be an object")
-    _verify_manifest_document(object_dir, manifest, validate_contract=False)
+    _verify_manifest_document(
+        object_dir, manifest, verify_pointers=False, validate_contract=False
+    )
     return manifest
 
 
