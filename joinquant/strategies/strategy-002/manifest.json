@@ -7,8 +7,17 @@
     "name": "ETF动态调仓"
   },
   "source": {
-    "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=e077db5d8d26456712b0dbb9b27ec16c&backtest=12",
+    "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=047e7aa1c21b713d00ec3d15f9e67353&backtest=12",
     "aliases": [
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=047e7aa1c21b713d00ec3d15f9e67353&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=b90ad58baaa3f8f199495c6cac684bfa&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=f5f2b92b1df04f87c18e65a6cd54a747&backtest=12"
+      },
       {
         "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=e077db5d8d26456712b0dbb9b27ec16c&backtest=12"
       },
@@ -73,7 +82,7 @@
         "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=c57fcc9eeb34b39428c46f5c87bfe77f&backtest=12"
       }
     ],
-    "observed_at": "2026-07-11T17:58:29+08:00"
+    "observed_at": "2026-07-11T18:18:44+08:00"
   },
   "fence": {
     "before_sha256": "9f25381bdf78a8b0a42a71d09fa8f359bfa1e53855c829526607f6e4b254b731",

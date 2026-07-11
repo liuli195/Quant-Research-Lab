@@ -158,6 +158,68 @@ def test_simulation_code_history_cursor_uses_remote_history_count(
     assert state["code_history_total"] == 3
 
 
+def test_simulation_incremental_state_reuses_verified_code_sources(
+    tmp_path: Path,
+) -> None:
+    from joinquant_sync.sync_pipeline import _simulation_browser_incremental_state
+
+    code_text = "# historical code\n"
+    digest = hashlib.sha256(code_text.encode()).hexdigest()
+    code_path = tmp_path / "code_versions" / f"{digest}.py"
+    code_path.parent.mkdir(parents=True)
+    code_path.write_bytes(code_text.encode())
+    history_path = tmp_path / "raw" / "code-history.json.gz"
+    history_path.parent.mkdir(parents=True)
+    with gzip.open(history_path, "wt", encoding="utf-8") as stream:
+        json.dump(
+            [
+                {
+                    "data": {
+                        "list": [
+                            {
+                                "liveHistoryId": "h1",
+                                "sourceBacktestId": "source-1",
+                                "addTime": "t1",
+                                "modTime": "t1",
+                                "code": 0,
+                            }
+                        ]
+                    }
+                }
+            ],
+            stream,
+        )
+    manifest = {
+        "datasets": {"normal_log": {"rows": 0, "files": []}},
+        "code": {
+            "versions": [
+                {
+                    "path": f"code_versions/{digest}.py",
+                    "sha256": digest,
+                }
+            ],
+            "history": {"path": "raw/code-history.json.gz", "rows": 1},
+            "history_versions": [
+                {
+                    "history_ordinal": 1,
+                    "live_history_id": "h1",
+                    "source_backtest_id": "source-1",
+                    "add_time": "t1",
+                    "mod_time": "t1",
+                    "code_sha256": digest,
+                    "path": f"code_versions/{digest}.py",
+                }
+            ],
+        },
+    }
+
+    state = _simulation_browser_incremental_state(tmp_path, manifest)
+
+    assert state is not None
+    assert state["code_version_cache"] == {"source-1": code_text}
+    assert list(state["code_history_cache"].values()) == [code_text]
+
+
 def _commit_test_simulation(
     object_dir: Path,
     *,
@@ -168,6 +230,7 @@ def _commit_test_simulation(
     history_includes_current: bool = True,
     profile: bool = False,
     rotated_writer: bool = False,
+    rotated_tail_event: str = "schedule_reset_after_code_changed",
 ) -> dict[str, object]:
     from joinquant_sync.archive import (
         commit_manifest,
@@ -313,7 +376,7 @@ def _commit_test_simulation(
             {
                 "audit_token": "run-new",
                 "seq": 3,
-                "event": "schedule_reset_after_code_changed",
+                "event": rotated_tail_event,
                 "current_dt": "2026-01-01T00:01:00",
             },
         ]
@@ -327,6 +390,35 @@ def _commit_test_simulation(
         }
         raw = b""
         browser["code_versions"] = [code, old_code]
+    browser["code_history_versions"] = [
+        {
+            "history_ordinal": ordinal,
+            "live_history_id": f"history-{ordinal}",
+            "source_backtest_id": f"source-{ordinal}",
+            "add_time": f"2026-01-0{ordinal} 00:00:00",
+            "mod_time": f"2026-01-0{ordinal} 00:00:00",
+            "code": version,
+        }
+        for ordinal, version in enumerate(browser["code_versions"], start=1)
+    ]
+    browser["code_history_total"] = len(browser["code_history_versions"])
+    browser["code_history_pages"] = [
+        {
+            "data": {
+                "totalCount": len(browser["code_history_versions"]),
+                "list": [
+                    {
+                        "liveHistoryId": item["live_history_id"],
+                        "sourceBacktestId": item["source_backtest_id"],
+                        "addTime": item["add_time"],
+                        "modTime": item["mod_time"],
+                        "code": 0,
+                    }
+                    for item in browser["code_history_versions"]
+                ],
+            }
+        }
+    ]
     stage = object_dir.parent / "stage"
     manifest, staged = _build_simulation_batch(
         stage,
@@ -374,7 +466,52 @@ def test_simulation_rotated_writer_archives_all_source_logs(tmp_path: Path) -> N
             if item.get("format") == "attribution-source-jsonl.gz"
         ]
     ) == 2
+    assert [
+        (item["history_ordinal"], item["source_backtest_id"])
+        for item in manifest["code"]["history_versions"]
+    ] == [(1, "source-1"), (2, "source-2")]
+    assert all(item["path"].startswith("code_versions/") for item in manifest["code"]["history_versions"])
     assert verify_existing_manifest(object_dir)["gate"]["status"] == "pass"
+
+
+def test_simulation_fence_changes_when_only_attribution_source_changes(
+    tmp_path: Path,
+) -> None:
+    first = _commit_test_simulation(
+        tmp_path / "one",
+        writer=True,
+        rotated_writer=True,
+        rotated_tail_event="schedule_reset_after_code_changed",
+    )
+    second = _commit_test_simulation(
+        tmp_path / "two",
+        writer=True,
+        rotated_writer=True,
+        rotated_tail_event="code_changed",
+    )
+
+    assert first["fence"] != second["fence"]
+
+
+def test_simulation_code_history_mapping_is_verified_against_raw_pages(
+    tmp_path: Path,
+) -> None:
+    from joinquant_sync.archive import IntegrityError, verify_existing_manifest
+
+    object_dir = tmp_path / "simulation"
+    manifest = _commit_test_simulation(
+        object_dir,
+        writer=True,
+        rotated_writer=True,
+    )
+    manifest["code"]["history_versions"][0]["source_backtest_id"] = "forged"
+    (object_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(IntegrityError, match="code history mapping"):
+        verify_existing_manifest(object_dir)
 
 
 def _datasets(kind: str = "simulation") -> dict[str, dict[str, object]]:
@@ -718,6 +855,48 @@ def test_research_fingerprint_ignores_generation_time_but_detects_data_change() 
     }
     assert _research_remote_fingerprint(first) == _research_remote_fingerprint(later)
     assert _research_remote_fingerprint(first) != _research_remote_fingerprint(changed)
+
+
+def test_simulation_fingerprint_uses_code_history_content_not_rotating_alias() -> None:
+    from joinquant_sync.sync_pipeline import _simulation_remote_fingerprint
+
+    browser = {
+        "code": "# current\n",
+        "code_versions": ["# old\n"],
+        "code_history_total": 1,
+        "code_history_versions": [
+            {
+                "history_ordinal": 1,
+                "live_history_id": "h1",
+                "source_backtest_id": "source-1",
+                "add_time": "t1",
+                "mod_time": "t1",
+                "code": "# old\n",
+            }
+        ],
+        "normal_log": b"",
+        "normal_log_records": [],
+        "params": {},
+    }
+    alias_changed = {
+        **browser,
+        "code_history_versions": [
+            {**browser["code_history_versions"][0], "source_backtest_id": "source-2"}
+        ],
+    }
+    code_changed = {
+        **browser,
+        "code_history_versions": [
+            {**browser["code_history_versions"][0], "code": "# changed\n"}
+        ],
+    }
+
+    assert _simulation_remote_fingerprint(browser) == _simulation_remote_fingerprint(
+        alias_changed
+    )
+    assert _simulation_remote_fingerprint(browser) != _simulation_remote_fingerprint(
+        code_changed
+    )
 
 
 def test_simulation_manifest_fence_includes_research_data(tmp_path: Path) -> None:
@@ -1409,6 +1588,36 @@ def test_production_simulation_core_runs_incrementally_in_memory(
         "source_backtest": "source-alias",
         "research_id": "research-alias",
         "code_versions": ["def initialize(context):\n    pass\n"],
+        "code_history_versions": [
+            {
+                "history_ordinal": 1,
+                "live_history_id": "history-1",
+                "source_backtest_id": "source-1",
+                "add_time": "2026-01-01 00:00:00",
+                "mod_time": "2026-01-01 00:00:00",
+                "code": "def initialize(context):\n    pass\n",
+            }
+        ],
+        "code_version_cache": {
+            "source-1": "def initialize(context):\n    pass\n"
+        },
+        "code_history_pages": [
+            {
+                "data": {
+                    "totalCount": 1,
+                    "list": [
+                        {
+                            "liveHistoryId": "history-1",
+                            "sourceBacktestId": "source-1",
+                            "addTime": "2026-01-01 00:00:00",
+                            "modTime": "2026-01-01 00:00:00",
+                            "code": 0,
+                        }
+                    ],
+                }
+            }
+        ],
+        "code_history_total": 1,
     }
     calls: list[dict[str, str]] = []
 
@@ -1531,7 +1740,12 @@ def test_production_simulation_core_runs_incrementally_in_memory(
     ]
     assert calls[:2] == [{}, {}]
     assert calls[2]["results"] == "2026-01-01"
-    assert browser_states[:3] == [None, None, None]
+    assert browser_states[0] is None
+    assert all(
+        state is not None
+        and state["code_version_cache"] == browser["code_version_cache"]
+        for state in browser_states[1:3]
+    )
     assert all(
         state is not None
         and state["normal_log_stop_offset"] == 1

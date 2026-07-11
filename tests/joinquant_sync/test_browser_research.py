@@ -79,7 +79,10 @@ def test_research_fetch_reads_all_requested_attribution_sources(
 
 
 def test_simulation_history_fetches_each_distinct_source_code() -> None:
-    from joinquant_sync.browser import fetch_simulation_code_versions
+    from joinquant_sync.browser import (
+        fetch_simulation_code_versions,
+        simulation_history_cache_key,
+    )
 
     class Page:
         def __init__(self) -> None:
@@ -98,17 +101,50 @@ def test_simulation_history_fetches_each_distinct_source_code() -> None:
     result = fetch_simulation_code_versions(
         page,
         [
-            {"sourceBacktestId": "new"},
-            {"sourceBacktestId": "old"},
-            {"sourceBacktestId": "new"},
+            {"sourceBacktestId": "new", "liveHistoryId": "h1", "addTime": "t1"},
+            {"sourceBacktestId": "old", "liveHistoryId": "h2", "addTime": "t2"},
+            {"sourceBacktestId": "new", "liveHistoryId": "h3", "addTime": "t3"},
         ],
     )
 
-    assert result == ["# code new\n", "# code old\n"]
+    assert [item["source_backtest_id"] for item in result] == ["new", "old", "new"]
+    assert [item["history_ordinal"] for item in result] == [1, 2, 3]
+    assert [item["live_history_id"] for item in result] == ["h1", "h2", "h3"]
+    assert [item["code"] for item in result] == [
+        "# code new\n",
+        "# code old\n",
+        "# code new\n",
+    ]
     assert page.urls == [
         "/algorithm/backtest/source?backtestId=new",
         "/algorithm/backtest/source?backtestId=old",
     ]
+
+    cached_page = Page()
+    cached = fetch_simulation_code_versions(
+        cached_page,
+        [{"sourceBacktestId": "new"}, {"sourceBacktestId": "old"}],
+        cached_sources={"new": "# code new\n"},
+    )
+    assert [item["code"] for item in cached] == ["# code new\n", "# code old\n"]
+    assert cached_page.urls == ["/algorithm/backtest/source?backtestId=old"]
+
+    rotated_alias_page = Page()
+    rotated_alias = fetch_simulation_code_versions(
+        rotated_alias_page,
+        [
+            {
+                "sourceBacktestId": "rotated",
+                "addTime": "t1",
+                "modTime": "",
+            }
+        ],
+        cached_history={
+            simulation_history_cache_key(1, "t1", ""): "# code new\n"
+        },
+    )
+    assert rotated_alias[0]["code"] == "# code new\n"
+    assert rotated_alias_page.urls == []
 
 
 def test_log_transport_captures_original_response_text() -> None:

@@ -45,6 +45,7 @@ from .browser import (
     fetch_strategy_default_code,
     fetch_simulation_browser_evidence,
     inspect_simulation_status,
+    simulation_history_cache_key,
 )
 from .query import write_parquet
 from .research_cloud import fetch_research_backtest
@@ -728,10 +729,48 @@ def _simulation_browser_incremental_state(
             raise IntegrityError("simulation code history evidence is invalid")
         history_pages = value
     history_rows = history.get("rows") if isinstance(history, dict) else None
+    code_version_cache: dict[str, str] = {}
+    code_history_cache: dict[str, str] = {}
+    history_versions = code.get("history_versions")
+    if history_versions is not None:
+        if not isinstance(history_versions, list):
+            raise IntegrityError("simulation code history mapping is invalid")
+        for item in history_versions:
+            if not isinstance(item, dict):
+                raise IntegrityError("simulation code history mapping is invalid")
+            source_id = str(item.get("source_backtest_id") or "")
+            path = object_dir / str(item.get("path") or "")
+            expected_sha256 = str(item.get("code_sha256") or "")
+            try:
+                payload = path.read_bytes()
+                code_text = payload.decode("utf-8")
+            except (OSError, UnicodeDecodeError) as error:
+                raise IntegrityError(
+                    "simulation cached code source is invalid"
+                ) from error
+            if (
+                not source_id
+                or hashlib.sha256(payload).hexdigest() != expected_sha256
+                or (
+                    source_id in code_version_cache
+                    and code_version_cache[source_id] != code_text
+                )
+            ):
+                raise IntegrityError("simulation cached code source is invalid")
+            code_version_cache[source_id] = code_text
+            code_history_cache[
+                simulation_history_cache_key(
+                    int(item.get("history_ordinal") or 0),
+                    str(item.get("add_time") or ""),
+                    str(item.get("mod_time") or ""),
+                )
+            ] = code_text
     return {
         "normal_log_stop_offset": stop_offset,
         "code_history_total": history_rows if type(history_rows) is int else None,
         "code_history_pages": history_pages,
+        "code_version_cache": code_version_cache,
+        "code_history_cache": code_history_cache,
     }
 
 
@@ -1894,6 +1933,18 @@ def _simulation_remote_fingerprint(browser: dict[str, object]) -> str:
                 if str(item).strip()
             ),
             "code_history_total": browser.get("code_history_total"),
+            "code_history_versions": [
+                {
+                    "history_ordinal": item.get("history_ordinal"),
+                    "add_time": item.get("add_time"),
+                    "mod_time": item.get("mod_time"),
+                    "code_sha256": hashlib.sha256(
+                        str(item.get("code") or "").encode("utf-8")
+                    ).hexdigest(),
+                }
+                for item in browser.get("code_history_versions") or []
+                if isinstance(item, dict)
+            ],
             "log": log_value,
             "performance_profile": hashlib.sha256(
                 bytes(browser.get("performance_profile") or b"")
@@ -2178,6 +2229,41 @@ def _build_simulation_batch(
         source_backtest=str(browser["source_backtest"] or "unknown"),
         versions=list(browser.get("code_versions") or []),
     )
+    history_versions = browser.get("code_history_versions")
+    if history_versions is not None:
+        if not isinstance(history_versions, list) or not all(
+            isinstance(item, dict) for item in history_versions
+        ):
+            raise IntegrityError("simulation code history version mapping is invalid")
+        version_paths = {
+            str(item.get("sha256")): str(item.get("path"))
+            for item in code.get("versions") or []
+            if isinstance(item, dict) and item.get("sha256") and item.get("path")
+        }
+        mapped_versions: list[dict[str, object]] = []
+        for ordinal, item in enumerate(history_versions, start=1):
+            if item.get("history_ordinal") != ordinal:
+                raise IntegrityError("simulation code history order is invalid")
+            source_id = str(item.get("source_backtest_id") or "")
+            source_code = str(item.get("code") or "")
+            if not source_id or not source_code:
+                raise IntegrityError("simulation code history source mapping is incomplete")
+            code_sha256 = hashlib.sha256(source_code.encode("utf-8")).hexdigest()
+            path = version_paths.get(code_sha256)
+            if not path:
+                raise IntegrityError("simulation code history version file is missing")
+            mapped_versions.append(
+                {
+                    "history_ordinal": ordinal,
+                    "live_history_id": str(item.get("live_history_id") or ""),
+                    "source_backtest_id": source_id,
+                    "add_time": str(item.get("add_time") or ""),
+                    "mod_time": str(item.get("mod_time") or ""),
+                    "code_sha256": code_sha256,
+                    "path": path,
+                }
+            )
+        code["history_versions"] = mapped_versions
     history_payload = json.dumps(
         browser.get("code_history_pages") or [],
         ensure_ascii=False,
@@ -2219,9 +2305,19 @@ def _build_simulation_batch(
             "page_space_id": candidate.get("page_space_id"),
             "browser": _simulation_remote_fingerprint(browser),
             "data": data_sha,
-            "attribution": hashlib.sha256(
-                bytes(research.get("attribution") or b"")
-            ).hexdigest(),
+            "attribution": {
+                "selected_sha256": hashlib.sha256(
+                    bytes(research.get("attribution") or b"")
+                ).hexdigest(),
+                "source_sha256": {
+                    str(path): hashlib.sha256(bytes(raw)).hexdigest()
+                    for path, raw in (
+                        research.get("attributions")
+                        if isinstance(research.get("attributions"), dict)
+                        else {}
+                    ).items()
+                },
+            },
         }
     )
     collection_fence = candidate.get("collection_fence")
@@ -2464,6 +2560,15 @@ def sync_all_active_simulations(
             browser = fetch_simulation_browser_evidence(
                 page, candidate, browser_incremental
             )
+            followup_browser_incremental = dict(browser_incremental or {})
+            followup_browser_incremental.update(
+                {
+                    "code_history_pages": browser.get("code_history_pages") or [],
+                    "code_history_total": browser.get("code_history_total"),
+                    "code_version_cache": browser.get("code_version_cache") or {},
+                    "code_history_cache": browser.get("code_history_cache") or {},
+                }
+            )
             attribution = detect_attribution_writers(
                 [
                     *(str(code) for code in browser.get("code_versions") or []),
@@ -2498,7 +2603,7 @@ def sync_all_active_simulations(
                 refreshed_candidate = matches[0]
                 refreshed_candidate["local_id"] = simulation_id
             refreshed_browser = fetch_simulation_browser_evidence(
-                page, refreshed_candidate, browser_incremental
+                page, refreshed_candidate, followup_browser_incremental
             )
             research_after = fetch_research_backtest(
                 page,
@@ -2530,7 +2635,7 @@ def sync_all_active_simulations(
                 final_candidate = final_matches[0]
                 final_candidate["local_id"] = simulation_id
             final_browser = fetch_simulation_browser_evidence(
-                page, final_candidate, browser_incremental
+                page, final_candidate, followup_browser_incremental
             )
             final_browser_fingerprint = _simulation_remote_fingerprint(final_browser)
             if browser_after_fingerprint != final_browser_fingerprint:

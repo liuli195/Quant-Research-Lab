@@ -706,12 +706,29 @@ def reuse_simulation_code_history(
     return list(fresh_items), [fresh_document], False
 
 
+def simulation_history_cache_key(
+    history_ordinal: int, add_time: str, mod_time: str
+) -> str:
+    return json.dumps(
+        [history_ordinal, add_time, mod_time],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
 def fetch_simulation_code_versions(
-    page: Page, history: Iterable[object]
-) -> list[str]:
+    page: Page,
+    history: Iterable[object],
+    *,
+    cached_sources: dict[str, str] | None = None,
+    cached_history: dict[str, str] | None = None,
+) -> list[dict[str, object]]:
     """Resolve history metadata to the complete source of every code version."""
+    history_rows = list(history)
     source_ids: list[str] = []
-    for item in history:
+    sources = dict(cached_sources or {})
+    history_cache = dict(cached_history or {})
+    for ordinal, item in enumerate(history_rows, start=1):
         if not isinstance(item, dict):
             raise TargetDiscoveryError("simulation code history row is invalid")
         source_id = str(item.get("sourceBacktestId") or "").strip()
@@ -719,8 +736,20 @@ def fetch_simulation_code_versions(
             raise TargetDiscoveryError("simulation code history source is missing")
         if source_id not in source_ids:
             source_ids.append(source_id)
-    versions: list[str] = []
+        cache_key = simulation_history_cache_key(
+            ordinal,
+            str(item.get("addTime") or ""),
+            str(item.get("modTime") or ""),
+        )
+        if source_id not in sources and cache_key in history_cache:
+            sources[source_id] = history_cache[cache_key]
     for source_id in source_ids:
+        if source_id in sources:
+            if not sources[source_id].strip():
+                raise TargetDiscoveryError(
+                    f"simulation cached code source is invalid: {source_id}"
+                )
+            continue
         result = page.evaluate(
             _CY_AJAX_JS,
             {
@@ -734,8 +763,19 @@ def fetch_simulation_code_versions(
             raise TargetDiscoveryError(
                 f"simulation code history source is invalid: {source_id}"
             )
-        versions.append(str(data["source"]))
-    return versions
+        sources[source_id] = str(data["source"])
+    return [
+        {
+            "history_ordinal": ordinal,
+            "live_history_id": str(item.get("liveHistoryId") or ""),
+            "source_backtest_id": str(item["sourceBacktestId"]),
+            "add_time": str(item.get("addTime") or ""),
+            "mod_time": str(item.get("modTime") or ""),
+            "code": sources[str(item["sourceBacktestId"])],
+        }
+        for ordinal, item in enumerate(history_rows, start=1)
+        if isinstance(item, dict)
+    ]
 
 
 def fetch_simulation_browser_evidence(
@@ -938,7 +978,31 @@ def fetch_simulation_browser_evidence(
         + ("\n" if records else "")
     ).encode("utf-8")
 
-    code_versions = fetch_simulation_code_versions(page, history)
+    cached_sources = (
+        incremental.get("code_version_cache")
+        if isinstance(incremental, dict)
+        else None
+    )
+    if cached_sources is not None and not isinstance(cached_sources, dict):
+        raise TargetDiscoveryError("simulation code version cache is invalid")
+    cached_history = (
+        incremental.get("code_history_cache")
+        if isinstance(incremental, dict)
+        else None
+    )
+    if cached_history is not None and not isinstance(cached_history, dict):
+        raise TargetDiscoveryError("simulation code history cache is invalid")
+    code_history_versions = fetch_simulation_code_versions(
+        page,
+        history,
+        cached_sources={
+            str(key): str(value) for key, value in (cached_sources or {}).items()
+        },
+        cached_history={
+            str(key): str(value) for key, value in (cached_history or {}).items()
+        },
+    )
+    code_versions = [str(item["code"]) for item in code_history_versions]
     source_backtest = next(
         (
             str(item.get("sourceBacktestId"))
@@ -957,6 +1021,19 @@ def fetch_simulation_browser_evidence(
         "code": str(source_data["source"]),
         "source_raw": source_info.value.body(),
         "code_versions": code_versions,
+        "code_history_versions": code_history_versions,
+        "code_version_cache": {
+            str(item["source_backtest_id"]): str(item["code"])
+            for item in code_history_versions
+        },
+        "code_history_cache": {
+            simulation_history_cache_key(
+                int(item["history_ordinal"]),
+                str(item["add_time"]),
+                str(item["mod_time"]),
+            ): str(item["code"])
+            for item in code_history_versions
+        },
         "code_history": history,
         "code_history_pages": history_pages,
         "code_history_total": history_total,

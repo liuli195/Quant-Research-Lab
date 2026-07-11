@@ -317,6 +317,11 @@ def prepare_simulation_attribution(
     rows = [item[3] for item in selected]
     if not rows:
         raise AttributionIncomplete("simulation attribution has no rows in run range")
+    events = [row.get("event") for row in rows]
+    if events.count("run_start") != 1:
+        raise AttributionIncomplete(
+            "simulation attribution must contain exactly one run_start"
+        )
     first_date = str(rows[0].get("current_dt") or "")[:10]
     if rows[0].get("event") != "run_start" or (start and first_date != start):
         raise AttributionIncomplete(
@@ -324,12 +329,18 @@ def prepare_simulation_attribution(
         )
     if status == "closed":
         last_date = str(rows[-1].get("current_dt") or "")[:10]
-        if rows[-1].get("event") != "run_end":
-            raise AttributionIncomplete("simulation attribution run_end is missing")
+        if events.count("run_end") != 1 or rows[-1].get("event") != "run_end":
+            raise AttributionIncomplete(
+                "simulation attribution must contain exactly one run_end"
+            )
         if end and last_date != end:
             raise AttributionIncomplete(
                 "simulation attribution end time does not match target run"
             )
+    elif "run_end" in events:
+        raise AttributionIncomplete(
+            "active simulation attribution must not contain run_end"
+        )
     payload = (
         "\n".join(
             json.dumps(row, ensure_ascii=False, separators=(",", ":")) for row in rows
@@ -1265,6 +1276,65 @@ def _verify_run_contents(object_dir: Path, manifest: dict[str, object]) -> None:
                 )
             except (OSError, UnicodeDecodeError) as error:
                 raise IntegrityError("simulation code version is not valid UTF-8") from error
+        history_versions = code.get("history_versions")
+        if history_versions is not None:
+            if not isinstance(history_versions, list) or not all(
+                isinstance(item, dict) for item in history_versions
+            ):
+                raise IntegrityError("simulation code history mapping is invalid")
+            history_record = code.get("history")
+            if not isinstance(history_record, dict) or not history_record.get("path"):
+                raise IntegrityError("simulation code history mapping evidence is missing")
+            try:
+                with gzip.open(
+                    _object_path(object_dir, str(history_record["path"])),
+                    "rt",
+                    encoding="utf-8",
+                ) as stream:
+                    history_pages = json.load(stream)
+            except (OSError, json.JSONDecodeError) as error:
+                raise IntegrityError(
+                    "simulation code history mapping evidence is invalid"
+                ) from error
+            raw_history: list[dict[str, object]] = []
+            if isinstance(history_pages, list):
+                for document in history_pages:
+                    data = document.get("data") if isinstance(document, dict) else None
+                    items = data.get("list") if isinstance(data, dict) else None
+                    if not isinstance(items, list) or not all(
+                        isinstance(item, dict) for item in items
+                    ):
+                        raise IntegrityError(
+                            "simulation code history mapping evidence is invalid"
+                        )
+                    raw_history.extend(items)
+            if (
+                not isinstance(history_pages, list)
+                or len(raw_history) != len(history_versions)
+                or history_record.get("rows") != len(raw_history)
+            ):
+                raise IntegrityError("simulation code history mapping count mismatch")
+            version_records = {
+                str(item.get("path") or ""): str(item.get("sha256") or "")
+                for item in versions
+                if isinstance(item, dict)
+            }
+            for ordinal, (mapping, raw_item) in enumerate(
+                zip(history_versions, raw_history, strict=True), start=1
+            ):
+                path = str(mapping.get("path") or "")
+                code_sha256 = str(mapping.get("code_sha256") or "")
+                expected = {
+                    "history_ordinal": ordinal,
+                    "live_history_id": str(raw_item.get("liveHistoryId") or ""),
+                    "source_backtest_id": str(raw_item.get("sourceBacktestId") or ""),
+                    "add_time": str(raw_item.get("addTime") or ""),
+                    "mod_time": str(raw_item.get("modTime") or ""),
+                    "code_sha256": code_sha256,
+                    "path": path,
+                }
+                if mapping != expected or version_records.get(path) != code_sha256:
+                    raise IntegrityError("simulation code history mapping mismatch")
         writer = detect_attribution_writers([*version_codes, code_text])
     datasets = manifest.get("datasets")
     if not isinstance(datasets, dict):

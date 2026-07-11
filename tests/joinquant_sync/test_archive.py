@@ -792,6 +792,41 @@ def test_simulation_attribution_collects_and_filters_all_code_version_sources() 
     ]
 
 
+def test_simulation_attribution_rejects_two_run_starts_in_selected_range() -> None:
+    from joinquant_sync.archive import (
+        AttributionIncomplete,
+        detect_attribution_writers,
+        prepare_simulation_attribution,
+    )
+
+    code = (
+        'JQ_AUTO_AUDIT_TOKEN = "TOKEN"\n'
+        'JQ_AUTO_AUDIT_DIR = "audit"\n'
+        "def audit_event(event):\n    write_file(g.audit_path, event, append=True)\n"
+    )
+    writers = detect_attribution_writers(
+        [code.replace('"TOKEN"', '"run-one"'), code.replace('"TOKEN"', '"run-two"')]
+    )
+    sources = {
+        "audit/run-one.jsonl": (
+            b'{"audit_token":"run-one","seq":1,"event":"run_start",'
+            b'"current_dt":"2026-05-19T00:00:00"}\n'
+        ),
+        "audit/run-two.jsonl": (
+            b'{"audit_token":"run-two","seq":1,"event":"run_start",'
+            b'"current_dt":"2026-07-10T00:00:00"}\n'
+        ),
+    }
+
+    with pytest.raises(AttributionIncomplete, match="exactly one run_start"):
+        prepare_simulation_attribution(
+            sources,
+            writers,
+            start_date="2026-05-19",
+            status="active",
+        )
+
+
 def test_code_without_attribution_writer_is_missing_at_source() -> None:
     from joinquant_sync.archive import detect_attribution_writer
 
