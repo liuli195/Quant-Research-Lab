@@ -93,8 +93,7 @@ def classify_performance_profile(
             enabled
             and surface_supported is True
             and all(
-                marker in text
-                for marker in ("Timer unit:", "Total time:", "Line #")
+                marker in text for marker in ("Timer unit:", "Total time:", "Line #")
             )
         )
         if not valid_payload:
@@ -111,9 +110,13 @@ def classify_performance_profile(
         }
     if enabled:
         if surface_supported is False:
-            evidence["reason"] = "the current page does not expose a performance profile surface"
+            evidence["reason"] = (
+                "the current page does not expose a performance profile surface"
+            )
             return {"status": "unsupported_api_version", "evidence": evidence}
-        evidence["reason"] = "performance profiling was enabled but no profile payload was collected"
+        evidence["reason"] = (
+            "performance profiling was enabled but no profile payload was collected"
+        )
         return {"status": "failed", "evidence": evidence}
     evidence["reason"] = "strategy code does not enable performance profiling"
     return {"status": "missing_at_source", "evidence": evidence}
@@ -573,16 +576,22 @@ def _verify_manifest_document(
     *,
     verify_pointers: bool = True,
     validate_contract: bool = True,
+    require_passing_gate: bool = True,
+    validate_contents: bool = True,
 ) -> None:
     if validate_contract:
         _validate_manifest_contract(manifest)
     if manifest.get("schema_version") != 1:
         raise IntegrityError("unsupported manifest schema")
     gate = manifest.get("gate")
-    if not isinstance(gate, dict) or gate.get("status") != "pass":
+    if not isinstance(gate, dict) or (
+        require_passing_gate and gate.get("status") != "pass"
+    ):
         raise IntegrityError("manifest gate did not pass")
     datasets = manifest.get("datasets")
-    if not isinstance(datasets, dict) or evaluate_gate(datasets)["status"] != "pass":
+    if not isinstance(datasets, dict) or (
+        require_passing_gate and evaluate_gate(datasets)["status"] != "pass"
+    ):
         raise IntegrityError("dataset gate did not pass")
     if gate != evaluate_gate(datasets):
         raise IntegrityError("manifest gate does not match dataset evidence")
@@ -594,7 +603,7 @@ def _verify_manifest_document(
             raise IntegrityError(f"manifest file hash mismatch: {relative}")
     if verify_pointers:
         _verify_convenience_pointers(object_dir, manifest)
-    if validate_contract:
+    if validate_contract and validate_contents:
         _verify_run_contents(object_dir, manifest)
 
 
@@ -922,15 +931,11 @@ def _verify_attribution_dataset(
     if len(parquet_rows) != len(raw_rows) or len(parquet_rows) != dataset.get("rows"):
         raise IntegrityError("attribution row count mismatch")
     normalized_raw = _raw_fact_rows(raw_rows, "attribution_log")
-    fields = sorted(
-        {key for row in [*normalized_raw, *parquet_rows] for key in row}
-    )
+    fields = sorted({key for row in [*normalized_raw, *parquet_rows] for key in row})
     normalized_raw = [
         {field: row.get(field) for field in fields} for row in normalized_raw
     ]
-    parquet_rows = [
-        {field: row.get(field) for field in fields} for row in parquet_rows
-    ]
+    parquet_rows = [{field: row.get(field) for field in fields} for row in parquet_rows]
     if json.dumps(
         normalized_raw, ensure_ascii=False, sort_keys=True, default=str
     ) != json.dumps(parquet_rows, ensure_ascii=False, sort_keys=True, default=str):
@@ -1119,10 +1124,14 @@ def _verify_run_contents(object_dir: Path, manifest: dict[str, object]) -> None:
                 raise IntegrityError("simulation code version record is invalid")
             try:
                 path = str(item.get("path") or "")
-                version_text = _object_path(object_dir, path).read_text(encoding="utf-8")
+                version_text = _object_path(object_dir, path).read_text(
+                    encoding="utf-8"
+                )
                 version_code_by_path[path] = version_text
             except (OSError, UnicodeDecodeError) as error:
-                raise IntegrityError("simulation code version is not valid UTF-8") from error
+                raise IntegrityError(
+                    "simulation code version is not valid UTF-8"
+                ) from error
         history_versions = code.get("history_versions")
         if (
             not isinstance(history_versions, list)
@@ -1133,7 +1142,9 @@ def _verify_run_contents(object_dir: Path, manifest: dict[str, object]) -> None:
         if history_versions:
             history_record = code.get("history")
             if not isinstance(history_record, dict) or not history_record.get("path"):
-                raise IntegrityError("simulation code history mapping evidence is missing")
+                raise IntegrityError(
+                    "simulation code history mapping evidence is missing"
+                )
             try:
                 with gzip.open(
                     _object_path(object_dir, str(history_record["path"])),
@@ -1184,7 +1195,9 @@ def _verify_run_contents(object_dir: Path, manifest: dict[str, object]) -> None:
                 }
                 if mapping != expected or version_records.get(path) != code_sha256:
                     raise IntegrityError("simulation code history mapping mismatch")
-                simulation_history_codes.append({**mapping, "code": version_code_by_path[path]})
+                simulation_history_codes.append(
+                    {**mapping, "code": version_code_by_path[path]}
+                )
     datasets = manifest.get("datasets")
     if not isinstance(datasets, dict):
         raise IntegrityError("run datasets are missing")
@@ -1491,9 +1504,13 @@ def commit_manifest(
     object_dir: Path,
     manifest: dict[str, object],
     staged_files: list[Path],
+    *,
+    allow_failed_gate: bool = False,
 ) -> None:
     gate = manifest.get("gate")
-    if not isinstance(gate, dict) or gate.get("status") != "pass":
+    if not isinstance(gate, dict) or (
+        gate.get("status") != "pass" and not allow_failed_gate
+    ):
         raise IntegrityError("refusing to commit failed manifest")
     _validate_manifest_contract(manifest)
     references = _manifest_references(manifest)
@@ -1543,7 +1560,13 @@ def commit_manifest(
             os.replace(staged, destination)
         for staged in redundant:
             staged.unlink()
-        _verify_manifest_document(object_dir, manifest, verify_pointers=False)
+        _verify_manifest_document(
+            object_dir,
+            manifest,
+            verify_pointers=False,
+            require_passing_gate=not allow_failed_gate,
+            validate_contents=not allow_failed_gate,
+        )
 
         manifest_path = object_dir / "manifest.json"
         temporary = object_dir / f"manifest.json.{uuid.uuid4().hex}.tmp"
@@ -1569,6 +1592,28 @@ def verify_existing_manifest(object_dir: Path) -> dict[str, object]:
     if not isinstance(manifest, dict):
         raise IntegrityError("manifest root must be an object")
     _verify_manifest_document(object_dir, manifest)
+    return manifest
+
+
+def verify_partial_manifest(object_dir: Path) -> dict[str, object]:
+    manifest_path = object_dir / "manifest.json"
+    if not manifest_path.is_file():
+        raise IntegrityError(f"missing manifest: {manifest_path}")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise IntegrityError(f"invalid manifest: {error.msg}") from error
+    if not isinstance(manifest, dict):
+        raise IntegrityError("manifest root must be an object")
+    gate = manifest.get("gate")
+    if not isinstance(gate, dict) or gate.get("status") != "fail":
+        raise IntegrityError("partial manifest gate did not fail")
+    _verify_manifest_document(
+        object_dir,
+        manifest,
+        require_passing_gate=False,
+        validate_contents=False,
+    )
     return manifest
 
 
