@@ -480,15 +480,24 @@ def _stage_structured(
         "risk",
         "period_risks",
     ):
+        failed_pagination = {
+            "mode": "single_complete_method_return",
+            "source": f"get_backtest.{name}",
+            "terminal": False,
+        }
         if name not in bundle or bundle[name] is None:
             datasets[name].update(
-                status="failed", evidence={"missing_source_key": True}
+                status="failed",
+                evidence={"missing_source_key": True},
+                pagination=failed_pagination,
             )
             continue
         value = bundle[name]
         if isinstance(value, dict) and value.get("__error__"):
             datasets[name].update(
-                status="failed", evidence={"source_error": value["__error__"]}
+                status="failed",
+                evidence={"source_error": value["__error__"]},
+                pagination=failed_pagination,
             )
             continue
         expected = (dict,) if name in {"risk", "period_risks"} else (list,)

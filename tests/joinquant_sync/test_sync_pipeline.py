@@ -1136,6 +1136,8 @@ def audit_event(event):
         "risk": {"sharpe": 1.0},
         "period_risks": {},
     }
+    if failure == "positions":
+        bundle["positions"] = {"__error__": "pagination incomplete"}
     normal_failed = failure == "normal_log"
     log_rows = [] if normal_failed else [{"offset": 0, "text": "ok"}]
     browser = {
@@ -1193,7 +1195,7 @@ def audit_event(event):
 
 
 @pytest.mark.parametrize(
-    "failure", ["performance_profile", "attribution_log", "normal_log"]
+    "failure", ["positions", "performance_profile", "attribution_log", "normal_log"]
 )
 def test_backtest_batch_keeps_only_isolated_dataset_failed(
     tmp_path: Path, failure: str
@@ -1210,6 +1212,8 @@ def test_backtest_batch_keeps_only_isolated_dataset_failed(
         if dataset["status"] == "failed"
     }
     assert failed == {failure}
+    if failure == "positions":
+        assert manifest["datasets"][failure]["pagination"]["terminal"] is False
     assert manifest["gate"]["status"] == "fail"
     assert staged
 

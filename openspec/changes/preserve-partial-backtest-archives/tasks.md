@@ -12,3 +12,8 @@
 
 - [x] 3.1 Update the CLI and `self-test` to cover partial archives, retry promotion, and query rejection
 - [x] 3.2 Run focused tests, the full synchronization test suite, and the published entry end-to-end regression
+
+## 4. Verification Gap
+
+- [x] 4.1 Add a failing regression proving a core structured dataset error remains isolated
+- [x] 4.2 Preserve source-error pagination evidence and rerun the full verification suite
