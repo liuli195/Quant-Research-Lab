@@ -7,8 +7,47 @@
     "name": "ETF动态调仓"
   },
   "source": {
-    "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=4bc73b7d3eb0d38811f5332ed8a206fa&backtest=12",
+    "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=bbdb24321a9b779763a8c9d0c03ac67e&backtest=12",
     "aliases": [
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=bbdb24321a9b779763a8c9d0c03ac67e&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=8fad52097d00358ae622e5b3a719800e&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=89c8803021d5812674f3c726cd52deec&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=4495bbae5aac5fd92e0b4acf59313e64&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=a4557cdcacf344dc1eb65a69903db528&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=62603c1472102a117647ba84797b9152&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=3a3e479547ac93e44a94d54698d4e8c1&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=92c2c0812a96a0f58648b4550eb609a9&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=c27412fafcf5af5f963591c63a327161&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=cb9febeaa51c3f2995e04df89bd491cc&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=8173bd9c424752e5031dc8dd6adef584&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=67156c5bc2af932dad7d7c9f7e6d20d3&backtest=12"
+      },
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=8f8c9b37a94ace67312f72289ef9ac28&backtest=12"
+      },
       {
         "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=4bc73b7d3eb0d38811f5332ed8a206fa&backtest=12"
       },
@@ -88,7 +127,7 @@
         "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=c57fcc9eeb34b39428c46f5c87bfe77f&backtest=12"
       }
     ],
-    "observed_at": "2026-07-11T21:50:13+08:00"
+    "observed_at": "2026-07-12T04:37:32+08:00"
   },
   "fence": {
     "before_sha256": "9f25381bdf78a8b0a42a71d09fa8f359bfa1e53855c829526607f6e4b254b731",
