@@ -23,6 +23,7 @@ Historical backtest synchronization builds all datasets in a temporary directory
 3. **Convert isolated collection failures into dataset state.** Performance profile, attribution log, and normal log failures record `failed`, error type, and error message. Raw failing source bytes are compressed and referenced when available. Other datasets continue through their existing strict builders.
 4. **Keep reads fail-closed.** `verify` can validate partial manifest structure and referenced file digests and returns `partial`. `query` and `export-csv` continue to reject a failed gate.
 5. **Reuse the current whole-object retry.** A successful retry replaces the partial manifest with a complete manifest. Dataset-level cursors and caching remain out of scope.
+6. **Continue the tweak preset after the file-count tripwire.** The user confirmed the change remains one focused archive-behavior correction and does not need a full workflow upgrade.
 
 ## Risks / Trade-offs
 
