@@ -5,8 +5,8 @@
 
 ## 2. Isolated Dataset Failures
 
-- [ ] 2.1 Add failing tests proving performance profile, attribution log, and normal log errors fail only their own datasets
-- [ ] 2.2 Preserve failure evidence and return `partial` while retaining all other validated historical backtest files
+- [x] 2.1 Add failing tests proving performance profile, attribution log, and normal log errors fail only their own datasets
+- [x] 2.2 Preserve failure evidence and return `partial` while retaining all other validated historical backtest files
 
 ## 3. Published Entry Verification
 

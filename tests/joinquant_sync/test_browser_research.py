@@ -967,6 +967,19 @@ def test_backtest_log_network_error_is_not_reported_as_free_cap() -> None:
         collect_free_logs(failed_page)
 
 
+def test_backtest_log_collection_returns_dataset_failure_evidence() -> None:
+    from joinquant_sync.browser import FreeLogIncomplete, collect_backtest_logs
+
+    def failed_page(_offset: int) -> dict[str, object]:
+        raise FreeLogIncomplete("offline")
+
+    assert collect_backtest_logs(failed_page) == (
+        [],
+        "failed",
+        {"type": "FreeLogIncomplete", "message": "offline"},
+    )
+
+
 def test_simulation_terminal_status_requires_explicit_page_evidence() -> None:
     from joinquant_sync.browser import parse_simulation_page_status
 

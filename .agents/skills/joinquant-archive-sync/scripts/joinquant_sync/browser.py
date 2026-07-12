@@ -566,7 +566,7 @@ def fetch_backtest_browser_evidence(page: Page, target_url: str) -> dict[str, ob
         )
         return {"rows": rows, "end": terminal}
 
-    logs, log_status = collect_free_logs(fetch_log_page)
+    logs, log_status, normal_log_error = collect_backtest_logs(fetch_log_page)
     log_bytes = (
         "\n".join(
             json.dumps(row, ensure_ascii=False, separators=(",", ":")) for row in logs
@@ -594,6 +594,7 @@ def fetch_backtest_browser_evidence(page: Page, target_url: str) -> dict[str, ob
         "normal_log_rows": len(logs),
         "normal_log_records": logs,
         "normal_log_raw_pages": raw_log_pages,
+        "normal_log_error": normal_log_error,
         "official_summary": official_summary,
         **performance,
         "params": {
@@ -1079,6 +1080,16 @@ def collect_free_logs(
             return rows, "capped_free"
         raise FreeLogIncomplete(f"free logs stopped without end evidence at {offset}")
     raise FreeLogIncomplete("free log pagination exceeded 10000 pages")
+
+
+def collect_backtest_logs(
+    fetch_page: Callable[[int], dict[str, object]],
+) -> tuple[list[dict[str, object]], str, dict[str, str] | None]:
+    try:
+        rows, status = collect_free_logs(fetch_page)
+    except FreeLogIncomplete as error:
+        return [], "failed", {"type": type(error).__name__, "message": str(error)}
+    return rows, status, None
 
 
 def _quote_sha256(quote: dict[str, object]) -> str:

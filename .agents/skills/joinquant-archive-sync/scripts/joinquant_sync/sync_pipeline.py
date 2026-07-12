@@ -31,6 +31,7 @@ from .archive import (
     validate_attribution,
     verify_existing_manifest,
     verify_existing_manifest_files,
+    verify_partial_manifest,
     write_code_context,
     write_raw_gzip,
 )
@@ -68,7 +69,10 @@ def _load_existing_for_sync(
     try:
         return verify_existing_manifest(object_dir), True
     except IntegrityError:
-        return verify_existing_manifest_files(object_dir), False
+        try:
+            return verify_partial_manifest(object_dir), False
+        except IntegrityError:
+            return verify_existing_manifest_files(object_dir), False
 
 
 def _now() -> str:
@@ -413,6 +417,12 @@ def _stage_performance_profile(
         surface_supported=browser.get("performance_profile_surface_supported"),
     )
     datasets["performance_profile"].update(**classified)
+    if classified["status"] == "failed" and payload:
+        digest = hashlib.sha256(payload).hexdigest()[:24]
+        path = stage / "raw" / f"performance-profile-failed-{digest}.txt.gz"
+        record = _gzip_record(payload, path, root or stage, "text.gz")
+        datasets["performance_profile"]["files"] = [record]
+        return [path]
     if classified["status"] != "complete":
         return []
     archive_root = root or stage
@@ -1184,9 +1194,7 @@ def _stage_error_log(
             status="failed",
             evidence={"normal_log_status": normal_log_status},
         )
-        raise IntegrityError(
-            "failed backtest requires a complete normal log for error evidence"
-        )
+        return []
     text = normal_log.decode("utf-8", errors="replace")
     errors = max(text.count(" - ERROR - "), text.count("Traceback"))
     if errors == 0:
@@ -1194,7 +1202,7 @@ def _stage_error_log(
             datasets["error_log"].update(
                 status="failed", evidence={"error_marker_found": False}
             )
-            raise IntegrityError("failed backtest error log is missing")
+            return []
         datasets["error_log"].update(
             status="missing_at_source",
             evidence={"run_status": "cancelled", "error_marker_found": False},
@@ -1584,6 +1592,8 @@ def _build_backtest_batch(
             "capped": log_status == "capped_free",
         },
     )
+    if browser.get("normal_log_error"):
+        datasets["normal_log"]["evidence"] = browser["normal_log_error"]
     staged.append(log_path)
     staged.append(log_pages_path)
     staged.extend(
@@ -1607,17 +1617,30 @@ def _build_backtest_batch(
             if status == "done" and isinstance(balances, list) and balances
             else None
         )
-        checked = validate_attribution(
-            attribution_raw.splitlines(),
-            status,
-            True,
-            expected_token=expected_token,
-            expected_path=expected_path,
-            expected_start=str(params["start_date"]),
-            expected_end=str(params["end_date"]),
-            expected_final_balance=expected_final_balance,
-        )
-        staged.extend(_stage_attribution(stage, attribution_raw, datasets, checked))
+        try:
+            checked = validate_attribution(
+                attribution_raw.splitlines(),
+                status,
+                True,
+                expected_token=expected_token,
+                expected_path=expected_path,
+                expected_start=str(params["start_date"]),
+                expected_end=str(params["end_date"]),
+                expected_final_balance=expected_final_balance,
+            )
+        except AttributionIncomplete as error:
+            digest = hashlib.sha256(attribution_raw).hexdigest()[:24]
+            path = stage / "raw" / f"attribution-log-failed-{digest}.jsonl.gz"
+            record = _gzip_record(attribution_raw, path, stage, "jsonl.gz")
+            datasets["attribution_log"].update(
+                status="failed",
+                rows=len(attribution_raw.splitlines()),
+                files=[record],
+                evidence={"type": type(error).__name__, "message": str(error)},
+            )
+            staged.append(path)
+        else:
+            staged.extend(_stage_attribution(stage, attribution_raw, datasets, checked))
     code = write_code_context(stage, "backtest", str(browser["code"]), params)
     code_source_path = stage / "raw" / "code-source-response.bin.gz"
     code["source_response"] = _gzip_record(
@@ -1650,8 +1673,6 @@ def _build_backtest_batch(
         "datasets": datasets,
     }
     manifest["gate"] = evaluate_gate(datasets)
-    if manifest["gate"]["status"] != "pass":
-        raise IntegrityError("backtest completeness gate failed")
     return manifest, staged
 
 
@@ -1821,15 +1842,24 @@ def sync_selected_backtest(
                 "backtest_id": target["page_ordinal"],
                 "manifest": existing,
             }
-        commit_manifest(object_dir, manifest, staged)
+        partial = manifest["gate"]["status"] != "pass"
+        commit_manifest(
+            object_dir,
+            manifest,
+            staged,
+            allow_failed_gate=partial,
+        )
         _update_backtest_params_pointer(object_dir, manifest)
-        verify_existing_manifest(object_dir)
+        if partial:
+            verify_partial_manifest(object_dir)
+        else:
+            verify_existing_manifest(object_dir)
         _cleanup_unreferenced_backtest_files(object_dir, manifest)
     _update_strategy_latest(
         index_path, strategy_id, "latest_backtest_id", str(target["page_ordinal"])
     )
     return {
-        "status": "committed",
+        "status": "partial" if partial else "committed",
         "strategy_id": strategy_id,
         "backtest_id": target["page_ordinal"],
         "manifest": manifest,
