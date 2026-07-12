@@ -1,0 +1,600 @@
+{
+  "schema_version": 1,
+  "object": {
+    "kind": "backtest",
+    "local_id": "24",
+    "status": "done"
+  },
+  "source": {
+    "url": "https://www.joinquant.com/algorithm/backtest/detail?backtestId=b8c7caa133e6b820accef3426024adf3",
+    "aliases": [
+      {
+        "remote_id": "b8c7caa133e6b820accef3426024adf3"
+      },
+      {
+        "remote_id": "d5c5a1d1d60a8e993c7d9aa5cd429ac8"
+      },
+      {
+        "remote_id": "d873f3f54eae09db1ac563042daecb16"
+      }
+    ],
+    "observed_at": "2026-07-12T05:06:02+08:00"
+  },
+  "fence": {
+    "before_sha256": "231b4ba3873d50055b9fb037eac0c0b523fce677401190249e60114a1e0ba465",
+    "after_sha256": "231b4ba3873d50055b9fb037eac0c0b523fce677401190249e60114a1e0ba465"
+  },
+  "collection_fence": {
+    "collection_before_sha256": "64f8a5752d51092d87ce5be128f975020665572ce66fcd30d7bcaeeb2956601d",
+    "collection_after_sha256": "64f8a5752d51092d87ce5be128f975020665572ce66fcd30d7bcaeeb2956601d"
+  },
+  "research_response": {
+    "path": "raw/research-response-810765d47e1f60c1339acb5a.json.gz",
+    "sha256": "79326bffd598d11a68af232a5e9486fbce770fb9a0828c210c0a2d2416f7f2ae",
+    "bytes": 128408,
+    "raw_sha256": "810765d47e1f60c1339acb5ae6595949dcd97c29ccae9bfabb9803099d0783e9",
+    "raw_bytes": 1303540,
+    "format": "json.gz"
+  },
+  "research_lineage": [
+    {
+      "path": "raw/research-response-810765d47e1f60c1339acb5a.json.gz",
+      "sha256": "79326bffd598d11a68af232a5e9486fbce770fb9a0828c210c0a2d2416f7f2ae",
+      "bytes": 128408,
+      "raw_sha256": "810765d47e1f60c1339acb5ae6595949dcd97c29ccae9bfabb9803099d0783e9",
+      "raw_bytes": 1303540,
+      "format": "json.gz"
+    }
+  ],
+  "code": {
+    "path": "code.py",
+    "sha256": "b353f02b633e3c9972db5dcc62e60fc5187d5b87080086038fc72ad5f1dead51",
+    "bytes": 22852,
+    "params_path": "params_versions/47412f3a7d37c6cf698ae2e1b4a0f61e9170f54b81442be03edfc9776fba955e.json",
+    "params": {
+      "path": "params_versions/47412f3a7d37c6cf698ae2e1b4a0f61e9170f54b81442be03edfc9776fba955e.json",
+      "sha256": "47412f3a7d37c6cf698ae2e1b4a0f61e9170f54b81442be03edfc9776fba955e",
+      "bytes": 922
+    },
+    "source": null,
+    "versions": [],
+    "source_response": {
+      "path": "raw/code-source-response.bin.gz",
+      "sha256": "186797bccbf29e8b7538a6c772fdc0ea1355eaaaf610d6cca2efb337d3e0a12b",
+      "bytes": 6585,
+      "raw_sha256": "5497d094013229d7b5af1403cfcf37a85547f9ae2a637905fc25454f26b4d794",
+      "raw_bytes": 23820,
+      "format": "binary.gz"
+    }
+  },
+  "datasets": {
+    "results": {
+      "required": true,
+      "status": "complete",
+      "rows": 1289,
+      "files": [
+        {
+          "path": "raw/results.json.gz",
+          "sha256": "67ff221aa12f3f7c1bef14ad9a7ecaff46643adb6e00b120c24d9ec484aedeee",
+          "bytes": 25737,
+          "raw_sha256": "cfb848a0bff491df62ceb523778f69048e165bb67de9924aa5533d20094b1dc3",
+          "raw_bytes": 131532,
+          "format": "json.gz"
+        },
+        {
+          "path": "data/results.parquet",
+          "sha256": "b4fcf639d0d6b1463544e9c8fa6d63fa0e0a521199a69ece18b13038473c08f2",
+          "bytes": 26843,
+          "rows": 1289,
+          "format": "parquet",
+          "compression": "zstd"
+        }
+      ],
+      "verified_empty": false,
+      "evidence": {
+        "source_contract": "JoinQuant get_backtest full object or cloud-filtered increment",
+        "source_key_present": true,
+        "row_shape": "objects",
+        "fields": [
+          "benchmark_returns",
+          "returns",
+          "time"
+        ],
+        "unique_key": [
+          "time"
+        ],
+        "unique": true,
+        "time_order": "nondecreasing",
+        "time_range": {
+          "start": "2021-01-04 16:00:00",
+          "end": "2026-04-30 16:00:00"
+        },
+        "configured_range": {
+          "start": "2021-01-01",
+          "end": "2026-04-30"
+        },
+        "trading_day_association": "results_dates"
+      },
+      "time_range": {
+        "start": "2021-01-04 16:00:00",
+        "end": "2026-04-30 16:00:00"
+      },
+      "pagination": {
+        "mode": "single_complete_method_return",
+        "source": "get_backtest.results",
+        "terminal": true,
+        "research_response_sha256": "79326bffd598d11a68af232a5e9486fbce770fb9a0828c210c0a2d2416f7f2ae"
+      }
+    },
+    "balances": {
+      "required": true,
+      "status": "complete",
+      "rows": 1289,
+      "files": [
+        {
+          "path": "raw/balances.json.gz",
+          "sha256": "a2f4c433bc0a2338a7d91645df3de4a5cba6b0ab9089ec8a242d722b97e58360",
+          "bytes": 14726,
+          "raw_sha256": "111448ff91042dfc5ed526dd7deb4f97a85331572c807f57da04ec10ddbd9794",
+          "raw_bytes": 145055,
+          "format": "json.gz"
+        },
+        {
+          "path": "data/balances.parquet",
+          "sha256": "eb52495b9eaf34229bae32b656983b7e1aad967483e5210c6c88dc28a4eaeb69",
+          "bytes": 20948,
+          "rows": 1289,
+          "format": "parquet",
+          "compression": "zstd"
+        }
+      ],
+      "verified_empty": false,
+      "evidence": {
+        "source_contract": "JoinQuant get_backtest full object or cloud-filtered increment",
+        "source_key_present": true,
+        "row_shape": "objects",
+        "fields": [
+          "aval_cash",
+          "cash",
+          "net_value",
+          "time",
+          "total_value"
+        ],
+        "unique_key": [
+          "time"
+        ],
+        "unique": true,
+        "time_order": "nondecreasing",
+        "time_range": {
+          "start": "2021-01-04 16:00:00",
+          "end": "2026-04-30 16:00:00"
+        },
+        "configured_range": {
+          "start": "2021-01-01",
+          "end": "2026-04-30"
+        },
+        "trading_day_association": "results_dates"
+      },
+      "time_range": {
+        "start": "2021-01-04 16:00:00",
+        "end": "2026-04-30 16:00:00"
+      },
+      "pagination": {
+        "mode": "single_complete_method_return",
+        "source": "get_backtest.balances",
+        "terminal": true,
+        "research_response_sha256": "79326bffd598d11a68af232a5e9486fbce770fb9a0828c210c0a2d2416f7f2ae"
+      }
+    },
+    "positions": {
+      "required": true,
+      "status": "complete",
+      "rows": 2427,
+      "files": [
+        {
+          "path": "raw/positions.json.gz",
+          "sha256": "0f99d2ac0bbf5df2d364e4b3143d9c30666af6c824e2b45dca800c0bf439df5f",
+          "bytes": 49508,
+          "raw_sha256": "7e1ee9299a7a9b6fae3c7c586615db036db900a2a13f9e515df19a431d35ab4a",
+          "raw_bytes": 677082,
+          "format": "json.gz"
+        },
+        {
+          "path": "data/positions.parquet",
+          "sha256": "aea4997b01fa77dc303d66a5e2069ff4096e0b4ee0a6e7e64ff0b3ddd796826e",
+          "bytes": 54462,
+          "rows": 2427,
+          "format": "parquet",
+          "compression": "zstd"
+        }
+      ],
+      "verified_empty": false,
+      "evidence": {
+        "source_contract": "JoinQuant get_backtest full object or cloud-filtered increment",
+        "source_key_present": true,
+        "row_shape": "objects",
+        "fields": [
+          "amount",
+          "avg_cost",
+          "closeable_amount",
+          "daily_gains",
+          "gains",
+          "hold_cost",
+          "margin",
+          "pindex",
+          "price",
+          "security",
+          "security_name",
+          "side",
+          "time",
+          "today_amount"
+        ],
+        "unique_key": [
+          "time",
+          "pindex",
+          "security",
+          "side"
+        ],
+        "unique": true,
+        "time_order": "nondecreasing",
+        "time_range": {
+          "start": "2021-01-04 16:00:00",
+          "end": "2026-04-30 16:00:00"
+        },
+        "configured_range": {
+          "start": "2021-01-01",
+          "end": "2026-04-30"
+        },
+        "trading_day_association": "results_dates"
+      },
+      "time_range": {
+        "start": "2021-01-04 16:00:00",
+        "end": "2026-04-30 16:00:00"
+      },
+      "pagination": {
+        "mode": "single_complete_method_return",
+        "source": "get_backtest.positions",
+        "terminal": true,
+        "research_response_sha256": "79326bffd598d11a68af232a5e9486fbce770fb9a0828c210c0a2d2416f7f2ae"
+      }
+    },
+    "orders": {
+      "required": true,
+      "status": "complete",
+      "rows": 368,
+      "files": [
+        {
+          "path": "raw/orders.json.gz",
+          "sha256": "815159d4cc94709983c5f4df6bdf504d8b289d6dc4b7fb7417a03ed309cc06cb",
+          "bytes": 9886,
+          "raw_sha256": "f36977d237389d7132889b5be04ab25a1a167267b461e2e246acd7879071c37b",
+          "raw_bytes": 143956,
+          "format": "json.gz"
+        },
+        {
+          "path": "data/orders.parquet",
+          "sha256": "343f344fe9b1720fd17a9139668d38630141e666573be92a876eb26e0fe466ef",
+          "bytes": 15386,
+          "rows": 368,
+          "format": "parquet",
+          "compression": "zstd"
+        }
+      ],
+      "verified_empty": false,
+      "evidence": {
+        "source_contract": "JoinQuant get_backtest full object or cloud-filtered increment",
+        "source_key_present": true,
+        "row_shape": "objects",
+        "fields": [
+          "action",
+          "amount",
+          "cancel_time",
+          "comment",
+          "commission",
+          "entrust_time",
+          "filled",
+          "finish_time",
+          "gains",
+          "limit_price",
+          "match_time",
+          "pindex",
+          "price",
+          "security",
+          "security_name",
+          "side",
+          "status",
+          "time",
+          "type"
+        ],
+        "unique_key": [
+          "entrust_time",
+          "pindex",
+          "security",
+          "side",
+          "amount",
+          "price",
+          "source_occurrence"
+        ],
+        "unique": false,
+        "time_order": "nondecreasing",
+        "time_range": {
+          "start": "2021-01-04 09:30:00",
+          "end": "2026-04-20 09:30:00"
+        },
+        "configured_range": {
+          "start": "2021-01-01",
+          "end": "2026-04-30"
+        },
+        "trading_day_association": "results_dates"
+      },
+      "time_range": {
+        "start": "2021-01-04 09:30:00",
+        "end": "2026-04-20 09:30:00"
+      },
+      "pagination": {
+        "mode": "single_complete_method_return",
+        "source": "get_backtest.orders",
+        "terminal": true,
+        "research_response_sha256": "79326bffd598d11a68af232a5e9486fbce770fb9a0828c210c0a2d2416f7f2ae"
+      }
+    },
+    "records": {
+      "required": true,
+      "status": "complete",
+      "rows": 0,
+      "files": [
+        {
+          "path": "raw/records.json.gz",
+          "sha256": "64406e753d82e11c6bd63d1d04bb6aa083eefa0a46949bbfce994d556b989f0f",
+          "bytes": 22,
+          "raw_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "raw_bytes": 2,
+          "format": "json.gz"
+        }
+      ],
+      "verified_empty": true,
+      "evidence": {
+        "source_contract": "JoinQuant get_backtest full object or cloud-filtered increment",
+        "source_key_present": true,
+        "row_shape": "objects",
+        "fields": [],
+        "unique_key": [
+          "time"
+        ],
+        "unique": true,
+        "time_order": "not_applicable",
+        "time_range": null,
+        "configured_range": {
+          "start": "2021-01-01",
+          "end": "2026-04-30"
+        },
+        "trading_day_association": "not_applicable"
+      },
+      "time_range": null,
+      "pagination": {
+        "mode": "single_complete_method_return",
+        "source": "get_backtest.records",
+        "terminal": true,
+        "research_response_sha256": "79326bffd598d11a68af232a5e9486fbce770fb9a0828c210c0a2d2416f7f2ae"
+      }
+    },
+    "risk": {
+      "required": true,
+      "status": "complete",
+      "rows": 1,
+      "files": [
+        {
+          "path": "raw/risk.json.gz",
+          "sha256": "64717d0580d1b32a798b2dfd5d4134ad2debdbc1c8de7128ecdb45a8b8fbf365",
+          "bytes": 556,
+          "raw_sha256": "382ce993055aa7f7b5a3438e6c841b31e35d682bed0fa6642a6af5ee1b48d7cb",
+          "raw_bytes": 1060,
+          "format": "json.gz"
+        },
+        {
+          "path": "data/risk.parquet",
+          "sha256": "fb4aaa027d65ac30d400ad76e9bd3c7566eadfe8c6cc6321ced7f3e92ea2418d",
+          "bytes": 10510,
+          "rows": 1,
+          "format": "parquet",
+          "compression": "zstd"
+        }
+      ],
+      "verified_empty": false,
+      "evidence": {
+        "source_contract": "JoinQuant get_backtest full object or cloud-filtered increment",
+        "source_key_present": true,
+        "row_shape": "objects",
+        "fields": [
+          "__version",
+          "algorithm_return",
+          "algorithm_volatility",
+          "alpha",
+          "annual_algo_return",
+          "annual_bm_return",
+          "avg_excess_return",
+          "avg_position_days",
+          "avg_trade_return",
+          "benchmark_return",
+          "benchmark_volatility",
+          "beta",
+          "day_win_ratio",
+          "excess_return",
+          "excess_return_max_drawdown",
+          "excess_return_max_drawdown_period",
+          "excess_return_sharpe",
+          "information",
+          "lose_count",
+          "max_drawdown",
+          "max_drawdown_period",
+          "max_leverage",
+          "period_label",
+          "profit_loss_ratio",
+          "sharpe",
+          "sortino",
+          "trading_days",
+          "treasury_return",
+          "turnover_rate",
+          "win_count",
+          "win_ratio"
+        ],
+        "unique_key": [
+          "single_summary_row"
+        ],
+        "unique": true,
+        "time_order": "not_applicable",
+        "time_range": null
+      },
+      "time_range": null,
+      "pagination": {
+        "mode": "single_complete_method_return",
+        "source": "get_backtest.risk",
+        "terminal": true,
+        "research_response_sha256": "79326bffd598d11a68af232a5e9486fbce770fb9a0828c210c0a2d2416f7f2ae"
+      }
+    },
+    "period_risks": {
+      "required": true,
+      "status": "complete",
+      "rows": 10,
+      "files": [
+        {
+          "path": "raw/period_risks.json.gz",
+          "sha256": "bf6d210368faa1623370ba01d2b747737fbb503709250b9015208938c6ca4bac",
+          "bytes": 25698,
+          "raw_sha256": "37321c92bdd3f7140f6f5e886feae951f7ee0d5287516495fdaac216ecb95469",
+          "raw_bytes": 94961,
+          "format": "json.gz"
+        },
+        {
+          "path": "data/period_risks.parquet",
+          "sha256": "0b161cad2a603f8e397dd717b7b1914ce3f211996666d52de6ab284ba979e128",
+          "bytes": 25235,
+          "rows": 10,
+          "format": "parquet",
+          "compression": "zstd"
+        }
+      ],
+      "verified_empty": false,
+      "evidence": {
+        "source_contract": "JoinQuant get_backtest full object or cloud-filtered increment",
+        "source_key_present": true,
+        "row_shape": "objects",
+        "fields": [
+          "metric",
+          "payload_json"
+        ],
+        "unique_key": [
+          "metric"
+        ],
+        "unique": true,
+        "time_order": "not_applicable",
+        "time_range": null
+      },
+      "time_range": null,
+      "pagination": {
+        "mode": "single_complete_method_return",
+        "source": "get_backtest.period_risks",
+        "terminal": true,
+        "research_response_sha256": "79326bffd598d11a68af232a5e9486fbce770fb9a0828c210c0a2d2416f7f2ae"
+      }
+    },
+    "official_summary": {
+      "required": true,
+      "status": "complete",
+      "rows": 1289,
+      "files": [
+        {
+          "path": "reports/official-summary.csv",
+          "sha256": "a6a28eaa347335424b10e8571f93683d8aac5e93b226a45b69079f23fe5c7bdd",
+          "bytes": 66336,
+          "format": "csv"
+        }
+      ],
+      "evidence": {
+        "encoding": "gb18030",
+        "header": [
+          "时间",
+          "基准收益",
+          "策略收益",
+          "当日盈利",
+          "当日亏损",
+          "当日买入",
+          "当日卖出",
+          "超额收益(%)"
+        ]
+      }
+    },
+    "normal_log": {
+      "required": false,
+      "status": "complete",
+      "rows": 1000,
+      "files": [
+        {
+          "path": "raw/normal-log-57d0d572d656d8ad3bda8943.jsonl.gz",
+          "sha256": "82c80300402776773f7c95cd6756abce0d4361e0c33ea78702b8500ecae363be",
+          "bytes": 13814,
+          "raw_sha256": "57d0d572d656d8ad3bda89433dc59a8ae04290144e31b230a24a7bcae3120fd9",
+          "raw_bytes": 220691,
+          "format": "jsonl.gz"
+        },
+        {
+          "path": "raw/normal-log-pages-17fa60bc99cc9b955d1a8f56.json.gz",
+          "sha256": "bfe58fe3c7375ff40d288a8b304cd83cfcb607acee755bcb70b15e862087eda6",
+          "bytes": 11435,
+          "raw_sha256": "17fa60bc99cc9b955d1a8f56f1acae6b0628a5ff6685ae30beb5b4fb9aed856d",
+          "raw_bytes": 200296,
+          "format": "json.gz"
+        }
+      ],
+      "pagination": {
+        "pages": 11,
+        "cumulative_rows": 1000,
+        "terminal": true,
+        "capped": false
+      }
+    },
+    "performance_profile": {
+      "required": false,
+      "status": "complete",
+      "rows": 725,
+      "evidence": {
+        "enable_profile_call": true,
+        "code_sha256": "b353f02b633e3c9972db5dcc62e60fc5187d5b87080086038fc72ad5f1dead51",
+        "official_reference": "JoinQuantAPI.pdf#enable_profile",
+        "profile_surface_supported": true,
+        "payload_sha256": "6fb126eab78734cde673cf6cb8e8f99f7a3c4dfe8eee4da7920ce33f5bdabca0",
+        "payload_bytes": 53632
+      },
+      "files": [
+        {
+          "path": "raw/performance-profile.txt.gz",
+          "sha256": "dbc750a27a0b903a3c54782f2aec907b54bd6b70358f9c19f5649de56445899b",
+          "bytes": 11226,
+          "raw_sha256": "6fb126eab78734cde673cf6cb8e8f99f7a3c4dfe8eee4da7920ce33f5bdabca0",
+          "raw_bytes": 53632,
+          "format": "text.gz"
+        }
+      ]
+    },
+    "error_log": {
+      "required": false,
+      "status": "complete",
+      "rows": 0,
+      "verified_empty": true
+    },
+    "attribution_log": {
+      "required": false,
+      "status": "missing_at_source",
+      "evidence": {
+        "code_writer": false
+      }
+    }
+  },
+  "gate": {
+    "status": "pass",
+    "exceptions": [
+      "attribution_log:missing_at_source"
+    ]
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "end_date": "2026-03-31",
+  "research_metadata": {
+    "extraction_method": "joinquant_research_get_backtest",
+    "incremental_after": {},
+    "schema_version": 1,
+    "transfer_modes": {
+      "balances": "full",
+      "orders": "full",
+      "positions": "full",
+      "records": "full",
+      "results": "full"
+    }
+  },
+  "research_params": {
+    "algorithm_id": null,
+    "end_date": "2026-03-31 23:59:59",
+    "extras": null,
+    "frequency": "day",
+    "initial_cash": "100000",
+    "initial_positions": null,
+    "initial_value": null,
+    "name": "etf_factor_rotation",
+    "package_version": "1.0",
+    "python_version": "3",
+    "start_date": "2026-03-01 00:00:00",
+    "subportfolios": [
+      {
+        "account_type": "stock",
+        "set_subportfolios": true,
+        "starting_cash": 100000.0,
+        "subAccountId": 0
+      }
+    ]
+  },
+  "research_status": "done",
+  "start_date": "2026-03-01"
+}
