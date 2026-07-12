@@ -1,6 +1,9 @@
 # Comet 项目级配置
 # 规范路径：.comet/config.yaml
 
+# 规划产物语言
+language: zh-CN
+
 # 上下文压缩模式
 # - off: 不启用（默认），交接包使用 standard mode（compact 可追溯摘录）
 # - beta: 启用结构化 spec projection，减少 token 占用
