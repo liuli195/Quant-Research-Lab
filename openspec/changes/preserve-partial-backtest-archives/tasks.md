@@ -10,5 +10,5 @@
 
 ## 3. Published Entry Verification
 
-- [ ] 3.1 Update the CLI and `self-test` to cover partial archives, retry promotion, and query rejection
-- [ ] 3.2 Run focused tests, the full synchronization test suite, and the published entry end-to-end regression
+- [x] 3.1 Update the CLI and `self-test` to cover partial archives, retry promotion, and query rejection
+- [x] 3.2 Run focused tests, the full synchronization test suite, and the published entry end-to-end regression

@@ -315,6 +315,16 @@ def test_partial_commit_is_explicit_and_verifies_referenced_files(
     with pytest.raises(IntegrityError, match="hash mismatch"):
         verify_partial_manifest(object_dir)
 
+    (object_dir / "code.py").write_text(
+        "def initialize(context):\n    pass\n", encoding="utf-8"
+    )
+    manifest["datasets"]["page_metadata"].update(
+        status="complete", rows=1, evidence={"retry": "complete"}
+    )
+    manifest["gate"] = {"status": "pass", "exceptions": []}
+    commit_manifest(object_dir, manifest, [])
+    assert verify_existing_manifest(object_dir) == manifest
+
 
 def test_raw_response_round_trips_and_hashes(tmp_path: Path) -> None:
     from joinquant_sync.archive import write_raw_gzip
@@ -947,6 +957,28 @@ def test_verify_cli_checks_manifest_gate(
     )
     assert jq_sync.main(["verify", "--object", str(tmp_path)]) == 3
     assert "integrity_failed" in capsys.readouterr().out
+
+
+def test_verify_cli_reports_a_valid_partial_archive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import jq_sync
+
+    partial = {
+        "gate": {"status": "fail", "exceptions": []},
+        "datasets": {"normal_log": {"status": "failed"}},
+    }
+    monkeypatch.setattr(
+        jq_sync,
+        "verify_existing_manifest",
+        lambda _path: (_ for _ in ()).throw(jq_sync.IntegrityError("gate failed")),
+    )
+    monkeypatch.setattr(jq_sync, "verify_partial_manifest", lambda _path: partial)
+
+    assert jq_sync.main(["verify", "--object", str(tmp_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "partial"
 
 
 def test_paid_log_range_keeps_only_requested_lines(tmp_path: Path) -> None:

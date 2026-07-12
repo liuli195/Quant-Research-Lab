@@ -15,6 +15,7 @@ from joinquant_sync.archive import (
     stage_external_file,
     validate_history_target,
     verify_existing_manifest,
+    verify_partial_manifest,
 )
 from joinquant_sync.browser import (
     AuthRequired,
@@ -180,11 +181,16 @@ def main(argv: list[str] | None = None) -> int:
             if args.object:
                 path = Path(args.object)
                 object_dir = path if path.is_dir() else path.parent
-                manifest = verify_existing_manifest(object_dir)
+                try:
+                    manifest = verify_existing_manifest(object_dir)
+                    verification_status = "verified"
+                except IntegrityError:
+                    manifest = verify_partial_manifest(object_dir)
+                    verification_status = "partial"
                 print(
                     json.dumps(
                         {
-                            "status": "verified",
+                            "status": verification_status,
                             "object": str(object_dir.resolve()),
                             "gate": manifest["gate"],
                             "datasets": {

@@ -8,14 +8,17 @@ from tempfile import TemporaryDirectory
 
 from .archive import (
     AttributionIncomplete,
+    commit_manifest,
     detect_attribution_writer,
     evaluate_gate,
     expected_datasets,
     recover_malformed_json,
     validate_attribution,
+    verify_existing_manifest,
+    verify_partial_manifest,
 )
 from .browser import collect_free_logs
-from .query import export_csv, query_rows
+from .query import QueryError, export_csv, query_rows
 from .sync_pipeline import commit_simulation_evidence
 
 
@@ -282,6 +285,21 @@ def run_self_test() -> dict[str, object]:
             )
             manifest = first["manifest"]
             first_manifest = (object_dir / "manifest.json").read_bytes()
+            partial = json.loads(json.dumps(manifest))
+            partial["datasets"]["performance_profile"].update(
+                status="failed", evidence={"error": "self-test partial"}
+            )
+            partial["gate"] = evaluate_gate(partial["datasets"])
+            commit_manifest(object_dir, partial, [], allow_failed_gate=True)
+            partial_verified = verify_partial_manifest(object_dir)
+            try:
+                query_rows(object_dir / "manifest.json", "results", 100)
+            except QueryError:
+                partial_query = "rejected"
+            else:
+                raise AssertionError("self-test partial archive was queryable")
+            commit_manifest(object_dir, manifest, [])
+            retry_verified = verify_existing_manifest(object_dir)
             second = commit_simulation_evidence(
                 object_dir,
                 temporary_path / "stage-2",
@@ -314,6 +332,19 @@ def run_self_test() -> dict[str, object]:
                     "attribution": attribution,
                     "malformed_json": True,
                     "unsupported_api_version": True,
+                    "partial_archive": {
+                        "verify": (
+                            "partial"
+                            if partial_verified["gate"]["status"] == "fail"
+                            else "failed"
+                        ),
+                        "query": partial_query,
+                        "retry": (
+                            "complete"
+                            if retry_verified["gate"]["status"] == "pass"
+                            else "failed"
+                        ),
+                    },
                     "production_orchestration": orchestration,
                 },
             }
