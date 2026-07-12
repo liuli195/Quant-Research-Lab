@@ -36,6 +36,10 @@ Historical backtest synchronization builds all datasets in a temporary directory
 
 No bulk migration is required. Re-synchronizing a missing target after deployment creates a partial manifest. Existing complete archives remain unchanged. Rolling back the code leaves failed-gate manifests unavailable to default query paths.
 
+## Implementation Divergence
+
+The capability specification retains the existing goal of fetching only affected datasets on retry. This focused tweak does not add dataset-level retry cursors: a retry recollects the whole backtest, while commit-time SHA256 checks reuse identical archived files. The extra download cost is accepted here to keep the data-loss fix isolated; dataset-level incremental retry remains a separate follow-up.
+
 ## Open Questions
 
 None.
