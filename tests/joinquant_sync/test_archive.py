@@ -266,6 +266,66 @@ def test_failed_batch_keeps_previous_manifest(tmp_path: Path) -> None:
     assert json.loads((object_dir / "manifest.json").read_text()) == old
 
 
+def test_partial_commit_is_explicit_and_verifies_referenced_files(
+    tmp_path: Path,
+) -> None:
+    from joinquant_sync.archive import (
+        IntegrityError,
+        commit_manifest,
+        verify_existing_manifest,
+        verify_partial_manifest,
+    )
+
+    object_dir = tmp_path / "backtests" / "1"
+    staged = tmp_path / "stage" / "code.py"
+    staged.parent.mkdir()
+    staged.write_text("def initialize(context):\n    pass\n", encoding="utf-8")
+    digest = hashlib.sha256(staged.read_bytes()).hexdigest()
+    manifest = {
+        "schema_version": 1,
+        "object": {"kind": "strategy", "local_id": "1", "status": "current"},
+        "source": {
+            "url": "memory://strategy",
+            "aliases": [],
+            "observed_at": "2026-01-01T00:00:00Z",
+        },
+        "fence": {"before_sha256": "0" * 64, "after_sha256": "0" * 64},
+        "code": {"path": "code.py", "sha256": digest},
+        "datasets": {
+            "page_metadata": {
+                "required": True,
+                "status": "failed",
+                "files": [{"path": "code.py", "sha256": digest}],
+                "evidence": {"error": "incomplete"},
+            }
+        },
+        "gate": {"status": "fail", "exceptions": []},
+    }
+
+    commit_manifest(object_dir, manifest, [staged], allow_failed_gate=True)
+    (object_dir / "default_code.py").write_text(
+        "def initialize(context):\n    pass\n", encoding="utf-8"
+    )
+
+    assert verify_partial_manifest(object_dir) == manifest
+    with pytest.raises(IntegrityError, match="gate"):
+        verify_existing_manifest(object_dir)
+
+    (object_dir / "code.py").write_text("tampered\n", encoding="utf-8")
+    with pytest.raises(IntegrityError, match="hash mismatch"):
+        verify_partial_manifest(object_dir)
+
+    (object_dir / "code.py").write_text(
+        "def initialize(context):\n    pass\n", encoding="utf-8"
+    )
+    manifest["datasets"]["page_metadata"].update(
+        status="complete", rows=1, evidence={"retry": "complete"}
+    )
+    manifest["gate"] = {"status": "pass", "exceptions": []}
+    commit_manifest(object_dir, manifest, [])
+    assert verify_existing_manifest(object_dir) == manifest
+
+
 def test_raw_response_round_trips_and_hashes(tmp_path: Path) -> None:
     from joinquant_sync.archive import write_raw_gzip
 
@@ -539,7 +599,9 @@ def test_backtest_attribution_must_match_research_final_balance() -> None:
 
     from joinquant_sync.archive import AttributionIncomplete, validate_attribution
 
-    assert "expected_final_balance" in inspect.signature(validate_attribution).parameters
+    assert (
+        "expected_final_balance" in inspect.signature(validate_attribution).parameters
+    )
     lines = [
         b'{"token":"run-a","seq":1,"event":"run_start","current_dt":"2026-01-01"}',
         b'{"token":"run-a","seq":2,"event":"run_end","current_dt":"2026-01-31","total_value":101.0,"cash":51.0}',
@@ -812,7 +874,9 @@ def test_ambiguous_attribution_write_signal_fails_closed() -> None:
 def persist_event(event):
     write_file("audit/run.jsonl", event, append=True)
 """
-    with pytest.raises(IntegrityError, match="attribution writer evidence is ambiguous"):
+    with pytest.raises(
+        IntegrityError, match="attribution writer evidence is ambiguous"
+    ):
         detect_attribution_writer(code)
 
 
@@ -852,7 +916,9 @@ def test_performance_profile_is_complete_when_page_payload_is_collected() -> Non
     assert result["rows"] == 3
 
 
-def test_performance_profile_is_unsupported_only_with_page_capability_evidence() -> None:
+def test_performance_profile_is_unsupported_only_with_page_capability_evidence() -> (
+    None
+):
     from joinquant_sync.archive import classify_performance_profile
 
     result = classify_performance_profile(
@@ -875,9 +941,7 @@ def test_performance_profile_rejects_unproven_or_placeholder_payload(
 ) -> None:
     from joinquant_sync.archive import classify_performance_profile
 
-    result = classify_performance_profile(
-        code, payload=payload, surface_supported=True
-    )
+    result = classify_performance_profile(code, payload=payload, surface_supported=True)
 
     assert result["status"] == "failed"
 
@@ -893,6 +957,28 @@ def test_verify_cli_checks_manifest_gate(
     )
     assert jq_sync.main(["verify", "--object", str(tmp_path)]) == 3
     assert "integrity_failed" in capsys.readouterr().out
+
+
+def test_verify_cli_reports_a_valid_partial_archive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import jq_sync
+
+    partial = {
+        "gate": {"status": "fail", "exceptions": []},
+        "datasets": {"normal_log": {"status": "failed"}},
+    }
+    monkeypatch.setattr(
+        jq_sync,
+        "verify_existing_manifest",
+        lambda _path: (_ for _ in ()).throw(jq_sync.IntegrityError("gate failed")),
+    )
+    monkeypatch.setattr(jq_sync, "verify_partial_manifest", lambda _path: partial)
+
+    assert jq_sync.main(["verify", "--object", str(tmp_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "partial"
 
 
 def test_paid_log_range_keeps_only_requested_lines(tmp_path: Path) -> None:

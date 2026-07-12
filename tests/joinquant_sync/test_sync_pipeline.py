@@ -1051,17 +1051,21 @@ def test_failed_backtest_requires_and_stores_error_log(tmp_path: Path) -> None:
 def test_capped_normal_log_cannot_prove_failed_error_log_complete(
     tmp_path: Path,
 ) -> None:
-    from joinquant_sync.archive import IntegrityError
     from joinquant_sync.sync_pipeline import _stage_error_log
 
-    with pytest.raises(IntegrityError, match="complete normal log"):
+    datasets = _datasets("backtest")
+    assert (
         _stage_error_log(
             tmp_path,
             "failed",
             b"2026-01-01 - ERROR - boom\n",
             "capped_free",
-            _datasets("backtest"),
+            datasets,
         )
+        == []
+    )
+    assert datasets["error_log"]["status"] == "failed"
+    assert datasets["error_log"]["evidence"] == {"normal_log_status": "capped_free"}
 
 
 def test_done_run_rejects_all_empty_core_tables() -> None:
@@ -1073,6 +1077,145 @@ def test_done_run_rejects_all_empty_core_tables() -> None:
         datasets[name].update(status="complete", rows=0, verified_empty=True)
     with pytest.raises(IntegrityError, match="results is empty"):
         _validate_run_semantics("backtest", "done", datasets)
+
+
+def _partial_backtest_inputs(
+    failure: str,
+) -> tuple[
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+]:
+    from joinquant_sync.archive import detect_attribution_writer
+
+    writer_code = """
+JQ_AUTO_AUDIT_TOKEN = "run-1"
+JQ_AUTO_AUDIT_DIR = "audit"
+def audit_event(event):
+    write_file(g.audit_path, event, append=True)
+"""
+    code = (
+        writer_code
+        if failure == "attribution_log"
+        else (
+            "enable_profile()\n"
+            if failure == "performance_profile"
+            else "def initialize(context):\n    pass\n"
+        )
+    )
+    bundle = {
+        "metadata": {
+            "schema_version": 1,
+            "extraction_method": "joinquant_research_get_backtest",
+            "incremental_after": {},
+            "transfer_modes": {
+                name: "full"
+                for name in ("results", "positions", "orders", "records", "balances")
+            },
+        },
+        "params": {"start_date": "2026-01-01", "end_date": "2026-01-01"},
+        "status": "done",
+        "results": [
+            {
+                "time": "2026-01-01 16:00:00",
+                "returns": 0.1,
+                "benchmark_returns": 0.05,
+            }
+        ],
+        "balances": [
+            {
+                "time": "2026-01-01 16:00:00",
+                "cash": 100000.0,
+                "total_value": 100000.0,
+            }
+        ],
+        "positions": [],
+        "orders": [],
+        "records": [],
+        "risk": {"sharpe": 1.0},
+        "period_risks": {},
+    }
+    if failure == "positions":
+        bundle["positions"] = {"__error__": "pagination incomplete"}
+    normal_failed = failure == "normal_log"
+    log_rows = [] if normal_failed else [{"offset": 0, "text": "ok"}]
+    browser = {
+        "code": code,
+        "source_raw": b"source",
+        "params": {"start_date": "2026-01-01", "end_date": "2026-01-01"},
+        "official_summary": b"time,returns\n2026-01-01,0.1\n",
+        "normal_log": ("".join(json.dumps(row) + "\n" for row in log_rows).encode()),
+        "normal_log_status": "failed" if normal_failed else "complete",
+        "normal_log_rows": len(log_rows),
+        "normal_log_raw_pages": [
+            {
+                "offset": 0,
+                "response": {"data": {"logArr": [] if normal_failed else ["ok"]}},
+            }
+        ],
+        "normal_log_error": (
+            {"type": "FreeLogIncomplete", "message": "missing end evidence"}
+            if normal_failed
+            else None
+        ),
+        "performance_profile": b"",
+        "performance_profile_surface_supported": True,
+    }
+    attribution_rows = [
+        {
+            "audit_token": "run-1",
+            "seq": 1,
+            "event": "run_start",
+            "current_dt": "2026-01-01T00:00:00",
+        }
+    ]
+    research = {
+        "bundle": bundle,
+        "raw": json.dumps(bundle, separators=(",", ":")).encode(),
+        "attribution": (
+            b"\n".join(json.dumps(row).encode() for row in attribution_rows) + b"\n"
+            if failure == "attribution_log"
+            else b""
+        ),
+    }
+    target = {
+        "page_ordinal": "1",
+        "status": "done",
+        "date_range": "2026-01-01 - 2026-01-01",
+        "detail_url": "memory://backtest/1",
+        "aliases": ["remote-1"],
+        "fence": {"before_sha256": "0" * 64, "after_sha256": "0" * 64},
+        "collection_fence": {
+            "collection_before_sha256": "1" * 64,
+            "collection_after_sha256": "1" * 64,
+        },
+    }
+    return target, browser, research, detect_attribution_writer(code)
+
+
+@pytest.mark.parametrize(
+    "failure", ["positions", "performance_profile", "attribution_log", "normal_log"]
+)
+def test_backtest_batch_keeps_only_isolated_dataset_failed(
+    tmp_path: Path, failure: str
+) -> None:
+    from joinquant_sync.sync_pipeline import _build_backtest_batch
+
+    manifest, staged = _build_backtest_batch(
+        tmp_path, *_partial_backtest_inputs(failure)
+    )
+
+    failed = {
+        name
+        for name, dataset in manifest["datasets"].items()
+        if dataset["status"] == "failed"
+    }
+    assert failed == {failure}
+    if failure == "positions":
+        assert manifest["datasets"][failure]["pagination"]["terminal"] is False
+    assert manifest["gate"]["status"] == "fail"
+    assert staged
 
 
 def test_strategy_manifest_uses_immutable_code_version(tmp_path: Path) -> None:

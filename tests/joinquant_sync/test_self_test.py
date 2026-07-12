@@ -35,6 +35,11 @@ def test_self_test_runs_full_pipeline_without_network(
         ],
         "malformed_json": True,
         "unsupported_api_version": True,
+        "partial_archive": {
+            "verify": "partial",
+            "query": "rejected",
+            "retry": "complete",
+        },
         "production_orchestration": "committed",
     }
     assert result["elapsed_seconds"] >= 0
