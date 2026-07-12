@@ -23,7 +23,6 @@
 - **运行边界**：正式回测和模拟交易只在 JoinQuant（聚宽）云端运行；本地只做策略编写、资料整理、结果归档和复盘。
 - **Vibe-Trading**：只作为研究、策略草稿、归因和报告工具；不作为正式回测或模拟交易裁判。
 - **Python**：默认必须提权使用项目 `.venv`，不使用系统 Python。
-- **长期记忆**：本项目使用 agentmemory 作为 Claude Code 与 Codex 共享长期记忆系统；官方入口见 [rohitg00/agentmemory](https://github.com/rohitg00/agentmemory)。
 
 ### 工作边界
 
