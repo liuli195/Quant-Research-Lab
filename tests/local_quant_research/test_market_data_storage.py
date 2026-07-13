@@ -477,3 +477,56 @@ def test_snapshot_validation_rejects_duplicate_or_extra_batch_evidence(
 
     with pytest.raises(MarketDataIntegrityError, match="canonical batch evidence"):
         validate_snapshot(malformed_id, root=tmp_path)
+
+
+def test_snapshot_validation_rejects_embedded_path_traversal_batch_id(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests" / "local_quant_research" / "fixtures" / "daily-bars.csv"
+    batch = import_batch(csv_path=source, manifest=_manifest(), root=tmp_path)
+    snapshot = create_snapshot(
+        batch_ids=[batch.batch_id],
+        selection=_selection("000001.XSHG", "000002.XSHE"),
+        root=tmp_path,
+    )
+    document = json.loads(snapshot.path.read_text(encoding="utf-8"))
+    malicious_batch_id = "../../" + "a" * 64
+    document["batch_ids"][0] = malicious_batch_id
+    document["batches"][0]["batch_id"] = malicious_batch_id
+    payload = {key: value for key, value in document.items() if key != "snapshot_id"}
+    malformed_id = _canonical_digest(payload)
+    document["snapshot_id"] = malformed_id
+    malformed_path = tmp_path / "snapshots" / f"{malformed_id}.json"
+    malformed_path.write_text(
+        json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(MarketDataIntegrityError, match="batch identifier"):
+        validate_snapshot(malformed_id, root=tmp_path)
+
+
+def test_missing_batch_and_deleted_snapshot_evidence_are_rejected(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    missing_batch_id = "f" * 64
+    with pytest.raises(MarketDataIntegrityError, match="batch does not exist"):
+        create_snapshot(
+            batch_ids=[missing_batch_id],
+            selection=_selection("000001.XSHG"),
+            root=tmp_path,
+        )
+
+    source = repo_root / "tests" / "local_quant_research" / "fixtures" / "daily-bars.csv"
+    batch = import_batch(csv_path=source, manifest=_manifest(), root=tmp_path)
+    snapshot = create_snapshot(
+        batch_ids=[batch.batch_id],
+        selection=_selection("000001.XSHG", "000002.XSHE"),
+        root=tmp_path,
+    )
+    snapshot.path.unlink()
+    with pytest.raises(MarketDataIntegrityError, match="invalid JSON evidence"):
+        validate_snapshot(snapshot.snapshot_id, root=tmp_path)

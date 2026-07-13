@@ -663,6 +663,7 @@ def validate_snapshot(snapshot_id: str, *, root: Path) -> SnapshotRecord:
     for batch_id in batch_ids:
         if not isinstance(batch_id, str) or batch_id not in evidence_by_id:
             raise MarketDataIntegrityError("snapshot batch evidence is incomplete")
+        _require_identifier(batch_id, "batch")
         batch_dir = Path(root) / "batches" / batch_id
         manifest = _validate_batch_dir(batch_dir)
         evidence = evidence_by_id[batch_id]
