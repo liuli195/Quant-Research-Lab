@@ -370,6 +370,52 @@ def _input_evidence(config: RunConfig, *, repo_root: Path) -> tuple[str, str, di
     return config_digest, code_digest, evidence
 
 
+def _run_inputs_unchanged(
+    *,
+    config_path: Path,
+    repo_root: Path,
+    market_root: Path,
+    snapshot_id: str,
+    snapshot_path: Path,
+    snapshot_digest: str,
+    snapshot_normalized_digest: str,
+    config_digest: str,
+    code_digest: str,
+    inputs: Mapping[str, object],
+) -> bool:
+    try:
+        current_snapshot = open_snapshot(snapshot_id, root=market_root)
+        current_snapshot_document = json.loads(
+            snapshot_path.read_text(encoding="utf-8")
+        )
+        current_snapshot_digest = file_digest(snapshot_path)
+        current_config = load_run_config(config_path, repo_root=repo_root)
+        current_config_digest, current_code_digest, current_inputs = _input_evidence(
+            current_config,
+            repo_root=repo_root,
+        )
+    except (
+        ConfigurationError,
+        InputIntegrityError,
+        MarketDataError,
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ):
+        return False
+    return (
+        current_snapshot_digest == snapshot_digest
+        and current_snapshot.digest == snapshot_normalized_digest
+        and _snapshot_requirements_match(
+            current_snapshot_document.get("selection"),
+            current_config.snapshot_requirements,
+        )
+        and current_config_digest == config_digest
+        and current_code_digest == code_digest
+        and current_inputs == dict(inputs)
+    )
+
+
 def _sanitized_environment(repo_root: Path) -> dict[str, str]:
     allowed = (
         "SYSTEMROOT",
@@ -643,6 +689,29 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
             stages=(*stages, StageRecord("project_execution", "failed")),
             staging=staging,
         )
+    if not _run_inputs_unchanged(
+        config_path=config_path,
+        repo_root=repo_root,
+        market_root=market_root,
+        snapshot_id=snapshot_id,
+        snapshot_path=snapshot_path,
+        snapshot_digest=snapshot_digest,
+        snapshot_normalized_digest=snapshot_view.digest,
+        config_digest=config_digest,
+        code_digest=code_digest,
+        inputs=inputs,
+    ):
+        return _attempt_result(
+            repo_root=repo_root,
+            project_id=config.project_id,
+            status="failed",
+            stage="project_execution",
+            code="run_input_changed",
+            message="run input changed during project execution",
+            run_id=run_id,
+            stages=(*stages, StageRecord("project_execution", "failed")),
+            staging=staging,
+        )
     if completed.returncode != 0:
         return _attempt_result(
             repo_root=repo_root,
@@ -703,6 +772,30 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
             staging=staging,
         )
     stages.append(StageRecord("output_validation", "complete"))
+
+    if not _run_inputs_unchanged(
+        config_path=config_path,
+        repo_root=repo_root,
+        market_root=market_root,
+        snapshot_id=snapshot_id,
+        snapshot_path=snapshot_path,
+        snapshot_digest=snapshot_digest,
+        snapshot_normalized_digest=snapshot_view.digest,
+        config_digest=config_digest,
+        code_digest=code_digest,
+        inputs=inputs,
+    ):
+        return _attempt_result(
+            repo_root=repo_root,
+            project_id=config.project_id,
+            status="failed",
+            stage="evidence_finalization",
+            code="run_input_changed",
+            message="run input changed before evidence finalization",
+            run_id=run_id,
+            stages=(*stages, StageRecord("evidence_finalization", "failed")),
+            staging=staging,
+        )
 
     complete_stages = [
         {"name": name, "status": "complete"} for name in _COMPLETE_STAGE_NAMES

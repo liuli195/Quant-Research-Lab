@@ -534,6 +534,33 @@ def test_project_write_outside_staging_is_detected(
     assert "outside staging" in " ".join(result.reasons)
 
 
+def test_input_replaced_during_execution_cannot_publish_stale_evidence(
+    tmp_path: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_root, config_path, _ = _build_repo(tmp_path, repo_root)
+    declared_input = fake_root / "projects/generic-research/input.txt"
+    original_stat = declared_input.stat()
+
+    def process(command: list[str], **kwargs):
+        declared_input.write_text("tampered input\n", encoding="utf-8")
+        os.utime(
+            declared_input,
+            ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+        )
+        return _successful_process()(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", process)
+
+    result = run_project(config_path, repo_root=fake_root)
+
+    assert result.status == "failed"
+    assert "input" in " ".join(result.reasons)
+    project_root = fake_root / ".local/quant-research/generic-research"
+    assert not any(path.is_dir() and len(path.name) == 64 for path in project_root.iterdir())
+
+
 def test_adapter_guard_allows_staging_writes_and_blocks_external_writes(
     repo_root: Path,
     tmp_path: Path,

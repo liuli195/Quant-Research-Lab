@@ -83,12 +83,21 @@ def _validate_output(path: Path, output_format: str) -> None:
     elif output_format == "csv":
         try:
             with path.open(encoding="utf-8-sig", newline="") as handle:
-                reader = csv.reader(handle)
+                reader = csv.reader(handle, strict=True)
                 header = next(reader)
+                if (
+                    not header
+                    or any(not column for column in header)
+                    or len(header) != len(set(header))
+                ):
+                    raise EvidenceError(f"CSV header is invalid: {path.name}")
+                for row in reader:
+                    if len(row) != len(header):
+                        raise EvidenceError(
+                            f"CSV row has the wrong column count: {path.name}"
+                        )
         except (OSError, UnicodeDecodeError, StopIteration, csv.Error) as exc:
             raise EvidenceError(f"invalid CSV output: {path.name}") from exc
-        if not header or any(not column for column in header) or len(header) != len(set(header)):
-            raise EvidenceError(f"CSV header is invalid: {path.name}")
     else:
         try:
             text = raw.decode("utf-8")
