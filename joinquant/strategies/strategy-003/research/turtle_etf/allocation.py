@@ -68,20 +68,30 @@ def _allocated_intents(
     )
 
 
-def _is_feasible(
+def _reason_codes(
     candidates: Sequence[BuyRequest],
     quantities: Mapping[str, int],
     constraints: PortfolioConstraints,
-) -> bool:
+) -> tuple[str, ...]:
     intents = _allocated_intents(candidates, quantities)
     if not intents:
-        return True
+        return ()
     decision = evaluate_risk(
         intents,
         constraints.state,
         constraints.risk_inputs,
     )
-    return not decision.reason_codes and decision.approved == intents
+    if decision.approved != intents and not decision.reason_codes:
+        return ("allocation_not_approved",)
+    return decision.reason_codes
+
+
+def _is_feasible(
+    candidates: Sequence[BuyRequest],
+    quantities: Mapping[str, int],
+    constraints: PortfolioConstraints,
+) -> bool:
+    return not _reason_codes(candidates, quantities, constraints)
 
 
 def _hamilton_quantities(
@@ -138,11 +148,24 @@ def _maximum_hamilton_allocation(
         (requests[security].intent.quantity - base[security]) // lot
         for security in active
     )
-    low = 0
-    high = maximum_lots
-    best = dict(base)
-    while low < high:
-        candidate_lots = (low + high + 1) // 2
+    base_intents = _allocated_intents(candidates, base)
+    base_spend = sum(
+        (
+            intent.expected_price * intent.quantity + intent.estimated_fee
+            for intent in base_intents
+        ),
+        Decimal("0"),
+    )
+    available_cash = max(Decimal("0"), constraints.state.cash - base_spend)
+    cheapest_lot = min(
+        requests[security].intent.expected_price * lot for security in active
+    )
+    maximum_lots = min(maximum_lots, int(available_cash // cheapest_lot))
+    # Portfolio volatility is not monotonic when candidates diversify each
+    # other.  Search actual Hamilton portfolios from largest to smallest so a
+    # feasible bundle cannot be discarded merely because its single-lot
+    # members are infeasible in isolation.
+    for candidate_lots in range(maximum_lots, 0, -1):
         proposed = _hamilton_quantities(
             base=base,
             active=active,
@@ -151,21 +174,8 @@ def _maximum_hamilton_allocation(
             requests=requests,
         )
         if _is_feasible(candidates, proposed, constraints):
-            low = candidate_lots
-            best = proposed
-        else:
-            high = candidate_lots - 1
-    if low == 0:
-        best = dict(base)
-    elif sum(best.values()) == sum(base.values()):
-        best = _hamilton_quantities(
-            base=base,
-            active=active,
-            extra_lots=low,
-            lot=lot,
-            requests=requests,
-        )
-    return low, best
+            return candidate_lots, proposed
+    return 0, dict(base)
 
 
 def _audit_digest(
@@ -237,7 +247,8 @@ def allocate_a1(
         for security in active:
             next_quantities = dict(quantities)
             next_quantities[security] += lot
-            if not _is_feasible(ordered, next_quantities, constraints):
+            reasons = set(_reason_codes(ordered, next_quantities, constraints))
+            if reasons - {"target_volatility"}:
                 blocked.add(security)
         if blocked:
             active.difference_update(blocked)

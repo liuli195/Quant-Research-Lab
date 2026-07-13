@@ -196,3 +196,56 @@ def test_a1_infeasible_candidate_does_not_block_other_budget() -> None:
 
     assert dict(result.quantities) == {"A": 0, "B": 1000}
     assert result.rejected == (requests[0],)
+
+
+def test_a1_can_accept_diversifying_pair_when_each_single_lot_exceeds_target_volatility() -> None:
+    requests = (
+        BuyRequest(_intent("A", quantity=100)),
+        BuyRequest(_intent("B", quantity=100)),
+    )
+    covariance = CovarianceEstimate(
+        securities=("A", "B"),
+        matrix=(
+            (Decimal("0.01"), Decimal("-0.01")),
+            (Decimal("-0.01"), Decimal("0.01")),
+        ),
+        aligned_samples=60,
+        window_days=60,
+    )
+    inputs = RiskInputs(
+        prices={"A": Decimal("10"), "B": Decimal("10")},
+        median_turnover_20d={
+            "A": Decimal("1000000000"),
+            "B": Decimal("1000000000"),
+        },
+        covariance=covariance,
+        security_risk_cap=Decimal("1"),
+        security_value_cap=Decimal("1"),
+        asset_group_risk_cap=Decimal("1"),
+        asset_group_value_cap=Decimal("1"),
+        portfolio_risk_cap=Decimal("1"),
+        portfolio_value_cap=Decimal("1"),
+        target_volatility=Decimal("0.1"),
+    )
+    constraints = PortfolioConstraints(
+        state=PortfolioState(Decimal("10000"), Decimal("3000")),
+        risk_inputs=inputs,
+    )
+
+    for request in requests:
+        decision = evaluate_risk(
+            (request.intent,),
+            constraints.state,
+            constraints.risk_inputs,
+        )
+        assert decision.reason_codes == ("target_volatility",)
+    pair_decision = evaluate_risk(
+        tuple(request.intent for request in requests),
+        constraints.state,
+        constraints.risk_inputs,
+    )
+    assert pair_decision.reason_codes == ()
+
+    result = allocate_a1(requests, constraints)
+
+    assert dict(result.quantities) == {"A": 100, "B": 100}
