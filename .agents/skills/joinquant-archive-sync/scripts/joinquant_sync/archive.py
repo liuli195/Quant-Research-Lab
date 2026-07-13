@@ -1447,6 +1447,46 @@ def _validate_manifest_contract(manifest: dict[str, object]) -> None:
         for name, policy in expected.items():
             if datasets[name].get("required") != policy.get("required"):
                 raise IntegrityError(f"manifest dataset requirement drift: {name}")
+        if kind == "backtest":
+            official_summary = datasets["official_summary"]
+            official_files = official_summary.get("files")
+            if (
+                not isinstance(official_files, list)
+                or len(official_files) != 1
+                or not isinstance(official_files[0], dict)
+                or official_files[0].get("path") != "data/official-summary.csv"
+                or official_files[0].get("format") != "csv"
+            ):
+                raise IntegrityError("official summary path is invalid")
+            official_evidence = official_summary.get("evidence")
+            official_source = (
+                official_evidence.get("source")
+                if isinstance(official_evidence, dict)
+                else None
+            )
+            official_header = (
+                official_evidence.get("header")
+                if isinstance(official_evidence, dict)
+                else None
+            )
+            if (
+                not isinstance(official_evidence, dict)
+                or official_evidence.get("evidence_version") != 1
+                or official_source
+                != {
+                    "kind": "joinquant_backtest_detail_export",
+                    "url": source["url"],
+                    "action": "export_csv",
+                }
+                or official_evidence.get("encoding") not in {"utf-8-sig", "gb18030"}
+                or not isinstance(official_header, list)
+                or not official_header
+                or not all(isinstance(field, str) and field for field in official_header)
+                or official_evidence.get("rows") != official_summary.get("rows")
+                or official_evidence.get("related_datasets")
+                != ["results", "balances", "orders"]
+            ):
+                raise IntegrityError("official summary evidence is invalid")
         if status in {"done", "active", "closed"}:
             for name in ("results", "balances", "risk"):
                 if int(datasets[name].get("rows") or 0) < 1:

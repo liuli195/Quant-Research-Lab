@@ -505,13 +505,19 @@
       "rows": 804,
       "files": [
         {
-          "path": "reports/official-summary.csv",
+          "path": "data/official-summary.csv",
           "sha256": "a1e29f1a71fd1745ed7b991475f9a1150a90ce42a1a43fa3983e3c925ee2b5ec",
           "bytes": 42258,
           "format": "csv"
         }
       ],
       "evidence": {
+        "evidence_version": 1,
+        "source": {
+          "kind": "joinquant_backtest_detail_export",
+          "url": "https://www.joinquant.com/algorithm/backtest/detail?backtestId=021b33518dc7fac2b39f27ebfdc4d56b",
+          "action": "export_csv"
+        },
         "encoding": "gb18030",
         "header": [
           "时间",
@@ -522,6 +528,12 @@
           "当日买入",
           "当日卖出",
           "超额收益(%)"
+        ],
+        "rows": 804,
+        "related_datasets": [
+          "results",
+          "balances",
+          "orders"
         ]
       }
     },

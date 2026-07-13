@@ -8,6 +8,25 @@ import hashlib
 import pytest
 
 
+def test_historical_backtest_does_not_lower_latest_id(tmp_path: Path) -> None:
+    import joinquant_sync.sync_pipeline as pipeline
+
+    index_path = tmp_path / "strategy_index.csv"
+    index_path.write_text(
+        "strategy_id,name,joinquant_strategy_url,status,current_default_code,"
+        "latest_backtest_id,latest_simulation_id,updated_at\n"
+        "strategy-001,example,https://example.invalid,active,default_code.py,"
+        "115,simulation-001,2026-07-13T00:00:00+08:00\n",
+        encoding="utf-8",
+    )
+
+    pipeline._update_strategy_latest(
+        index_path, "strategy-001", "latest_backtest_id", "88"
+    )
+
+    assert pipeline._read_strategy_index(index_path)[0]["latest_backtest_id"] == "115"
+
+
 def test_simulation_index_is_flushed_before_atomic_replace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1216,6 +1235,65 @@ def test_backtest_batch_keeps_only_isolated_dataset_failed(
         assert manifest["datasets"][failure]["pagination"]["terminal"] is False
     assert manifest["gate"]["status"] == "fail"
     assert staged
+
+
+def test_backtest_summary_uses_data_path_and_provenance(tmp_path: Path) -> None:
+    from joinquant_sync.sync_pipeline import _build_backtest_batch
+
+    manifest, _staged = _build_backtest_batch(
+        tmp_path, *_partial_backtest_inputs("performance_profile")
+    )
+
+    dataset = manifest["datasets"]["official_summary"]
+    assert dataset["files"][0]["path"] == "data/official-summary.csv"
+    assert dataset["evidence"] == {
+        "evidence_version": 1,
+        "source": {
+            "kind": "joinquant_backtest_detail_export",
+            "url": "memory://backtest/1",
+            "action": "export_csv",
+        },
+        "encoding": "utf-8-sig",
+        "header": ["time", "returns"],
+        "rows": 1,
+        "related_datasets": ["results", "balances", "orders"],
+    }
+
+
+def test_manifest_contract_rejects_legacy_official_summary_path(
+    tmp_path: Path,
+) -> None:
+    from joinquant_sync.archive import IntegrityError, _validate_manifest_contract
+    from joinquant_sync.sync_pipeline import _build_backtest_batch
+
+    manifest, _staged = _build_backtest_batch(
+        tmp_path, *_partial_backtest_inputs("performance_profile")
+    )
+    legacy_path = "reports" + "/official-summary.csv"
+    manifest["datasets"]["official_summary"]["files"][0]["path"] = legacy_path
+
+    with pytest.raises(IntegrityError, match="official summary path"):
+        _validate_manifest_contract(manifest)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["evidence_version", "source", "encoding", "header", "rows", "related_datasets"],
+)
+def test_manifest_contract_rejects_incomplete_official_summary_evidence(
+    tmp_path: Path, field: str
+) -> None:
+    from joinquant_sync.archive import IntegrityError, _validate_manifest_contract
+    from joinquant_sync.sync_pipeline import _build_backtest_batch
+
+    manifest, _staged = _build_backtest_batch(
+        tmp_path, *_partial_backtest_inputs("performance_profile")
+    )
+    evidence = manifest["datasets"]["official_summary"]["evidence"]
+    evidence.pop(field)
+
+    with pytest.raises(IntegrityError, match="official summary evidence"):
+        _validate_manifest_contract(manifest)
 
 
 def test_strategy_manifest_uses_immutable_code_version(tmp_path: Path) -> None:
