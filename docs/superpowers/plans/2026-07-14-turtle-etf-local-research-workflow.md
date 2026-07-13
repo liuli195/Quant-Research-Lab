@@ -393,25 +393,25 @@ def initial_unit(equity: Decimal, n_value: Decimal, risk_fraction: Decimal = Dec
 def evaluate_risk(requests: Sequence[OrderIntent], state: PortfolioState, inputs: RiskInputs) -> RiskDecision: ...
 ```
 
-- [ ] **步骤 1：写指标、信号和次日执行失败测试**
+- [x] **步骤 1：写指标、信号和次日执行失败测试**
 
 固定夹具必须证明 55/20 通道排除信号当日、TR 使用 `max(high-low, abs(high-pre_close), abs(low-pre_close))`、N 为 20 日均值、收盘确认信号在下一交易日开盘才成为订单。
 
-- [ ] **步骤 2：写批次和共同止损失败测试**
+- [x] **步骤 2：写批次和共同止损失败测试**
 
 覆盖固定信号日 N、0.5N 理论档位、同一 ETF 每日最多一次加仓、实际成交才改变批次、共同止损只上移、保护止损和 20 日退出均生成全仓退出意图。
 
-- [ ] **步骤 3：写风险和故障安全失败测试**
+- [x] **步骤 3：写风险和故障安全失败测试**
 
 覆盖整手、现金、流动性、单 ETF、资产组、计划风险、60 个对齐样本、60 日协方差、10% 目标波动率；持仓价格或风险输入缺失时 `allow_new_risk=False`，但退出和强制减仓仍保留。
 
-- [ ] **步骤 4：运行失败测试**
+- [x] **步骤 4：运行失败测试**
 
 运行：`.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_turtle_indicators.py tests\local_quant_research\test_turtle_risk.py -q`
 
 预期：FAIL，海龟纯计算模块尚未实现。
 
-- [ ] **步骤 5：实现最小纯计算模块并通过测试**
+- [x] **步骤 5：实现最小纯计算模块并通过测试**
 
 模块只接收 DataFrame（数据表）和不可变记录对象，不读取全局目录、环境变量或行情中心；计算只使用未复权 `open/high/low/close/pre_close`。
 
@@ -419,7 +419,7 @@ def evaluate_risk(requests: Sequence[OrderIntent], state: PortfolioState, inputs
 
 预期：PASS。
 
-- [ ] **步骤 6：提交任务 6**
+- [x] **步骤 6：提交任务 6**
 
 ```powershell
 git add joinquant/strategies/strategy-003/research/turtle_etf tests/local_quant_research/test_turtle_indicators.py tests/local_quant_research/test_turtle_risk.py
