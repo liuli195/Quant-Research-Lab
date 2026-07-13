@@ -129,9 +129,87 @@
         "required": ["object"]
       },
       "then": {"required": ["collection_fence", "research_response", "research_lineage"]}
+    },
+    {
+      "if": {
+        "properties": {
+          "object": {
+            "properties": {"kind": {"const": "backtest"}},
+            "required": ["kind"]
+          }
+        },
+        "required": ["object"]
+      },
+      "then": {
+        "properties": {
+          "datasets": {
+            "required": ["official_summary"],
+            "properties": {
+              "official_summary": {"$ref": "#/$defs/backtestOfficialSummary"}
+            }
+          }
+        }
+      }
     }
   ],
   "$defs": {
+    "backtestOfficialSummary": {
+      "allOf": [{"$ref": "#/$defs/dataset"}],
+      "type": "object",
+      "required": ["files", "evidence"],
+      "properties": {
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["path", "sha256", "bytes", "format"],
+            "properties": {
+              "path": {"const": "data/official-summary.csv"},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "bytes": {"type": "integer", "minimum": 1},
+              "format": {"const": "csv"}
+            },
+            "additionalProperties": true
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "required": [
+            "evidence_version",
+            "source",
+            "encoding",
+            "header",
+            "rows",
+            "related_datasets"
+          ],
+          "properties": {
+            "evidence_version": {"const": 1},
+            "source": {
+              "type": "object",
+              "required": ["kind", "url", "action"],
+              "properties": {
+                "kind": {"const": "joinquant_backtest_detail_export"},
+                "url": {"type": "string", "minLength": 1},
+                "action": {"const": "export_csv"}
+              },
+              "additionalProperties": false
+            },
+            "encoding": {"enum": ["utf-8-sig", "gb18030"]},
+            "header": {
+              "type": "array",
+              "minItems": 1,
+              "items": {"type": "string", "minLength": 1}
+            },
+            "rows": {"type": "integer", "minimum": 0},
+            "related_datasets": {"const": ["results", "balances", "orders"]}
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
     "dataset": {
       "type": "object",
       "required": ["required", "status"],

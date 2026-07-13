@@ -1544,7 +1544,7 @@ def _build_backtest_batch(
     _validate_fact_relations(bundle, datasets, params)
     _validate_run_semantics("backtest", status, datasets)
 
-    summary_path = stage / "reports" / "official-summary.csv"
+    summary_path = stage / "data" / "official-summary.csv"
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_bytes(bytes(browser["official_summary"]))
     summary_record = {
@@ -1573,7 +1573,18 @@ def _build_backtest_batch(
         status="complete",
         rows=summary_count,
         files=[summary_record],
-        evidence={"encoding": summary_encoding, "header": summary_rows[0]},
+        evidence={
+            "evidence_version": 1,
+            "source": {
+                "kind": "joinquant_backtest_detail_export",
+                "url": target["detail_url"],
+                "action": "export_csv",
+            },
+            "encoding": summary_encoding,
+            "header": summary_rows[0],
+            "rows": summary_count,
+            "related_datasets": ["results", "balances", "orders"],
+        },
     )
     staged.append(summary_path)
 

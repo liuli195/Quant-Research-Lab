@@ -250,6 +250,21 @@ def test_manifest_schema_declares_required_contract(repo_root: Path) -> None:
         "unsupported_api_version",
         "failed",
     ]
+    official = schema["$defs"]["backtestOfficialSummary"]
+    assert official["properties"]["files"]["items"]["properties"]["path"] == {
+        "const": "data/official-summary.csv"
+    }
+    assert official["properties"]["evidence"]["required"] == [
+        "evidence_version",
+        "source",
+        "encoding",
+        "header",
+        "rows",
+        "related_datasets",
+    ]
+    assert schema["allOf"][1]["then"]["properties"]["datasets"]["properties"][
+        "official_summary"
+    ] == {"$ref": "#/$defs/backtestOfficialSummary"}
 
 
 def test_failed_batch_keeps_previous_manifest(tmp_path: Path) -> None:

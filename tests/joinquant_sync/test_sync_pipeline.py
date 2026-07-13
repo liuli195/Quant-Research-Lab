@@ -1237,6 +1237,66 @@ def test_backtest_batch_keeps_only_isolated_dataset_failed(
     assert staged
 
 
+def test_backtest_summary_uses_data_path_and_provenance(tmp_path: Path) -> None:
+    from joinquant_sync.sync_pipeline import _build_backtest_batch
+
+    manifest, _staged = _build_backtest_batch(
+        tmp_path, *_partial_backtest_inputs("performance_profile")
+    )
+
+    dataset = manifest["datasets"]["official_summary"]
+    assert dataset["files"][0]["path"] == "data/official-summary.csv"
+    assert dataset["evidence"] == {
+        "evidence_version": 1,
+        "source": {
+            "kind": "joinquant_backtest_detail_export",
+            "url": "memory://backtest/1",
+            "action": "export_csv",
+        },
+        "encoding": "utf-8-sig",
+        "header": ["time", "returns"],
+        "rows": 1,
+        "related_datasets": ["results", "balances", "orders"],
+    }
+
+
+def test_manifest_contract_rejects_legacy_official_summary_path(
+    tmp_path: Path,
+) -> None:
+    from joinquant_sync.archive import IntegrityError, _validate_manifest_contract
+    from joinquant_sync.sync_pipeline import _build_backtest_batch
+
+    manifest, _staged = _build_backtest_batch(
+        tmp_path, *_partial_backtest_inputs("performance_profile")
+    )
+    manifest["datasets"]["official_summary"]["files"][0]["path"] = (
+        "reports/official-summary.csv"
+    )
+
+    with pytest.raises(IntegrityError, match="official summary path"):
+        _validate_manifest_contract(manifest)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["evidence_version", "source", "encoding", "header", "rows", "related_datasets"],
+)
+def test_manifest_contract_rejects_incomplete_official_summary_evidence(
+    tmp_path: Path, field: str
+) -> None:
+    from joinquant_sync.archive import IntegrityError, _validate_manifest_contract
+    from joinquant_sync.sync_pipeline import _build_backtest_batch
+
+    manifest, _staged = _build_backtest_batch(
+        tmp_path, *_partial_backtest_inputs("performance_profile")
+    )
+    evidence = manifest["datasets"]["official_summary"]["evidence"]
+    evidence.pop(field)
+
+    with pytest.raises(IntegrityError, match="official summary evidence"):
+        _validate_manifest_contract(manifest)
+
+
 def test_strategy_manifest_uses_immutable_code_version(tmp_path: Path) -> None:
     from joinquant_sync.archive import IntegrityError, verify_existing_manifest
     from joinquant_sync.sync_pipeline import _write_strategy
