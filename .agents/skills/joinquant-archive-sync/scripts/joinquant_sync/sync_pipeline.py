@@ -236,7 +236,11 @@ def _update_strategy_latest(
         matches = [row for row in rows if row.get("strategy_id") == strategy_id]
         if len(matches) != 1:
             raise IntegrityError(f"strategy index identity is missing: {strategy_id}")
-        matches[0][field] = local_id
+        matches[0][field] = (
+            str(max(int(matches[0].get(field) or 0), int(local_id)))
+            if field == "latest_backtest_id"
+            else local_id
+        )
         matches[0]["updated_at"] = _now()
         temporary = index_path.with_name(f".{index_path.name}.{uuid.uuid4().hex}.tmp")
         try:

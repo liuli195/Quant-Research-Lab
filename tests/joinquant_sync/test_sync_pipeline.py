@@ -8,6 +8,25 @@ import hashlib
 import pytest
 
 
+def test_historical_backtest_does_not_lower_latest_id(tmp_path: Path) -> None:
+    import joinquant_sync.sync_pipeline as pipeline
+
+    index_path = tmp_path / "strategy_index.csv"
+    index_path.write_text(
+        "strategy_id,name,joinquant_strategy_url,status,current_default_code,"
+        "latest_backtest_id,latest_simulation_id,updated_at\n"
+        "strategy-001,example,https://example.invalid,active,default_code.py,"
+        "115,simulation-001,2026-07-13T00:00:00+08:00\n",
+        encoding="utf-8",
+    )
+
+    pipeline._update_strategy_latest(
+        index_path, "strategy-001", "latest_backtest_id", "88"
+    )
+
+    assert pipeline._read_strategy_index(index_path)[0]["latest_backtest_id"] == "115"
+
+
 def test_simulation_index_is_flushed_before_atomic_replace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
