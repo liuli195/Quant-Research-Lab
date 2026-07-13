@@ -84,6 +84,18 @@ def test_joinquant_docs_skill_routes_operations_through_one_cli(
     assert "SHA-256" in skill
 
 
+def test_local_quant_research_skill_resolves_to_agents_skill(
+    repo_root: Path,
+) -> None:
+    source = repo_root / ".agents" / "skills" / "run-local-quant-research"
+    claude = repo_root / ".claude" / "skills" / "run-local-quant-research"
+    assert (source / "SKILL.md").is_file()
+    assert (source / "agents" / "openai.yaml").is_file()
+    assert claude.is_symlink()
+    assert claude.resolve() == source.resolve()
+    assert _sha256(claude / "SKILL.md") == _sha256(source / "SKILL.md")
+
+
 def test_build_and_verify_covers_joinquant_docs_sync(repo_root: Path) -> None:
     config = json.loads(
         (repo_root / ".build-and-verify" / "config.json").read_text(encoding="utf-8")

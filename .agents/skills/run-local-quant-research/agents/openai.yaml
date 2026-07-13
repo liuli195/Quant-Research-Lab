@@ -1,0 +1,4 @@
+interface:
+  display_name: "本地量化研究流程"
+  short_description: "编排通用本地量化研究流程并固化可复算证据与三态结论"
+  default_prompt: "使用 $run-local-quant-research 执行项目配置指定的本地量化研究并核验完整证据。"

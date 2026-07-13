@@ -6,8 +6,8 @@
 
 ## 2. 以 TDD（测试驱动开发）建立通用 Skill 与编排入口
 
-- [ ] 2.1 先添加失败的 Skill（技能）布局和公开入口测试，覆盖名称、触发描述、`agents/openai.yaml`、单一 CLI（命令行接口）和 `.claude/skills/` 兼容链接
-- [ ] 2.2 使用项目 `.venv`（虚拟环境）调用 `init_skill.py` 初始化 `.agents/skills/run-local-quant-research/`，补齐最小编排说明和兼容链接，使 2.1 测试及 `quick_validate.py` 通过
+- [x] 2.1 先添加失败的 Skill（技能）布局和公开入口测试，覆盖名称、触发描述、`agents/openai.yaml`、单一 CLI（命令行接口）和 `.claude/skills/` 兼容链接
+- [x] 2.2 使用项目 `.venv`（虚拟环境）调用 `init_skill.py` 初始化 `.agents/skills/run-local-quant-research/`，补齐最小编排说明和兼容链接，使 2.1 测试及 `quick_validate.py` 通过
 - [ ] 2.3 先添加失败的 JSON（结构化清单）配置测试，覆盖共享 `snapshot_id`、参数数组、仓库内路径、必需输出门禁和 `complete`、`evidence_insufficient`、`failed` 唯一状态
 - [ ] 2.4 实现配置校验与固定阶段编排，使 2.3 测试通过，并证明 Skill 只调用通用脚本和项目入口、不解释策略字段
 - [ ] 2.5 先添加失败的 `run_id`、原子固化、不可变清单、重复运行、失败重试、篡改和同输入不同输出测试，再实现证据索引与幂等复用，使全部测试通过

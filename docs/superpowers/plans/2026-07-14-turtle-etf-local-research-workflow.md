@@ -149,7 +149,7 @@ def test_candidates_are_frozen_single_factor_challenges(repo_root):
 
 预期：PASS（通过）；另运行 `git diff -- joinquant/strategies/strategy-001 joinquant/strategies/strategy-002`，预期无输出。
 
-- [ ] **步骤 6：提交任务 1**
+- [x] **步骤 6：提交任务 1**
 
 ```powershell
 git add joinquant/strategies/strategy-003 joinquant/strategies/strategy_index.csv tests/local_quant_research/test_strategy_identity.py tests/local_quant_research/test_contract_fixtures.py
@@ -171,7 +171,7 @@ git commit -m "功能：建立海龟ETF研究项目身份与冻结契约"
 - 产出：唯一公开命令 `.\.venv\Scripts\python.exe scripts\research\local_quant_research\cli.py run --config <path>`。
 - 约束：Skill 只描述顺序、输入、三态、正式回测边界和凭证边界，不包含海龟参数。
 
-- [ ] **步骤 1：添加失败的布局和内容测试**
+- [x] **步骤 1：添加失败的布局和内容测试**
 
 ```python
 def test_local_research_skill_is_thin(repo_root):
@@ -183,13 +183,13 @@ def test_local_research_skill_is_thin(repo_root):
         assert forbidden not in text
 ```
 
-- [ ] **步骤 2：运行测试并确认缺少 Skill**
+- [x] **步骤 2：运行测试并确认缺少 Skill**
 
 运行：`.\.venv\Scripts\python.exe -m pytest tests\test_skill_layout.py tests\local_quant_research\test_skill_contract.py -q`
 
 预期：FAIL，缺少 `run-local-quant-research`。
 
-- [ ] **步骤 3：用官方生成器初始化 Skill**
+- [x] **步骤 3：用官方生成器初始化 Skill**
 
 运行：`.\.venv\Scripts\python.exe C:\Users\liuli\.codex\skills\.system\skill-creator\scripts\init_skill.py run-local-quant-research --path .agents\skills`
 
@@ -201,7 +201,7 @@ New-Item -ItemType SymbolicLink -Path '.claude\skills\run-local-quant-research' 
 
 随后用 `Get-Item '.claude\skills\run-local-quant-research' | Format-List LinkType,Target` 确认 `LinkType=SymbolicLink` 且目标为 `..\..\.agents\skills\run-local-quant-research`。
 
-- [ ] **步骤 4：运行结构验证和定向测试**
+- [x] **步骤 4：运行结构验证和定向测试**
 
 运行：`.\.venv\Scripts\python.exe C:\Users\liuli\.codex\skills\.system\skill-creator\scripts\quick_validate.py .agents\skills\run-local-quant-research`
 
