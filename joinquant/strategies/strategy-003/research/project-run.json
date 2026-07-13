@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "project_id": "strategy-003",
+  "snapshot_id": "0000000000000000000000000000000000000000000000000000000000000000",
+  "snapshot_requirements": {
+    "source": {
+      "name": "joinquant",
+      "environment": "research"
+    },
+    "asset_type": "etf",
+    "frequency": "1d",
+    "securities": [
+      "159819.XSHE",
+      "510300.XSHG",
+      "511010.XSHG",
+      "512100.XSHG",
+      "512480.XSHG",
+      "513100.XSHG",
+      "513180.XSHG",
+      "515180.XSHG",
+      "516080.XSHG",
+      "516160.XSHG",
+      "518880.XSHG"
+    ],
+    "start_date": "1970-01-01",
+    "end_date": "1970-01-01",
+    "fields": [
+      "date",
+      "security",
+      "open",
+      "high",
+      "low",
+      "close",
+      "pre_close",
+      "volume",
+      "money",
+      "factor",
+      "paused",
+      "high_limit",
+      "low_limit"
+    ],
+    "price_semantics": {
+      "fq": null,
+      "skip_paused": false
+    }
+  },
+  "project_entry": "joinquant/strategies/strategy-003/research/turtle_etf/cli.py",
+  "command": [
+    ".venv/Scripts/python.exe",
+    "joinquant/strategies/strategy-003/research/turtle_etf/cli.py"
+  ],
+  "project_config": "joinquant/strategies/strategy-003/research/baseline.json",
+  "code_identity": "joinquant/strategies/strategy-003/research/code-identity.json",
+  "declared_inputs": [
+    "joinquant/strategies/strategy-003/manifest.json",
+    "joinquant/strategies/strategy-003/research/candidates.json"
+  ],
+  "required_outputs": [
+    {
+      "path": "candidate-strategies.json",
+      "format": "json"
+    },
+    {
+      "path": "conclusion.json",
+      "format": "json"
+    },
+    {
+      "path": "daily-audit.csv",
+      "format": "csv"
+    },
+    {
+      "path": "positions.csv",
+      "format": "csv"
+    },
+    {
+      "path": "research-report.md",
+      "format": "markdown"
+    },
+    {
+      "path": "risk.csv",
+      "format": "csv"
+    },
+    {
+      "path": "trades.csv",
+      "format": "csv"
+    }
+  ],
+  "output_root": ".local/quant-research",
+  "stop_states": [
+    "complete",
+    "evidence_insufficient",
+    "failed"
+  ]
+}

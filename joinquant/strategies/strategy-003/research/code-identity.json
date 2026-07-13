@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "files": [
+    {
+      "path": "joinquant/strategies/strategy-003/research/turtle_etf/__init__.py",
+      "sha256": "3a42f837172c7975176d4d0a627b557a2bb3daf2d3af8b5c19be959eefbea7d8"
+    },
+    {
+      "path": "joinquant/strategies/strategy-003/research/turtle_etf/allocation.py",
+      "sha256": "28155260528c49b521e075506a87eb93a7cc98ad4ede4e600168fadc9dc61a11"
+    },
+    {
+      "path": "joinquant/strategies/strategy-003/research/turtle_etf/cli.py",
+      "sha256": "4cba1f50f90ea79895be6e96646d69bebb1e20fce035d6075069546a99cdd297"
+    },
+    {
+      "path": "joinquant/strategies/strategy-003/research/turtle_etf/execution.py",
+      "sha256": "fc933cf443e0fd893d7011e05a6ca93b5dbf636b058d184666432cd2de29ed4a"
+    },
+    {
+      "path": "joinquant/strategies/strategy-003/research/turtle_etf/indicators.py",
+      "sha256": "4e83a58a80550b31395a98b983389582a3fcf001f692b2ac860445b899fe7bb6"
+    },
+    {
+      "path": "joinquant/strategies/strategy-003/research/turtle_etf/reporting.py",
+      "sha256": "694f66c32575de201bffb667bb5d7fb77277c45e1e51af8d6f72efa7cf099c8a"
+    },
+    {
+      "path": "joinquant/strategies/strategy-003/research/turtle_etf/risk.py",
+      "sha256": "d82841db39ddd3d28a598614b81181bb31d72072d30adf0f682e1f8f2b5d9917"
+    },
+    {
+      "path": "joinquant/strategies/strategy-003/research/turtle_etf/signals.py",
+      "sha256": "4f54b9110c6a8dde00ba36a3bfed23de933797e260fe0644264578e531e9009d"
+    },
+    {
+      "path": "joinquant/strategies/strategy-003/research/turtle_etf/state.py",
+      "sha256": "40f394dceba4befbbafa8c8ad3e0dbb8ef7f7aa6744e130cfbbdb97dcd3bcc13"
+    },
+    {
+      "path": "scripts/__init__.py",
+      "sha256": "773263311748e959d61b507193feead29f7e5b306194facd198a3515c06780b1"
+    },
+    {
+      "path": "scripts/research/__init__.py",
+      "sha256": "db573e2ee117f1994a4b7ce24e91147d71bcc9a9597e89ecae4b8b90af350bc9"
+    },
+    {
+      "path": "scripts/research/market_data/__init__.py",
+      "sha256": "6f0c8a6a3ea176856ed43cb49514eb21be1aab4d514ff81e8a84177ddb0da0fb"
+    },
+    {
+      "path": "scripts/research/market_data/contracts.py",
+      "sha256": "768c311e21becc130e7d188f511f75a135aec0548272a5cbdb94f945f4b4fd70"
+    },
+    {
+      "path": "scripts/research/market_data/query.py",
+      "sha256": "0b52344130dbf94ab27e5c42b99a35bce042a57fea454043c672d3fba0a3bb45"
+    },
+    {
+      "path": "scripts/research/market_data/storage.py",
+      "sha256": "73f62ab75ee2c553118fb9761db1cc4941bdd491f9c60b146364431e56177991"
+    }
+  ]
+}

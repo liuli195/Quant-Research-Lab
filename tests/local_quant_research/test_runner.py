@@ -294,6 +294,10 @@ def test_complete_run_uses_fixed_stages_sanitized_environment_and_atomic_path(
         assert command.count("--snapshot-manifest") == 1
         assert command.count("--project-config") == 1
         assert command.count("--output-dir") == 1
+        assert command.count("--run-id") == 1
+        assert command.count("--snapshot-id") == 1
+        assert command.count("--code-sha256") == 1
+        assert command.count("--config-sha256") == 1
 
     monkeypatch.setattr(subprocess, "run", _successful_process(assert_invocation))
 

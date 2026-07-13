@@ -126,5 +126,12 @@
       "tie_breaker": "security_code_ascending",
       "input_order_invariant": true
     }
+  },
+  "research": {
+    "initial_cash": 1500000,
+    "vibe_optimizer": {
+      "enabled": false,
+      "reason": "当前组合优化器存在已知前视偏差风险，仅使用确定性项目计算"
+    }
   }
 }

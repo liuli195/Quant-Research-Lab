@@ -489,25 +489,25 @@ def run_research(config_path: Path, snapshot_path: Path, output_dir: Path) -> Pr
 def write_outputs(result: ResearchResult, output_dir: Path) -> Mapping[str, str]: ...
 ```
 
-- [ ] **步骤 1：写三类必需输出失败测试**
+- [x] **步骤 1：写三类必需输出失败测试**
 
 断言运行生成 `research-report.md`、`conclusion.json`、`candidate-strategies.json`，以及 `daily-audit.csv`、`trades.csv`、`positions.csv`、`risk.csv`。任一文件缺失、JSON 结构错误或摘要不匹配时项目不得报告 `complete`。
 
-- [ ] **步骤 2：写研究建议和候选包失败测试**
+- [x] **步骤 2：写研究建议和候选包失败测试**
 
 `conclusion.json.recommendation` 只能为 `proceed_to_joinquant`、`revise_and_reassess`、`stop_evidence_insufficient`；候选恰好七项、共用代码摘要与 `snapshot_id`，且没有按收益排名删除候选或新增参数。
 
-- [ ] **步骤 3：写报告内容失败测试**
+- [x] **步骤 3：写报告内容失败测试**
 
 报告必须列出方法、输入身份、事件/交易、实际仓位分布、现金占比、留现原因、资产组和组合风险使用率、限制、产物摘要，以及“不是正式回测或最终验收结论”。设计期 63.7%/55.7% 代理值不得作为本次运行结果。
 
-- [ ] **步骤 4：运行失败测试**
+- [x] **步骤 4：运行失败测试**
 
 运行：`.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_turtle_e2e.py -q`
 
 预期：FAIL，报告和项目 CLI（命令行接口）尚未实现。
 
-- [ ] **步骤 5：实现报告与项目入口并通过测试**
+- [x] **步骤 5：实现报告与项目入口并通过测试**
 
 `project-run.json` 只引用共享 `snapshot_id`，不得复制 CSV。Vibe-Trading（AI 研究助理）组合优化器配置固定为 `enabled=false` 并在报告写明跳过原因；方向性粗筛只消费确定性结果，不反向修改配置。
 
@@ -515,7 +515,7 @@ def write_outputs(result: ResearchResult, output_dir: Path) -> Mapping[str, str]
 
 预期：PASS。
 
-- [ ] **步骤 6：提交任务 8**
+- [x] **步骤 6：提交任务 8**
 
 ```powershell
 git add joinquant/strategies/strategy-003/research tests/local_quant_research/test_turtle_e2e.py

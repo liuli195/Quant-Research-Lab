@@ -51,6 +51,10 @@ _RESERVED_ARGUMENTS = {
     "--market-data-root",
     "--project-config",
     "--output-dir",
+    "--run-id",
+    "--snapshot-id",
+    "--code-sha256",
+    "--config-sha256",
 }
 _COMPLETE_STAGE_NAMES = (
     "snapshot_validation",
@@ -810,6 +814,14 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
         str(frozen.project_config.resolve()),
         "--output-dir",
         str(staging.resolve()),
+        "--run-id",
+        run_id,
+        "--snapshot-id",
+        snapshot_id,
+        "--code-sha256",
+        code_digest,
+        "--config-sha256",
+        config_digest,
     ]
     completed = None
     try:

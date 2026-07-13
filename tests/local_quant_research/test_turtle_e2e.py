@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import csv
+import json
 import sys
 from dataclasses import replace
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
+
+import pytest
 
 
 RESEARCH_ROOT = (
@@ -21,6 +26,12 @@ from turtle_etf.execution import (  # noqa: E402
     TradingDay,
     process_day,
 )
+from turtle_etf.cli import run_research  # noqa: E402
+from turtle_etf.reporting import (  # noqa: E402
+    OutputValidationError,
+    RunIdentity,
+    validate_project_outputs,
+)
 from turtle_etf.risk import (  # noqa: E402
     CovarianceEstimate,
     PortfolioState,
@@ -30,6 +41,9 @@ from turtle_etf.state import (  # noqa: E402
     OrderIntent,
     apply_entry_fill,
 )
+from scripts.research.market_data.contracts import SnapshotSelection  # noqa: E402
+from scripts.research.market_data.query import MARKET_DATA_FIELDS  # noqa: E402
+from scripts.research.market_data.storage import create_snapshot, import_batch  # noqa: E402
 
 
 def _sell(
@@ -205,3 +219,227 @@ def test_paused_limits_and_missing_open_never_create_fills() -> None:
     assert result.portfolio == state
     assert result.allocation.allocations == ()
 
+
+UNIVERSE = (
+    "510300.XSHG",
+    "512100.XSHG",
+    "512480.XSHG",
+    "159819.XSHE",
+    "516160.XSHG",
+    "513100.XSHG",
+    "513180.XSHG",
+    "515180.XSHG",
+    "516080.XSHG",
+    "518880.XSHG",
+    "511010.XSHG",
+)
+
+
+def _business_dates(start: date, count: int) -> list[str]:
+    values: list[str] = []
+    current = start
+    while len(values) < count:
+        if current.weekday() < 5:
+            values.append(current.isoformat())
+        current += timedelta(days=1)
+    return values
+
+
+def _research_snapshot(tmp_path: Path):
+    dates = _business_dates(date(2025, 1, 2), 90)
+    csv_path = tmp_path / "daily.csv"
+    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=MARKET_DATA_FIELDS, lineterminator="\n")
+        writer.writeheader()
+        previous = {security: Decimal("10") for security in UNIVERSE}
+        for index, row_date in enumerate(dates):
+            for security in UNIVERSE:
+                if security == "516080.XSHG" and index < 10:
+                    continue
+                close = Decimal("10")
+                high = Decimal("11")
+                low = Decimal("9")
+                open_price = Decimal("10")
+                if security == "510300.XSHG" and index == 70:
+                    close = high = Decimal("12")
+                elif security == "510300.XSHG" and index == 71:
+                    open_price = close = high = Decimal("12")
+                    low = Decimal("11")
+                elif security == "510300.XSHG" and index == 76:
+                    open_price = close = low = Decimal("8")
+                    high = Decimal("9")
+                writer.writerow(
+                    {
+                        "date": row_date,
+                        "security": security,
+                        "open": str(open_price),
+                        "high": str(high),
+                        "low": str(low),
+                        "close": str(close),
+                        "pre_close": str(previous[security]),
+                        "volume": "100000000",
+                        "money": "1000000000",
+                        "factor": "1",
+                        "paused": "0",
+                        "high_limit": "20",
+                        "low_limit": "1",
+                    }
+                )
+                previous[security] = close
+    market_root = tmp_path / "market-data"
+    batch = import_batch(
+        csv_path=csv_path,
+        manifest={
+            "schema_version": 1,
+            "source": {"name": "joinquant", "environment": "research"},
+            "asset_type": "etf",
+            "frequency": "1d",
+            "fields": list(MARKET_DATA_FIELDS),
+            "price_semantics": {"fq": None, "skip_paused": False},
+            "export_code_sha256": "a" * 64,
+        },
+        root=market_root,
+    )
+    selection = SnapshotSelection(
+        source={"name": "joinquant", "environment": "research"},
+        asset_type="etf",
+        frequency="1d",
+        securities=UNIVERSE,
+        start_date=dates[0],
+        end_date=dates[-1],
+        fields=MARKET_DATA_FIELDS,
+        price_semantics={"fq": None, "skip_paused": False},
+    )
+    snapshot = create_snapshot(
+        batch_ids=(batch.batch_id,),
+        selection=selection,
+        root=market_root,
+    )
+    return snapshot, market_root
+
+
+def _run_identity(snapshot_id: str) -> RunIdentity:
+    return RunIdentity(
+        run_id="1" * 64,
+        snapshot_id=snapshot_id,
+        code_sha256="2" * 64,
+        config_sha256="3" * 64,
+    )
+
+
+def test_project_research_writes_reports_conclusion_candidates_and_audits(
+    tmp_path: Path,
+    repo_root: Path,
+) -> None:
+    snapshot, market_root = _research_snapshot(tmp_path)
+    output_dir = tmp_path / "output"
+    config_path = (
+        repo_root / "joinquant/strategies/strategy-003/research/baseline.json"
+    )
+    identity = _run_identity(snapshot.snapshot_id)
+
+    result = run_research(
+        config_path,
+        snapshot.path,
+        output_dir,
+        market_data_root=market_root,
+        identity=identity,
+    )
+
+    assert result.status == "complete"
+    assert {path.name for path in output_dir.iterdir()} == {
+        "project-status.json",
+        "daily-audit.csv",
+        "trades.csv",
+        "positions.csv",
+        "risk.csv",
+        "research-report.md",
+        "conclusion.json",
+        "candidate-strategies.json",
+    }
+    conclusion = json.loads((output_dir / "conclusion.json").read_text(encoding="utf-8"))
+    candidates = json.loads(
+        (output_dir / "candidate-strategies.json").read_text(encoding="utf-8")
+    )
+    report = (output_dir / "research-report.md").read_text(encoding="utf-8")
+    assert conclusion["identity"] == identity.to_document()
+    assert conclusion["metrics"]["filled_trades"] >= 2
+    assert conclusion["recommendation"] in {
+        "proceed_to_joinquant",
+        "revise_and_reassess",
+        "stop_evidence_insufficient",
+    }
+    assert len(candidates["candidates"]) == 7
+    assert {item["code_sha256"] for item in candidates["candidates"]} == {
+        identity.code_sha256
+    }
+    assert {item["snapshot_id"] for item in candidates["candidates"]} == {
+        snapshot.snapshot_id
+    }
+    assert all("rank" not in item and "score" not in item for item in candidates["candidates"])
+    with (output_dir / "trades.csv").open(encoding="utf-8", newline="") as handle:
+        actions = {row["action"] for row in csv.DictReader(handle)}
+    assert {"entry", "full_exit"}.issubset(actions)
+    for required in (
+        "方法",
+        "输入身份",
+        "事件与交易",
+        "实际仓位分布",
+        "现金占比",
+        "留现原因",
+        "资产组风险使用率",
+        "组合风险使用率",
+        "限制",
+        "产物摘要",
+        "不是正式回测或最终验收结论",
+        "Vibe-Trading（AI 研究助理）组合优化器：已跳过",
+    ):
+        assert required in report
+    assert "63.7%" not in report
+    assert "55.7%" not in report
+    validate_project_outputs(output_dir, identity)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "invalid-json", "identity-mismatch"])
+def test_three_required_outputs_reject_missing_invalid_or_mismatched_evidence(
+    mutation: str,
+    tmp_path: Path,
+    repo_root: Path,
+) -> None:
+    snapshot, market_root = _research_snapshot(tmp_path)
+    output_dir = tmp_path / "output"
+    identity = _run_identity(snapshot.snapshot_id)
+    run_research(
+        repo_root / "joinquant/strategies/strategy-003/research/baseline.json",
+        snapshot.path,
+        output_dir,
+        market_data_root=market_root,
+        identity=identity,
+    )
+    if mutation == "missing":
+        (output_dir / "research-report.md").unlink()
+    elif mutation == "invalid-json":
+        (output_dir / "conclusion.json").write_text("[]\n", encoding="utf-8")
+    else:
+        path = output_dir / "candidate-strategies.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["identity"]["run_id"] = "9" * 64
+        path.write_text(json.dumps(document) + "\n", encoding="utf-8")
+
+    with pytest.raises(OutputValidationError):
+        validate_project_outputs(output_dir, identity)
+
+
+def test_project_run_config_references_snapshot_and_disables_biased_optimizer(
+    repo_root: Path,
+) -> None:
+    research_root = repo_root / "joinquant/strategies/strategy-003/research"
+    run_config = json.loads((research_root / "project-run.json").read_text(encoding="utf-8"))
+    baseline = json.loads((research_root / "baseline.json").read_text(encoding="utf-8"))
+
+    assert len(run_config["snapshot_id"]) == 64
+    assert run_config["project_entry"].endswith("/turtle_etf/cli.py")
+    assert run_config["project_config"].endswith("/baseline.json")
+    assert all(not path.lower().endswith(".csv") for path in run_config["declared_inputs"])
+    assert baseline["research"]["vibe_optimizer"]["enabled"] is False
+    assert baseline["research"]["vibe_optimizer"]["reason"]
