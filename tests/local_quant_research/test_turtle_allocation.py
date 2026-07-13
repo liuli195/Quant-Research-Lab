@@ -90,7 +90,7 @@ def test_a1_uses_common_completion_then_fractional_lot_remainder() -> None:
         BuyRequest(_intent("A", quantity=1000)),
     )
     constraints = PortfolioConstraints(
-        state=PortfolioState(Decimal("100000"), Decimal("10000")),
+        state=PortfolioState(Decimal("100000"), Decimal("10010")),
         risk_inputs=_inputs(("A", "B")),
     )
 
@@ -119,7 +119,7 @@ def test_a1_releases_group_limited_budget_to_other_candidates() -> None:
     for permutation in itertools.permutations(requests):
         result = allocate_a1(permutation, constraints)
         assert dict(result.quantities) == expected
-        assert result.remaining_cash == Decimal("10000")
+        assert result.remaining_cash == Decimal("9985")
         digests.add(result.audit_sha256)
 
     assert len(digests) == 1
@@ -131,7 +131,7 @@ def test_a1_exact_remainder_tie_uses_security_code() -> None:
         BuyRequest(_intent("A", quantity=1000)),
     )
     constraints = PortfolioConstraints(
-        state=PortfolioState(Decimal("100000"), Decimal("1000")),
+        state=PortfolioState(Decimal("100000"), Decimal("1005")),
         risk_inputs=_inputs(("A", "B")),
     )
 
@@ -139,6 +139,22 @@ def test_a1_exact_remainder_tie_uses_security_code() -> None:
 
     assert dict(result.quantities) == {"A": 100, "B": 0}
     assert result.allocations[0].security == "A"
+
+
+def test_a1_first_lot_uses_largest_fractional_remainder_not_security_code() -> None:
+    requests = (
+        BuyRequest(_intent("A", quantity=100)),
+        BuyRequest(_intent("B", quantity=200)),
+    )
+    constraints = PortfolioConstraints(
+        state=PortfolioState(Decimal("100000"), Decimal("1005")),
+        risk_inputs=_inputs(("A", "B")),
+    )
+
+    result = allocate_a1(requests, constraints)
+
+    assert dict(result.quantities) == {"A": 0, "B": 100}
+    assert result.allocations[0].security == "B"
 
 
 def test_a1_infeasible_candidate_does_not_block_other_budget() -> None:
@@ -157,7 +173,7 @@ def test_a1_infeasible_candidate_does_not_block_other_budget() -> None:
         }
     )
     constraints = PortfolioConstraints(
-        state=PortfolioState(Decimal("100000"), Decimal("10000")),
+        state=PortfolioState(Decimal("100000"), Decimal("10005")),
         risk_inputs=inputs,
     )
 
@@ -165,4 +181,3 @@ def test_a1_infeasible_candidate_does_not_block_other_budget() -> None:
 
     assert dict(result.quantities) == {"A": 0, "B": 1000}
     assert result.rejected == (requests[0],)
-

@@ -7,15 +7,15 @@
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/allocation.py",
-      "sha256": "28155260528c49b521e075506a87eb93a7cc98ad4ede4e600168fadc9dc61a11"
+      "sha256": "2cf21073c789f0224a2dafff9e0b31536098ae144aa43af29f5fb11f6a0b703f"
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/cli.py",
-      "sha256": "4cba1f50f90ea79895be6e96646d69bebb1e20fce035d6075069546a99cdd297"
+      "sha256": "6b0757619dd1b9d67e486a4e4fe2a882f617b6ed306357294b6a3ad0e6778e9d"
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/execution.py",
-      "sha256": "fc933cf443e0fd893d7011e05a6ca93b5dbf636b058d184666432cd2de29ed4a"
+      "sha256": "9ffab26424a70afb74a3baad2dcb9036180e56fba851b8ef93567eed71d14ebb"
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/indicators.py",
@@ -23,7 +23,7 @@
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/reporting.py",
-      "sha256": "694f66c32575de201bffb667bb5d7fb77277c45e1e51af8d6f72efa7cf099c8a"
+      "sha256": "6ababafcf615308cd0bac0a018826e471225cdb5b926acbc01f931d4cfe75a71"
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/risk.py",
@@ -35,7 +35,7 @@
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/state.py",
-      "sha256": "40f394dceba4befbbafa8c8ad3e0dbb8ef7f7aa6744e130cfbbdb97dcd3bcc13"
+      "sha256": "50f3655b54737b118e392b8645d94160de93674fcf213066431a46f1072ff6a9"
     },
     {
       "path": "scripts/__init__.py",

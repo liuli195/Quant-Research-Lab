@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import statistics
 import sys
 from collections import Counter
@@ -34,7 +35,7 @@ if __package__ in {None, ""}:
         target_volatility_reductions,
     )
     from turtle_etf.signals import entry_signal, make_entry_intent
-    from turtle_etf.state import request_addition, request_full_exit
+    from turtle_etf.state import commission_fee, request_addition, request_full_exit
 else:
     from .execution import DailyMarket, MarketQuote, TradingDay, process_day
     from .indicators import breakout_levels, turtle_n
@@ -55,7 +56,7 @@ else:
         target_volatility_reductions,
     )
     from .signals import entry_signal, make_entry_intent
-    from .state import request_addition, request_full_exit
+    from .state import commission_fee, request_addition, request_full_exit
 
 from scripts.research.market_data.query import open_snapshot
 
@@ -88,10 +89,6 @@ def _decimal(value: object) -> Decimal | None:
     return result if result.is_finite() else None
 
 
-def _fee(price: Decimal, quantity: int) -> Decimal:
-    return max(Decimal("5"), price * quantity * Decimal("0.000085"))
-
-
 def _risk_inputs(
     *,
     config: Mapping[str, object],
@@ -103,10 +100,27 @@ def _risk_inputs(
 ) -> RiskInputs:
     risk = config["risk"]
     window_days = int(risk["covariance"]["window_days"])
-    covariance = estimate_covariance(
-        returns.loc[:through_date],
-        securities=securities,
-        days=window_days,
+    through_returns = returns.loc[:through_date]
+    eligible_securities = tuple(
+        security
+        for security in securities
+        if sum(
+            pd.notna(value) and math.isfinite(float(value))
+            for value in pd.to_numeric(
+                through_returns[security],
+                errors="coerce",
+            )
+        )
+        >= window_days
+    )
+    covariance = (
+        None
+        if not eligible_securities
+        else estimate_covariance(
+            through_returns,
+            securities=eligible_securities,
+            days=window_days,
+        )
     )
     turnover: dict[str, Decimal] = {}
     for security in securities:
@@ -144,11 +158,6 @@ def _prepare_frames(
     for security in universe:
         selected = frame.loc[frame["security"] == security].copy()
         selected = selected.sort_values("date").set_index("date", drop=False)
-        if len(selected) < max(
-            int(signal["entry_days"]),
-            int(config["risk"]["minimum_aligned_samples"]),
-        ) + 2:
-            raise ResearchEvidenceInsufficient("insufficient_security_history")
         selected["n"] = turtle_n(selected, days=int(signal["n_days"]))
         levels = breakout_levels(
             selected,
@@ -369,6 +378,23 @@ def _simulate(
                     {key: decimal_text(value) for key, value in group_risk_usage.items()},
                     sort_keys=True,
                 ),
+                "eligible_securities": json.dumps(
+                    list(
+                        ()
+                        if close_risk.covariance is None
+                        else close_risk.covariance.securities
+                    ),
+                    sort_keys=True,
+                ),
+                "cold_start_securities": json.dumps(
+                    [
+                        security
+                        for security in securities
+                        if close_risk.covariance is None
+                        or security not in close_risk.covariance.securities
+                    ],
+                    sort_keys=True,
+                ),
                 "leave_cash_reasons": json.dumps(dict(sorted(leave_cash.items())), sort_keys=True),
             }
         )
@@ -413,7 +439,7 @@ def _simulate(
                     intents.append(
                         replace(
                             exit_intent,
-                            estimated_fee=_fee(close, exit_intent.quantity),
+                            estimated_fee=commission_fee(close, exit_intent.quantity),
                         )
                     )
                     continue
@@ -429,7 +455,7 @@ def _simulate(
                     intents.append(
                         replace(
                             addition,
-                            estimated_fee=_fee(close, addition.quantity),
+                            estimated_fee=commission_fee(close, addition.quantity),
                         )
                     )
             elif n_value is not None and entry_signal(close, entry_high):
@@ -451,7 +477,10 @@ def _simulate(
                         stop_n=Decimal(str(config["signal"]["stop_n"])),
                     )
                     intents.append(
-                        replace(entry, estimated_fee=_fee(close, quantity))
+                        replace(
+                            entry,
+                            estimated_fee=commission_fee(close, quantity),
+                        )
                     )
         portfolio = PortfolioState(
             portfolio.equity,

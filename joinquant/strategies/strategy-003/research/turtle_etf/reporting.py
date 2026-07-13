@@ -133,6 +133,8 @@ _CSV_FIELDS = {
         "target_volatility_usage",
         "asset_group_value_usage",
         "asset_group_risk_usage",
+        "eligible_securities",
+        "cold_start_securities",
         "leave_cash_reasons",
     ),
 }

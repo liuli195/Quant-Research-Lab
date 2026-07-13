@@ -8,7 +8,7 @@ from types import MappingProxyType
 from typing import Mapping, Sequence
 
 from .risk import PortfolioState, RiskInputs, evaluate_risk
-from .state import OrderIntent
+from .state import OrderIntent, commission_fee
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,14 @@ def _allocated_intents(
     quantities: Mapping[str, int],
 ) -> tuple[OrderIntent, ...]:
     return tuple(
-        replace(candidate.intent, quantity=quantities[candidate.intent.security])
+        replace(
+            candidate.intent,
+            quantity=quantities[candidate.intent.security],
+            estimated_fee=commission_fee(
+                candidate.intent.expected_price,
+                quantities[candidate.intent.security],
+            ),
+        )
         for candidate in candidates
         if quantities[candidate.intent.security] > 0
     )
@@ -123,7 +130,7 @@ def allocate_a1(
         security = min(
             active,
             key=lambda item: (
-                Decimal(quantities[item])
+                Decimal(quantities[item] + lot)
                 / Decimal(by_security[item].intent.quantity),
                 item,
             ),
@@ -169,4 +176,3 @@ def allocate_a1(
         remaining_cash=remaining_cash,
         audit_sha256=_audit_digest(ordered, quantities, ratios, remaining_cash),
     )
-

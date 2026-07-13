@@ -187,7 +187,7 @@ def test_day_flow_executes_exit_reduction_then_same_level_buys_at_actual_open() 
     assert positions["ADD"].quantity == 200
     assert positions["ADD"].common_stop == Decimal("11.0")
     assert positions["NEW"].common_stop == Decimal("6")
-    assert first.portfolio.cash == Decimal("94100")
+    assert first.portfolio.cash == Decimal("94080")
     assert first.audit_sha256 == second.audit_sha256
 
 
@@ -222,6 +222,63 @@ def test_paused_limits_and_missing_open_never_create_fills() -> None:
     assert all(record.status == "unfilled" for record in result.audit)
     assert result.portfolio == state
     assert result.allocation.allocations == ()
+
+
+def test_gap_open_recomputes_commission_before_cash_gate() -> None:
+    intent = OrderIntent(
+        security="GAP",
+        asset_group="group-a",
+        action="entry",
+        quantity=10000,
+        expected_price=Decimal("1"),
+        signal_date="2026-01-05",
+        execution_date="2026-01-06",
+        signal_n=Decimal("0.1"),
+        standard_unit=10000,
+        common_stop_after=Decimal("0.8"),
+        estimated_fee=Decimal("5"),
+        reason="entry_breakout",
+    )
+    state = PortfolioState(Decimal("100006"), Decimal("100006"))
+    market = DailyMarket(
+        quotes={"GAP": MarketQuote(open=Decimal("10"))},
+        risk_inputs=_risk_inputs(("GAP",)),
+    )
+
+    result = process_day(
+        TradingDay(date="2026-01-06", intents=(intent,)),
+        state,
+        market,
+    )
+
+    assert result.portfolio.cash == Decimal("997.585000")
+    assert result.portfolio.cash >= 0
+    assert result.audit[0].status == "filled"
+    assert result.audit[0].filled_quantity == 9900
+    assert result.allocation.allocations[0].estimated_fee == Decimal("8.415000")
+
+
+def test_gap_exit_recomputes_commission_from_actual_quantity_and_open() -> None:
+    position = _position("GAP", 10000)
+    state = PortfolioState(
+        equity=Decimal("100000"),
+        cash=Decimal("0"),
+        positions=(position,),
+    )
+    day = TradingDay(
+        date="2026-01-06",
+        intents=(_sell("GAP", "full_exit", 10000, price="1"),),
+    )
+    market = DailyMarket(
+        quotes={"GAP": MarketQuote(open=Decimal("10"))},
+        risk_inputs=_risk_inputs(("GAP",)),
+    )
+
+    result = process_day(day, state, market)
+
+    assert result.portfolio.cash == Decimal("99991.500000")
+    assert result.portfolio.positions == ()
+    assert result.audit[0].filled_quantity == 10000
 
 
 UNIVERSE = (
@@ -276,8 +333,10 @@ def _research_snapshot(
     *,
     market_root: Path | None = None,
     export_code_sha256: str = "a" * 64,
+    start_date: date = date(2025, 1, 2),
+    cold_security_rows: int = 80,
 ):
-    dates = _business_dates(date(2025, 1, 2), 90)
+    dates = _business_dates(start_date, 90)
     csv_path = tmp_path / "daily.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=MARKET_DATA_FIELDS, lineterminator="\n")
@@ -285,7 +344,10 @@ def _research_snapshot(
         previous = {security: Decimal("10") for security in UNIVERSE}
         for index, row_date in enumerate(dates):
             for security in UNIVERSE:
-                if security == "516080.XSHG" and index < 10:
+                if (
+                    security == "516080.XSHG"
+                    and index < len(dates) - cold_security_rows
+                ):
                     continue
                 close = Decimal("10")
                 high = Decimal("11")
@@ -431,6 +493,32 @@ def test_project_research_writes_reports_conclusion_candidates_and_audits(
     validate_project_outputs(output_dir, identity)
 
 
+def test_cold_security_does_not_block_other_securities_or_the_project(
+    tmp_path: Path,
+    repo_root: Path,
+) -> None:
+    snapshot, market_root = _research_snapshot(tmp_path, cold_security_rows=10)
+    output_dir = tmp_path / "cold-output"
+    identity = _run_identity(snapshot.snapshot_id)
+
+    result = run_research(
+        repo_root / "joinquant/strategies/strategy-003/research/baseline.json",
+        snapshot.path,
+        output_dir,
+        market_data_root=market_root,
+        identity=identity,
+    )
+
+    assert result.status == "complete"
+    with (output_dir / "trades.csv").open(encoding="utf-8", newline="") as handle:
+        trades = list(csv.DictReader(handle))
+    assert any(row["security"] != "516080.XSHG" for row in trades)
+    assert all(row["security"] != "516080.XSHG" for row in trades)
+    with (output_dir / "risk.csv").open(encoding="utf-8", newline="") as handle:
+        final_risk = list(csv.DictReader(handle))[-1]
+    assert "516080.XSHG" in json.loads(final_risk["cold_start_securities"])
+
+
 @pytest.mark.parametrize("mutation", ["missing", "invalid-json", "identity-mismatch"])
 def test_three_required_outputs_reject_missing_invalid_or_mismatched_evidence(
     mutation: str,
@@ -493,6 +581,7 @@ def test_skill_public_command_runs_complete_turtle_workflow(
             tmp_path,
             market_root=market_root,
             export_code_sha256=export_digest,
+            start_date=date(2099, 1, 2),
         )
         snapshot_document = json.loads(snapshot.path.read_text(encoding="utf-8"))
         batch_ids = list(snapshot_document["batch_ids"])

@@ -22,6 +22,7 @@ from .state import (
     _decimal,
     apply_addition_fill,
     apply_entry_fill,
+    commission_fee,
 )
 
 
@@ -162,6 +163,7 @@ def _adjust_buy_to_open(
         intent,
         expected_price=quote.open,
         common_stop_after=common_stop,
+        estimated_fee=commission_fee(quote.open, intent.quantity),
     )
 
 
@@ -221,7 +223,7 @@ def process_day(
             record(intent, "unfilled", reason=reason or "position_missing")
             continue
         quantity = position.quantity
-        cash += quote.open * quantity - intent.estimated_fee
+        cash += quote.open * quantity - commission_fee(quote.open, quantity)
         del positions[intent.security]
         record(
             intent,
@@ -257,7 +259,7 @@ def process_day(
             del positions[intent.security]
         else:
             positions[intent.security] = reduced
-        cash += quote.open * quantity - intent.estimated_fee
+        cash += quote.open * quantity - commission_fee(quote.open, quantity)
         record(
             intent,
             "filled",
@@ -347,4 +349,3 @@ def process_day(
         allocation=allocation,
         audit_sha256=_audit_digest(records),
     )
-

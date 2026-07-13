@@ -27,8 +27,10 @@
           "tests\\test_skill_layout.py"
         ],
         "paths": [
+          ".agents/skills/run-local-quant-research/**",
           ".agents/skills/joinquant-docs-sync/**",
           ".agents/skills/joinquant-archive-sync/**",
+          ".claude/skills/run-local-quant-research",
           ".claude/skills/joinquant-docs-sync",
           ".claude/skills/joinquant-archive-sync",
           ".gitattributes",
@@ -37,8 +39,10 @@
           "tests/test_skill_layout.py"
         ],
         "inputs": [
+          ".agents/skills/run-local-quant-research/**",
           ".agents/skills/joinquant-docs-sync/**",
           ".agents/skills/joinquant-archive-sync/**",
+          ".claude/skills/run-local-quant-research",
           ".claude/skills/joinquant-docs-sync",
           ".claude/skills/joinquant-archive-sync",
           ".gitattributes",

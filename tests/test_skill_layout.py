@@ -122,6 +122,7 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
     checks = {check["id"]: check for check in config["verify"]["checks"]}
     unit = checks["verify.local-quant-research-unit"]
     e2e = checks["verify.local-quant-research-e2e"]
+    layout = checks["verify.skill-layout"]
 
     assert unit["command"] == [
         ".\\.venv\\Scripts\\python.exe",
@@ -150,6 +151,14 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
     }
     assert required_paths.issubset(unit["paths"])
     assert required_paths.issubset(e2e["paths"])
+    assert {
+        ".agents/skills/run-local-quant-research/**",
+        ".claude/skills/run-local-quant-research",
+    }.issubset(layout["paths"])
+    assert {
+        ".agents/skills/run-local-quant-research/**",
+        ".claude/skills/run-local-quant-research",
+    }.issubset(layout["inputs"])
     assert unit["checkParallel"] is True
     assert e2e["checkParallel"] is False
     assert all(not item.startswith(".local/") for item in unit["inputs"])

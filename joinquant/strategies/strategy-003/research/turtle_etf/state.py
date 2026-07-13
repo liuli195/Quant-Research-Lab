@@ -14,6 +14,16 @@ OrderAction = Literal[
 ]
 
 
+def commission_fee(price: Decimal, quantity: int) -> Decimal:
+    normalized_price = _decimal(price, "commission_price", positive=True)
+    if not isinstance(quantity, int) or quantity <= 0:
+        raise ValueError("commission quantity must be positive")
+    return max(
+        Decimal("5"),
+        normalized_price * quantity * Decimal("0.000085"),
+    )
+
+
 def _decimal(value: object, field: str, *, positive: bool = False) -> Decimal:
     try:
         result = Decimal(str(value))
