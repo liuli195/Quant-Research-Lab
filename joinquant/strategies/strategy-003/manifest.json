@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "object": {
+    "kind": "strategy",
+    "local_id": "strategy-003",
+    "status": "active",
+    "name": "turtle_etf_local_research"
+  },
+  "source": {
+    "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=a22885a8d53f0712a681d684cff4fce8&backtest=0",
+    "aliases": [
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=a22885a8d53f0712a681d684cff4fce8&backtest=0"
+      }
+    ],
+    "observed_at": "2026-07-14T01:53:48+08:00"
+  },
+  "fence": {
+    "before_sha256": "02cbbf8bb5a3c8e0bd9ef8bdba1278aef5fc29f65fdb4e42bde6d1a3ac81ce7f",
+    "after_sha256": "02cbbf8bb5a3c8e0bd9ef8bdba1278aef5fc29f65fdb4e42bde6d1a3ac81ce7f"
+  },
+  "code": {
+    "path": "default_code.py",
+    "sha256": "02cbbf8bb5a3c8e0bd9ef8bdba1278aef5fc29f65fdb4e42bde6d1a3ac81ce7f",
+    "bytes": 34,
+    "versions": [
+      {
+        "path": "default_code.py",
+        "sha256": "02cbbf8bb5a3c8e0bd9ef8bdba1278aef5fc29f65fdb4e42bde6d1a3ac81ce7f",
+        "bytes": 34
+      }
+    ]
+  },
+  "datasets": {
+    "page_metadata": {
+      "required": true,
+      "status": "complete",
+      "rows": 0,
+      "verified_empty": true
+    }
+  },
+  "gate": {
+    "status": "pass",
+    "exceptions": []
+  }
+}

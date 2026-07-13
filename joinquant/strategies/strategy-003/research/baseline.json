@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "project_id": "strategy-003",
+  "universe": [
+    {
+      "security": "510300.XSHG",
+      "asset_group": "china_sync_equity"
+    },
+    {
+      "security": "512100.XSHG",
+      "asset_group": "china_sync_equity"
+    },
+    {
+      "security": "512480.XSHG",
+      "asset_group": "china_sync_equity"
+    },
+    {
+      "security": "159819.XSHE",
+      "asset_group": "china_sync_equity"
+    },
+    {
+      "security": "516160.XSHG",
+      "asset_group": "china_sync_equity"
+    },
+    {
+      "security": "513100.XSHG",
+      "asset_group": "cross_border_tech_equity"
+    },
+    {
+      "security": "513180.XSHG",
+      "asset_group": "cross_border_tech_equity"
+    },
+    {
+      "security": "515180.XSHG",
+      "asset_group": "china_dividend"
+    },
+    {
+      "security": "516080.XSHG",
+      "asset_group": "china_innovative_drug"
+    },
+    {
+      "security": "518880.XSHG",
+      "asset_group": "gold"
+    },
+    {
+      "security": "511010.XSHG",
+      "asset_group": "treasury_bond"
+    }
+  ],
+  "signal": {
+    "entry_days": 55,
+    "exit_days": 20,
+    "n_days": 20,
+    "add_step_n": 0.5,
+    "stop_n": 2.0
+  },
+  "risk": {
+    "risk_per_unit": 0.005,
+    "security_risk_cap": 0.0125,
+    "security_value_cap": 0.3,
+    "asset_group_risk_cap": 0.025,
+    "asset_group_value_cap": 0.5,
+    "portfolio_risk_cap": 0.05,
+    "portfolio_value_cap": 1.0,
+    "covariance_days": 60,
+    "target_volatility": 0.1,
+    "risk_reduction_target_volatility": 0.095,
+    "minimum_aligned_samples": 60
+  },
+  "market_data": {
+    "source": "joinquant",
+    "asset_type": "etf",
+    "frequency": "1d",
+    "fq": null,
+    "skip_paused": false,
+    "use_real_price": false,
+    "fields": [
+      "date",
+      "security",
+      "open",
+      "high",
+      "low",
+      "close",
+      "pre_close",
+      "volume",
+      "money",
+      "factor",
+      "paused",
+      "high_limit",
+      "low_limit"
+    ]
+  },
+  "joinquant_export": {
+    "api_source": "research_runtime_injected",
+    "apis": [
+      "get_price",
+      "write_file",
+      "read_file"
+    ],
+    "pandas_version": "0.23.4",
+    "csv_line_terminator_argument": "line_terminator",
+    "paused_source_dtype": "float64",
+    "paused_normalized_dtype": "bool",
+    "start_date_policy": "security_first_complete_trading_day",
+    "end_date_field": "snapshot_end_date",
+    "remote_readback_sha256_required": true,
+    "remote_cleanup_required": true
+  },
+  "execution": {
+    "order_priority": [
+      "full_exit",
+      "mandatory_risk_reduction",
+      "entry_or_addition"
+    ],
+    "allocation": "a1_uniform_completion",
+    "acceptance_fixture": {
+      "same_security_exit_cancels_buys": true,
+      "standard_request_limit": "one_u0",
+      "uniform_completion_ratio": true,
+      "capped_budget_redistribution": true,
+      "lot_rounding": "floor_then_largest_remainder",
+      "recheck_hard_caps_each_lot": true,
+      "tie_breaker": "security_code_ascending",
+      "input_order_invariant": true
+    }
+  }
+}

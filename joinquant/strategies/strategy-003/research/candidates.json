@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "baseline_config": "baseline.json",
+  "candidates": [
+    {
+      "id": "baseline",
+      "overrides": {}
+    },
+    {
+      "id": "entry-40",
+      "overrides": {
+        "signal.entry_days": 40
+      }
+    },
+    {
+      "id": "entry-60",
+      "overrides": {
+        "signal.entry_days": 60
+      }
+    },
+    {
+      "id": "stop-1.5n",
+      "overrides": {
+        "signal.stop_n": 1.5
+      }
+    },
+    {
+      "id": "stop-2.5n",
+      "overrides": {
+        "signal.stop_n": 2.5
+      }
+    },
+    {
+      "id": "covariance-120d",
+      "overrides": {
+        "risk.covariance_days": 120
+      }
+    },
+    {
+      "id": "covariance-ewma-30d",
+      "overrides": {
+        "risk.covariance_method": "ewma",
+        "risk.ewma_half_life_days": 30
+      }
+    }
+  ]
+}

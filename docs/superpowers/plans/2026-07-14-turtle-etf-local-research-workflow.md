@@ -110,7 +110,7 @@ tests/local_quant_research/
 - 产出：`baseline.json` 固定资产池、资产组、55/20 通道、20 日 N、0.5N 加仓、2N 止损、风险和价格口径。
 - 产出：`candidates.json` 恰好为冻结基线加六个单参数挑战。
 
-- [ ] **步骤 1：先写身份与冻结契约失败测试**
+- [x] **步骤 1：先写身份与冻结契约失败测试**
 
 ```python
 def test_strategy_003_is_real_and_unique(repo_root):
@@ -129,21 +129,21 @@ def test_candidates_are_frozen_single_factor_challenges(repo_root):
     assert all(len(item["overrides"]) <= 1 for item in items)
 ```
 
-- [ ] **步骤 2：运行测试并确认因 `strategy-003` 尚不存在而失败**
+- [x] **步骤 2：运行测试并确认因 `strategy-003` 尚不存在而失败**
 
 运行：`.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_strategy_identity.py tests\local_quant_research\test_contract_fixtures.py -q`
 
 预期：FAIL（失败），明确指出缺少 `strategy-003` 行或配置文件。
 
-- [ ] **步骤 3：通过已登录的聚宽页面创建真实策略空壳并同步身份**
+- [x] **步骤 3：通过已登录的聚宽页面创建真实策略空壳并同步身份**
 
 使用 Chrome（浏览器）现有登录状态创建名为 `turtle_etf_local_research` 的策略，仅保存最小 `initialize(context): pass` 代码，不创建回测。记录详情 URL，按现有 manifest（清单）结构写入远端身份、观察时间、代码路径和摘要；不得读取或保存 Cookie。
 
-- [ ] **步骤 4：写入精确冻结配置**
+- [x] **步骤 4：写入精确冻结配置**
 
 `baseline.json` 必须包含 11 个聚宽代码（`.XSHG`/`.XSHE`）、六个固定资产组、`entry_days=55`、`exit_days=20`、`n_days=20`、`risk_per_unit=0.005`、`add_step_n=0.5`、`stop_n=2.0`、`covariance_days=60`、`target_volatility=0.10`、`fq=null`、`use_real_price=false`。`candidates.json` 只覆盖对应单一字段。
 
-- [ ] **步骤 5：重跑定向测试并保护既有策略**
+- [x] **步骤 5：重跑定向测试并保护既有策略**
 
 运行：`.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_strategy_identity.py tests\local_quant_research\test_contract_fixtures.py -q`
 
