@@ -1,0 +1,6 @@
+{
+  "openspec_proposal": "openspec/changes/build-turtle-etf-local-research-workflow/proposal.md",
+  "openspec_design": "openspec/changes/build-turtle-etf-local-research-workflow/design.md",
+  "openspec_tasks": "openspec/changes/build-turtle-etf-local-research-workflow/tasks.md",
+  "openspec_delta_spec": "openspec/changes/build-turtle-etf-local-research-workflow/specs/local-quant-research-workflow/spec.md"
+}
