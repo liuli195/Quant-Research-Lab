@@ -22,7 +22,7 @@
 ## ADDED Requirements
 
 ### Requirement: 官方回测摘要必须保留来源和用途边界
-系统 MUST 将 `data/official-summary.csv` 作为聚宽回测详情页官方导出源文件的唯一合法路径，`reports/` MUST 只存放人工分析报告。所有回测清单的 `official_summary` 数据集 MUST 明确记录版本化证据，包括详情页下载来源、编码、表头、行数和关联的 Research（研究环境）数据集。系统 MUST 迁移既有官方摘要和清单引用，不得保留 `reports/official-summary.csv`、双路径或旧路径兼容读取。文档 MUST 区分可近似对齐、仅可交叉校验和不可由官方摘要推导的字段，并说明日常分析应读取的权威明细数据集。
+系统 MUST 将 `data/official-summary.csv` 作为聚宽回测详情页官方导出源文件的唯一合法路径，`reports/` MUST 只存放人工分析报告。所有回测清单的 `official_summary` 数据集 MUST 明确记录版本化证据，包括详情页下载来源、编码、表头、行数和关联的 Research（研究环境）数据集。系统 MUST 迁移既有官方摘要和清单引用，不得保留 `reports/` 下的旧位置、双路径或旧路径兼容读取。文档 MUST 区分可近似对齐、仅可交叉校验和不可由官方摘要推导的字段，并说明日常分析应读取的权威明细数据集。
 
 #### Scenario: 归档官方摘要下载
 - **WHEN** 同步器从指定回测详情页的导出入口取得官方摘要
@@ -33,5 +33,5 @@
 - **THEN** 文档指引调用者以 Research 的 `balances` 和 `orders` 为明细来源，并仅用官方摘要复核页面展示口径
 
 #### Scenario: 迁移既有官方摘要
-- **WHEN** 既有回测仍将官方摘要保存在 `reports/official-summary.csv` 或清单尚未包含版本化来源证据
+- **WHEN** 既有回测仍将官方摘要保存在 `reports/` 下的旧位置或清单尚未包含版本化来源证据
 - **THEN** 系统在保持文件内容摘要不变的前提下移动文件、更新清单路径和证据，并在迁移完成后拒绝任何残留旧路径

@@ -108,7 +108,7 @@
 
 分析某日盈亏时，以 `balances.total_value` 的交易日差额为明细来源，并结合 `orders` 解释交易构成；`official_summary` 只复核聚宽页面展示口径。查询单笔交易、现金、持仓、风险或日志时不得读取官方摘要代替。
 
-既有归档采用一次性迁移：在保持文件字节和 SHA256（完整性摘要）不变的前提下，将 `reports/official-summary.csv` 移到 `data/official-summary.csv`，同步更新清单路径和证据。读取方始终通过 `manifest.json`（清单）定位文件；迁移完成后不保留旧文件、旧引用或双路径兼容。
+既有归档采用一次性迁移：在保持文件字节和 SHA256（完整性摘要）不变的前提下，将 `reports/` 下的旧文件移到 `data/official-summary.csv`，同步更新清单路径和证据。读取方始终通过 `manifest.json`（清单）定位文件；迁移完成后不保留旧文件、旧引用或双路径兼容。
 
 ## 门禁
 

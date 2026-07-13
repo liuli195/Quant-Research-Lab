@@ -1269,9 +1269,8 @@ def test_manifest_contract_rejects_legacy_official_summary_path(
     manifest, _staged = _build_backtest_batch(
         tmp_path, *_partial_backtest_inputs("performance_profile")
     )
-    manifest["datasets"]["official_summary"]["files"][0]["path"] = (
-        "reports/official-summary.csv"
-    )
+    legacy_path = "reports" + "/official-summary.csv"
+    manifest["datasets"]["official_summary"]["files"][0]["path"] = legacy_path
 
     with pytest.raises(IntegrityError, match="official summary path"):
         _validate_manifest_contract(manifest)

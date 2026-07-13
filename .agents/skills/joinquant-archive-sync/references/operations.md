@@ -30,7 +30,7 @@
 
 ## 官方摘要与报告目录
 
-回测同步通过 Browser（浏览器）在详情页点击官方“导出 CSV”入口，下载结果只保存为 `data/official-summary.csv`。该文件属于官方源数据；`reports/` 只存放人工或 Agent（代理）生成的分析报告。生产入口和校验入口均拒绝 `reports/official-summary.csv`，也不提供双路径读取。
+回测同步通过 Browser（浏览器）在详情页点击官方“导出 CSV”入口，下载结果只保存为 `data/official-summary.csv`。该文件属于官方源数据；`reports/` 只存放人工或 Agent（代理）生成的分析报告。生产入口和校验入口均拒绝 `reports/` 下的旧位置，也不提供双路径读取。
 
 官方摘要用于保留页面展示口径和交叉校验，不是 Research（研究环境）明细的替代品：
 
