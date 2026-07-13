@@ -2,5 +2,7 @@
   "openspec_proposal": "openspec/changes/build-turtle-etf-local-research-workflow/proposal.md",
   "openspec_design": "openspec/changes/build-turtle-etf-local-research-workflow/design.md",
   "openspec_tasks": "openspec/changes/build-turtle-etf-local-research-workflow/tasks.md",
-  "openspec_delta_spec": "openspec/changes/build-turtle-etf-local-research-workflow/specs/local-quant-research-workflow/spec.md"
+  "openspec_delta_spec": "openspec/changes/build-turtle-etf-local-research-workflow/specs/local-quant-research-workflow/spec.md",
+  "handoff_context": "openspec/changes/build-turtle-etf-local-research-workflow/.comet/handoff/spec-context.json",
+  "handoff_markdown": "openspec/changes/build-turtle-etf-local-research-workflow/.comet/handoff/spec-context.md"
 }

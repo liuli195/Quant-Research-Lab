@@ -1,0 +1,35 @@
+{
+  "change": "build-turtle-etf-local-research-workflow",
+  "phase": "design",
+  "mode": "beta",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "dc23e3d037dbdd7bda188f0a24bdb5d9ef6639ef9ec33a1ce0a5a9fda3f39284",
+  "files": [
+    {
+      "path": "openspec/changes/build-turtle-etf-local-research-workflow/proposal.md",
+      "sha256": "91408dcb677019054822e9efec483b54ed59b5a0cb2e5fd4fdff36f6be8b7423",
+      "role": "supporting"
+    },
+    {
+      "path": "openspec/changes/build-turtle-etf-local-research-workflow/design.md",
+      "sha256": "2dc2cfc8ae02fd5861d2bcad459a3d51d289d1c245614ea040cdbfcb523f084d",
+      "role": "supporting"
+    },
+    {
+      "path": "openspec/changes/build-turtle-etf-local-research-workflow/tasks.md",
+      "sha256": "08045cfc3dbf20e113f1b24b0ff4357652d85757e28606319bd2d8e1532c8fcc",
+      "role": "supporting"
+    },
+    {
+      "path": "openspec/changes/build-turtle-etf-local-research-workflow/specs/local-quant-research-workflow/spec.md",
+      "sha256": "95f938a53189728ff9de011d50ef7eac48f849b4661e5c18150570b3ae144342",
+      "role": "spec"
+    },
+    {
+      "path": "openspec/changes/build-turtle-etf-local-research-workflow/specs/turtle-etf-local-research/spec.md",
+      "sha256": "41bacd2659343a861d0c25f8cd77bcfd021892d3aa2e61e635a56410fcf53780",
+      "role": "spec"
+    }
+  ]
+}
