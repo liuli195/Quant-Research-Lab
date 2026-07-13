@@ -442,31 +442,31 @@ def allocate_a1(candidates: Sequence[BuyRequest], constraints: PortfolioConstrai
 def process_day(day: TradingDay, state: PortfolioState, market: DailyMarket) -> DayResult: ...
 ```
 
-- [ ] **步骤 1：写 A1 公平分配失败测试**
+- [x] **步骤 1：写 A1 公平分配失败测试**
 
 测试所有可行候选先按同一完成比例缩放；自身或资产组上限释放的预算可流向其他候选；先向下取整手，再按小数余额降序逐手补分；完全同分按证券代码升序；每补一手重查全部硬门槛。
 
-- [ ] **步骤 2：写输入顺序不变量和约束失败测试**
+- [x] **步骤 2：写输入顺序不变量和约束失败测试**
 
 对同一候选集合的全部排列运行 `allocate_a1`，断言分配摘要相同、现金非负、单 ETF/资产组/计划风险/目标波动率均不突破。
 
-- [ ] **步骤 3：写每日完整顺序失败测试**
+- [x] **步骤 3：写每日完整顺序失败测试**
 
 固定场景同时产生退出、强制减仓、新建仓和加仓，断言顺序严格为“全仓退出 → 强制风险减仓 → 同级新建仓/加仓”；同一 ETF 退出取消当日全部买入；停牌、跳空、涨跌停和不可成交不虚构成交。
 
-- [ ] **步骤 4：运行失败测试**
+- [x] **步骤 4：运行失败测试**
 
 运行：`.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_turtle_allocation.py tests\local_quant_research\test_turtle_e2e.py -q`
 
 预期：FAIL，分配和执行模块尚未实现。
 
-- [ ] **步骤 5：实现最小分配和日状态机并通过测试**
+- [x] **步骤 5：实现最小分配和日状态机并通过测试**
 
 运行：`.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_turtle_allocation.py tests\local_quant_research\test_turtle_e2e.py -q`
 
 预期：PASS，重复运行产生相同审计摘要。
 
-- [ ] **步骤 6：提交任务 7**
+- [x] **步骤 6：提交任务 7**
 
 ```powershell
 git add joinquant/strategies/strategy-003/research/turtle_etf/allocation.py joinquant/strategies/strategy-003/research/turtle_etf/execution.py tests/local_quant_research/test_turtle_allocation.py tests/local_quant_research/test_turtle_e2e.py
