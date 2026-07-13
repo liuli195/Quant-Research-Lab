@@ -26,7 +26,7 @@ from turtle_etf.risk import (  # noqa: E402
     RiskInputs,
     evaluate_risk,
 )
-from turtle_etf.state import OrderIntent  # noqa: E402
+from turtle_etf.state import Batch, OrderIntent, TrendState  # noqa: E402
 
 
 def _intent(
@@ -249,3 +249,77 @@ def test_a1_can_accept_diversifying_pair_when_each_single_lot_exceeds_target_vol
     result = allocate_a1(requests, constraints)
 
     assert dict(result.quantities) == {"A": 100, "B": 100}
+
+
+def test_a1_releases_hard_block_before_rechecking_joint_stop_risk_reduction() -> None:
+    positions = tuple(
+        TrendState(
+            security=security,
+            asset_group="shared",
+            signal_n=Decimal("1"),
+            standard_unit=100,
+            initial_fill_price=Decimal("12"),
+            batches=(Batch("2026-01-02", 100, Decimal("12")),),
+            common_stop=Decimal("10"),
+        )
+        for security in ("A", "B")
+    )
+    requests = (
+        *(
+            BuyRequest(
+                OrderIntent(
+                    security=security,
+                    asset_group="shared",
+                    action="addition",
+                    quantity=100,
+                    expected_price=Decimal("12"),
+                    signal_date="2026-01-05",
+                    execution_date="2026-01-06",
+                    signal_n=Decimal("1"),
+                    standard_unit=100,
+                    common_stop_after=Decimal("11.5"),
+                    reason="addition_breakout",
+                )
+            )
+            for security in ("A", "B")
+        ),
+        BuyRequest(_intent("C", quantity=200, group="other")),
+    )
+    inputs = _inputs(("A", "B", "C"), group_value_cap="1")
+    inputs = RiskInputs(
+        **{
+            **inputs.__dict__,
+            "median_turnover_20d": {
+                "A": Decimal("1000000000"),
+                "B": Decimal("1000000000"),
+                "C": Decimal("1"),
+            },
+            "asset_group_risk_cap": Decimal("0.025"),
+        }
+    )
+    constraints = PortfolioConstraints(
+        state=PortfolioState(
+            equity=Decimal("10000"),
+            cash=Decimal("10000"),
+            positions=positions,
+        ),
+        risk_inputs=inputs,
+    )
+
+    for request in requests[:2]:
+        decision = evaluate_risk(
+            (request.intent,),
+            constraints.state,
+            constraints.risk_inputs,
+        )
+        assert decision.reason_codes == ("group_risk_cap",)
+    pair_decision = evaluate_risk(
+        tuple(request.intent for request in requests[:2]),
+        constraints.state,
+        constraints.risk_inputs,
+    )
+    assert pair_decision.reason_codes == ()
+
+    result = allocate_a1(requests, constraints)
+
+    assert dict(result.quantities) == {"A": 100, "B": 100, "C": 0}

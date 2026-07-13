@@ -7,7 +7,7 @@
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/allocation.py",
-      "sha256": "fa4f8a3dde267e73cc04ad0aec9d968b6e908148edf29ea928939ed71943393a"
+      "sha256": "7f075e23ad067be83bd7218e4fe8f30a9026307959001582500a6b96558bf29d"
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/cli.py",

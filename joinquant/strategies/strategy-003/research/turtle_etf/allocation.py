@@ -11,6 +11,16 @@ from .risk import PortfolioState, RiskInputs, evaluate_risk
 from .state import OrderIntent, commission_fee
 
 
+_NON_MONOTONIC_REASONS = frozenset(
+    {
+        "security_risk_cap",
+        "group_risk_cap",
+        "portfolio_risk_cap",
+        "target_volatility",
+    }
+)
+
+
 @dataclass(frozen=True)
 class BuyRequest:
     intent: OrderIntent
@@ -248,7 +258,7 @@ def allocate_a1(
             next_quantities = dict(quantities)
             next_quantities[security] += lot
             reasons = set(_reason_codes(ordered, next_quantities, constraints))
-            if reasons - {"target_volatility"}:
+            if reasons - _NON_MONOTONIC_REASONS:
                 blocked.add(security)
         if blocked:
             active.difference_update(blocked)
