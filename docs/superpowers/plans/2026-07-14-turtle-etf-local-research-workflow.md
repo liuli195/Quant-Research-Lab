@@ -340,31 +340,31 @@ def compute_run_id(snapshot_digest: str, config_digest: str, code_digest: str) -
 def run_project(config_path: Path, *, repo_root: Path) -> RunResult: ...
 ```
 
-- [ ] **步骤 1：写不安全配置和三态失败测试**
+- [x] **步骤 1：写不安全配置和三态失败测试**
 
 覆盖 Shell（命令解释器）字符串、仓库外路径、缺少 `snapshot_id`、缺少必需输出、未知状态、系统 Python、隐式安装和凭证字段。缺失声明输入必须在项目子进程前返回 `evidence_insufficient`。
 
-- [ ] **步骤 2：写 `run_id`、幂等和原子固化失败测试**
+- [x] **步骤 2：写 `run_id`、幂等和原子固化失败测试**
 
 测试相同输入复用、快照/配置/代码任一变化产生新 ID、相同 ID 输出变化返回 `failed`、失败尝试保留紧凑诊断但不创建完成目录、成功目录恰好位于 `.local/quant-research/<project_id>/<run_id>/`。
 
-- [ ] **步骤 3：运行失败测试**
+- [x] **步骤 3：运行失败测试**
 
 运行：`.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_runner.py tests\local_quant_research\test_evidence.py -q`
 
 预期：FAIL，通用运行器不存在。
 
-- [ ] **步骤 4：实现固定运行阶段**
+- [x] **步骤 4：实现固定运行阶段**
 
 阶段严格为：配置和路径校验 → 快照与 CSV 摘要 → 内存 DuckDB 同源校验 → 同文件系统暂存目录 → `subprocess.run([...], shell=False)` 调用项目适配器 → 输出结构和摘要 → 原子固化唯一状态。
 
-- [ ] **步骤 5：验证安全边界和三态矩阵**
+- [x] **步骤 5：验证安全边界和三态矩阵**
 
 运行：`.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_runner.py tests\local_quant_research\test_evidence.py -q`
 
 预期：PASS；测试日志不含环境凭证值，项目适配器不能写出暂存目录。
 
-- [ ] **步骤 6：提交任务 5**
+- [x] **步骤 6：提交任务 5**
 
 ```powershell
 git add scripts/research/local_quant_research tests/local_quant_research/test_runner.py tests/local_quant_research/test_evidence.py

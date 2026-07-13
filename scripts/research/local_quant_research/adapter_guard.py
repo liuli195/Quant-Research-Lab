@@ -1,0 +1,108 @@
+from __future__ import annotations
+
+import argparse
+import os
+import runpy
+import sys
+from pathlib import Path
+from typing import Sequence
+
+
+_WRITE_FLAGS = (
+    os.O_WRONLY
+    | os.O_RDWR
+    | os.O_APPEND
+    | os.O_CREAT
+    | os.O_TRUNC
+    | getattr(os, "O_TEMPORARY", 0)
+)
+_SINGLE_PATH_MUTATIONS = {
+    "os.remove",
+    "os.rmdir",
+    "os.mkdir",
+    "os.chmod",
+    "os.chown",
+    "os.truncate",
+    "os.utime",
+}
+_TWO_PATH_MUTATIONS = {"os.rename", "os.replace", "os.link", "os.symlink"}
+_PROCESS_EVENTS = {
+    "subprocess.Popen",
+    "os.system",
+    "os.posix_spawn",
+    "os.spawn",
+    "os.startfile",
+}
+
+
+def _path_from_event(value: object) -> Path | None:
+    if isinstance(value, int):
+        return None
+    try:
+        return Path(os.fsdecode(os.fspath(value))).resolve()
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def _inside(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _require_staging_path(value: object, output_root: Path) -> None:
+    path = _path_from_event(value)
+    if path is not None and not _inside(path, output_root):
+        raise PermissionError("adapter write outside staging is forbidden")
+
+
+def _open_is_write(args: Sequence[object]) -> bool:
+    mode = args[1] if len(args) > 1 else None
+    flags = args[2] if len(args) > 2 else 0
+    mode_writes = isinstance(mode, str) and any(marker in mode for marker in "wax+")
+    flag_writes = isinstance(flags, int) and bool(flags & _WRITE_FLAGS)
+    return mode_writes or flag_writes
+
+
+def install_write_guard(output_dir: Path) -> None:
+    output_root = Path(output_dir).resolve()
+
+    def audit(event: str, args: tuple[object, ...]) -> None:
+        if event == "open" and args and _open_is_write(args):
+            _require_staging_path(args[0], output_root)
+        elif event in _SINGLE_PATH_MUTATIONS and args:
+            _require_staging_path(args[0], output_root)
+        elif event in _TWO_PATH_MUTATIONS and len(args) >= 2:
+            _require_staging_path(args[0], output_root)
+            _require_staging_path(args[1], output_root)
+        elif event in _PROCESS_EVENTS:
+            raise PermissionError("adapter child processes are forbidden")
+
+    sys.addaudithook(audit)
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--staging-root", type=Path, required=True)
+    parser.add_argument("--entry", type=Path, required=True)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args, adapter_args = _parser().parse_known_args(argv)
+    if adapter_args and adapter_args[0] == "--":
+        adapter_args = adapter_args[1:]
+    output_dir = args.staging_root.resolve()
+    entry = args.entry.resolve()
+    if not output_dir.is_dir() or not entry.is_file():
+        return 2
+    install_write_guard(output_dir)
+    sys.argv = [str(entry), *adapter_args]
+    runpy.run_path(str(entry), run_name="__main__")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
