@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "source_id": "jqdata",
+      "url": "https://www.joinquant.com/help/api/help?name=JQData",
+      "output": "JQData.md",
+      "selector": ".js-app",
+      "min_chars": 5000
+    },
+    {
+      "source_id": "platform-api",
+      "url": "https://www.joinquant.com/help/api/help?name=api",
+      "output": "API.md",
+      "selector": ".js-app",
+      "min_chars": 2000
+    }
+  ]
+}

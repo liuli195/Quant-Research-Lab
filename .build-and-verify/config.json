@@ -47,6 +47,32 @@
         "pytestXdistWorkers": 4
       },
       {
+        "id": "verify.docs-sync",
+        "command": [
+          ".\\.venv\\Scripts\\python.exe",
+          "-m",
+          "pytest",
+          "tests\\joinquant_docs_sync\\test_cli.py"
+        ],
+        "paths": [
+          ".agents/skills/joinquant-docs-sync/**",
+          ".claude/skills/joinquant-docs-sync",
+          "requirements*.txt",
+          "tests/conftest.py",
+          "tests/joinquant_docs_sync/test_cli.py"
+        ],
+        "inputs": [
+          ".agents/skills/joinquant-docs-sync/**",
+          ".claude/skills/joinquant-docs-sync",
+          "requirements.txt",
+          "requirements-dev.txt",
+          "tests/conftest.py",
+          "tests/joinquant_docs_sync/test_cli.py"
+        ],
+        "checkParallel": true,
+        "pytestXdistWorkers": 4
+      },
+      {
         "id": "verify.archive",
         "command": [
           ".\\.venv\\Scripts\\python.exe",

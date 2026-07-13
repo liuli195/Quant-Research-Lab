@@ -1,0 +1,4 @@
+interface:
+  display_name: "聚宽文档同步"
+  short_description: "安全同步聚宽官方文档并生成可核验的 API 接口索引"
+  default_prompt: "使用 $joinquant-docs-sync 预览聚宽官方文档变化并生成 API（接口）索引。"
