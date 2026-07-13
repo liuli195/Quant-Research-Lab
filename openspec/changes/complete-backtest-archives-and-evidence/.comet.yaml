@@ -1,6 +1,6 @@
 workflow: tweak
 language: zh-CN
-phase: verify
+phase: archive
 context_compression: beta
 build_mode: direct
 build_pause: null
@@ -13,11 +13,11 @@ auto_transition: true
 base_ref: 192a910de1e6d931a82879640d0bd376e100f1ea
 design_doc: null
 plan: null
-verify_result: pending
+verify_result: pass
 verification_report: docs/superpowers/reports/2026-07-13-complete-backtest-archives-and-evidence-verify.md
-branch_status: pending
+branch_status: handled
 created_at: 2026-07-13
-verified_at: null
+verified_at: 2026-07-13
 archived: false
 direct_override: null
 handoff_context: null
