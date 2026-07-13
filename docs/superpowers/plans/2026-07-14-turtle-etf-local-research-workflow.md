@@ -536,25 +536,25 @@ git commit -m "功能：生成海龟ETF本地研究报告与候选包"
 - 产出：从 Skill 文档公开命令启动的完整离线 E2E（端到端）。
 - 产出：不加载 `strategy-003`、海龟参数或海龟资产的最小项目 E2E。
 
-- [ ] **步骤 1：写 Skill 用户入口失败测试**
+- [x] **步骤 1：写 Skill 用户入口失败测试**
 
 测试从 `SKILL.md` 提取公开命令，使用临时 `.local` 根目录和固定日线夹具执行：批次 → 快照 → CSV 校验 → 内存 DuckDB → 通用运行器 → 海龟项目 → 审计/三类输出 → 不可变证据。
 
-- [ ] **步骤 2：写非海龟前向失败测试**
+- [x] **步骤 2：写非海龟前向失败测试**
 
 在临时目录生成只输出 `result.json` 的最小项目适配器，环境中不加入 `joinquant/strategies/strategy-003/research`；断言同一行情中心和运行器可返回 `complete`，通用源码中不出现 `turtle`、`55日` 或 11 个 ETF 代码。
 
-- [ ] **步骤 3：运行失败测试**
+- [x] **步骤 3：运行失败测试**
 
 运行：`.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_generic_e2e.py tests\local_quant_research\test_turtle_e2e.py tests\local_quant_research\test_skill_contract.py -q`
 
 预期：FAIL，公开入口和验证映射尚未贯通。
 
-- [ ] **步骤 4：补齐 CLI 入口与 Build and Verify（构建与验证）检查**
+- [x] **步骤 4：补齐 CLI 入口与 Build and Verify（构建与验证）检查**
 
 在 `.build-and-verify/config.json` 新增 `verify.local-quant-research-unit` 和 `verify.local-quant-research-e2e`，路径覆盖新 Skill、共享行情脚本、通用运行器、`strategy-003/research` 和测试，但 `inputs` 不得包含 `.local/**`。
 
-- [ ] **步骤 5：运行离线完整回归**
+- [x] **步骤 5：运行离线完整回归**
 
 运行：`.\.venv\Scripts\python.exe -m pytest tests\local_quant_research -q`
 

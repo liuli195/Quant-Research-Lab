@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
+import shutil
+import subprocess
 import sys
+import uuid
 from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
@@ -235,6 +239,28 @@ UNIVERSE = (
 )
 
 
+def _remove_empty_test_roots(repo_root: Path, market_root: Path) -> None:
+    for path in (market_root / "snapshots", market_root / "batches"):
+        try:
+            path.rmdir()
+        except OSError:
+            pass
+    if not (market_root / "snapshots").exists() and not (market_root / "batches").exists():
+        try:
+            (market_root / ".market-data.lock").unlink(missing_ok=True)
+            market_root.rmdir()
+        except OSError:
+            pass
+    for path in (
+        repo_root / ".local/e2e-tests",
+        repo_root / ".local/quant-research",
+    ):
+        try:
+            path.rmdir()
+        except OSError:
+            pass
+
+
 def _business_dates(start: date, count: int) -> list[str]:
     values: list[str] = []
     current = start
@@ -245,7 +271,12 @@ def _business_dates(start: date, count: int) -> list[str]:
     return values
 
 
-def _research_snapshot(tmp_path: Path):
+def _research_snapshot(
+    tmp_path: Path,
+    *,
+    market_root: Path | None = None,
+    export_code_sha256: str = "a" * 64,
+):
     dates = _business_dates(date(2025, 1, 2), 90)
     csv_path = tmp_path / "daily.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
@@ -286,7 +317,7 @@ def _research_snapshot(tmp_path: Path):
                     }
                 )
                 previous[security] = close
-    market_root = tmp_path / "market-data"
+    market_root = tmp_path / "market-data" if market_root is None else market_root
     batch = import_batch(
         csv_path=csv_path,
         manifest={
@@ -296,7 +327,7 @@ def _research_snapshot(tmp_path: Path):
             "frequency": "1d",
             "fields": list(MARKET_DATA_FIELDS),
             "price_semantics": {"fq": None, "skip_paused": False},
-            "export_code_sha256": "a" * 64,
+            "export_code_sha256": export_code_sha256,
         },
         root=market_root,
     )
@@ -443,3 +474,90 @@ def test_project_run_config_references_snapshot_and_disables_biased_optimizer(
     assert all(not path.lower().endswith(".csv") for path in run_config["declared_inputs"])
     assert baseline["research"]["vibe_optimizer"]["enabled"] is False
     assert baseline["research"]["vibe_optimizer"]["reason"]
+
+
+def test_skill_public_command_runs_complete_turtle_workflow(
+    tmp_path: Path,
+    repo_root: Path,
+) -> None:
+    token = uuid.uuid4().hex
+    project_id = f"strategy-003-e2e-{token[:12]}"
+    temp_project = repo_root / ".local/e2e-tests" / token
+    market_root = repo_root / ".local/market-data"
+    output_project = repo_root / ".local/quant-research" / project_id
+    export_digest = hashlib.sha256(token.encode("ascii")).hexdigest()
+    snapshot = None
+    batch_ids: list[str] = []
+    try:
+        snapshot, _ = _research_snapshot(
+            tmp_path,
+            market_root=market_root,
+            export_code_sha256=export_digest,
+        )
+        snapshot_document = json.loads(snapshot.path.read_text(encoding="utf-8"))
+        batch_ids = list(snapshot_document["batch_ids"])
+        run_config = json.loads(
+            (
+                repo_root
+                / "joinquant/strategies/strategy-003/research/project-run.json"
+            ).read_text(encoding="utf-8")
+        )
+        run_config.update(
+            project_id=project_id,
+            snapshot_id=snapshot.snapshot_id,
+            snapshot_requirements=snapshot_document["selection"],
+        )
+        temp_project.mkdir(parents=True)
+        config_path = temp_project / "run.json"
+        config_path.write_text(
+            json.dumps(run_config, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        skill = (
+            repo_root / ".agents/skills/run-local-quant-research/SKILL.md"
+        ).read_text(encoding="utf-8")
+        command_line = next(
+            line.strip()
+            for line in skill.splitlines()
+            if "local_quant_research\\cli.py run --config <path>" in line
+        )
+        relative_config = config_path.relative_to(repo_root).as_posix()
+        command = command_line.replace("<path>", relative_config).split()
+
+        completed = subprocess.run(
+            command,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            shell=False,
+            check=False,
+            timeout=120,
+        )
+
+        assert completed.returncode == 0, completed.stderr + completed.stdout
+        result = json.loads(completed.stdout)
+        assert result["status"] == "complete"
+        run_path = Path(result["run_path"])
+        assert run_path.parent == output_project
+        manifest = json.loads(
+            (run_path / "run-manifest.json").read_text(encoding="utf-8")
+        )
+        validate_project_outputs(
+            run_path,
+            RunIdentity(
+                run_id=result["run_id"],
+                snapshot_id=snapshot.snapshot_id,
+                code_sha256=manifest["inputs"]["code_sha256"],
+                config_sha256=manifest["inputs"]["config_sha256"],
+            ),
+        )
+        assert not list(output_project.glob(".*.tmp"))
+        assert not list(output_project.glob(".*.inputs"))
+    finally:
+        shutil.rmtree(output_project, ignore_errors=True)
+        shutil.rmtree(temp_project, ignore_errors=True)
+        if snapshot is not None:
+            snapshot.path.unlink(missing_ok=True)
+        for batch_id in batch_ids:
+            shutil.rmtree(market_root / "batches" / batch_id, ignore_errors=True)
+        _remove_empty_test_roots(repo_root, market_root)

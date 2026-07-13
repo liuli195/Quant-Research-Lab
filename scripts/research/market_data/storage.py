@@ -396,7 +396,7 @@ def _atomic_directory_write(
         for name, content in files.items():
             (temporary / name).write_bytes(content)
         try:
-            os.replace(temporary, target)
+            _publish_directory(temporary, target)
         except OSError:
             if not target.exists():
                 raise
@@ -404,6 +404,19 @@ def _atomic_directory_write(
     finally:
         if temporary.exists():
             shutil.rmtree(temporary)
+
+
+def _publish_directory(source: Path, target: Path) -> None:
+    """Atomically publish once a transient Windows directory lock is released."""
+    for delay_seconds in (0.02, 0.05, 0.1, 0.2, 0.4):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if target.exists() or not source.exists():
+                raise
+            time.sleep(delay_seconds)
+    os.replace(source, target)
 
 
 def _atomic_file_write(target: Path, content: bytes) -> None:

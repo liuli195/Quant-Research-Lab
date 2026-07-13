@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -75,6 +76,19 @@ class InputIntegrityError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+def _publish_directory(source: Path, target: Path) -> None:
+    """Atomically publish once a transient Windows directory lock is released."""
+    for delay_seconds in (0.02, 0.05, 0.1, 0.2, 0.4):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if target.exists() or not source.exists():
+                raise
+            time.sleep(delay_seconds)
+    os.replace(source, target)
 
 
 @dataclass(frozen=True)
@@ -1005,7 +1019,7 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
     published = False
     try:
         write_manifest(staging / "run-manifest.json", manifest)
-        os.replace(staging, run_dir)
+        _publish_directory(staging, run_dir)
         published = True
         validate_complete_run(
             run_dir,

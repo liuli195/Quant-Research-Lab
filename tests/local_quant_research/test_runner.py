@@ -437,6 +437,35 @@ def test_failed_post_publish_validation_removes_false_complete_directory(
     assert not any(path.is_dir() and len(path.name) == 64 for path in project_root.iterdir())
 
 
+def test_transient_directory_publish_lock_is_retried_without_weakening_validation(
+    repo_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import runner
+
+    fake_root, config_path, _ = _build_repo(tmp_path, repo_root)
+    monkeypatch.setattr(subprocess, "run", _successful_process())
+    real_replace = runner.os.replace
+    calls = 0
+
+    def transient_replace(source: Path, target: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise PermissionError(13, "directory is temporarily in use", str(source))
+        real_replace(source, target)
+
+    monkeypatch.setattr(runner.os, "replace", transient_replace)
+
+    result = run_project(config_path, repo_root=fake_root)
+
+    assert result.status == "complete"
+    assert calls == 2
+    assert result.run_path is not None
+    assert (result.run_path / "run-manifest.json").is_file()
+
+
 @pytest.mark.parametrize("project_status", ["failed", "mystery"])
 def test_project_failure_or_unknown_status_records_attempt_not_complete_run(
     project_status: str,

@@ -146,6 +146,36 @@ def test_import_batch_is_immutable_complete_and_deduplicated(
     }
 
 
+def test_import_batch_retries_transient_directory_publish_lock(
+    repo_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.market_data import storage
+
+    source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
+    real_replace = storage.os.replace
+    calls = 0
+
+    def transient_replace(source_path: Path, target_path: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise PermissionError(
+                13,
+                "directory is temporarily in use",
+                str(source_path),
+            )
+        real_replace(source_path, target_path)
+
+    monkeypatch.setattr(storage.os, "replace", transient_replace)
+
+    batch = import_batch(csv_path=source, manifest=_manifest(), root=tmp_path)
+
+    assert calls == 2
+    assert (tmp_path / "batches" / batch.batch_id / "manifest.json").is_file()
+
+
 def test_conflicting_overlap_is_rejected_without_changing_old_batch(
     repo_root: Path,
     tmp_path: Path,
