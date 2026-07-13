@@ -288,31 +288,31 @@ def render_export_program(request: ExportRequest) -> str: ...
 def verify_transfer(*, local_file: Path, remote_sha256: str, remote_cleaned: bool) -> TransferEvidence: ...
 ```
 
-- [ ] **步骤 1：写 CSV 与内存视图一致性失败测试**
+- [x] **步骤 1：写 CSV 与内存视图一致性失败测试**
 
 覆盖固定 13 字段、`date/security` 唯一键、排序、空值、`paused` 数值到布尔规范化、行差异和内容摘要差异；使用 `monkeypatch` 断言连接字符串恰好为 `:memory:`。
 
-- [ ] **步骤 2：写聚宽导出程序失败测试**
+- [x] **步骤 2：写聚宽导出程序失败测试**
 
 断言生成程序包含 `get_price(..., fq=None, skip_paused=False)`、13 个字段、`line_terminator='\n'`、远端回读 SHA256 和清理入口；断言没有 `from jqdata import get_price`，没有凭证字面量。
 
-- [ ] **步骤 3：运行失败测试**
+- [x] **步骤 3：运行失败测试**
 
 运行：`.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_market_data_query.py tests\local_quant_research\test_joinquant_export.py -q`
 
 预期：FAIL，查询和导出模块尚未实现。
 
-- [ ] **步骤 4：实现最小查询层和可渲染导出程序**
+- [x] **步骤 4：实现最小查询层和可渲染导出程序**
 
 查询层从快照引用的一个或多个权威 CSV 建内存视图，返回只读 `SnapshotView`；导出模块只接受 `ExportRequest(securities, fields, snapshot_end_date, fq=None, skip_paused=False)`，不内置资产池或交易规则。
 
-- [ ] **步骤 5：验证失败门禁和无持久数据库**
+- [x] **步骤 5：验证失败门禁和无持久数据库**
 
 运行：`.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_market_data_query.py tests\local_quant_research\test_joinquant_export.py -q`
 
 预期：PASS；摘要不一致或 `remote_cleaned=False` 返回 `failed`；测试树中不存在 `*.duckdb`。
 
-- [ ] **步骤 6：提交任务 4**
+- [x] **步骤 6：提交任务 4**
 
 ```powershell
 git add scripts/research/market_data/query.py scripts/research/market_data/joinquant_export.py tests/local_quant_research/test_market_data_query.py tests/local_quant_research/test_joinquant_export.py
