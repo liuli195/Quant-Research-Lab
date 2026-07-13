@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -211,6 +212,7 @@ def test_failed_source_preserves_last_complete_version(tmp_path: Path) -> None:
 
 def test_sync_supports_output_on_repository_drive() -> None:
     repo_local = SCRIPT.parents[4] / ".local"
+    repo_local.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(
         prefix="joinquant-docs-sync-test-", dir=repo_local
     ) as temp:
@@ -229,6 +231,39 @@ def test_sync_supports_output_on_repository_drive() -> None:
         assert result.returncode == 0, result.stderr or result.stdout
         assert json.loads(result.stdout)["status"] == "ok"
         assert (output / "manifest.json").is_file()
+
+
+def test_cli_forces_utf8_output_under_legacy_windows_encoding(
+    tmp_path: Path,
+) -> None:
+    sources, fixture_dir, output = _prepare_fixture(tmp_path)
+    payload = json.loads(sources.read_text(encoding="utf-8"))
+    payload["sources"][0]["required_markers"] = ["末页接口"]
+    sources.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "cp1252"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "preview",
+            "--sources",
+            str(sources),
+            "--output",
+            str(output),
+            "--html-dir",
+            str(fixture_dir),
+        ],
+        check=False,
+        capture_output=True,
+        env=env,
+    )
+
+    assert result.returncode == 2
+    error = json.loads(result.stdout.decode("utf-8"))
+    assert error["status"] == "failed"
+    assert "缺少完整性标记" in error["error"]
 
 
 def test_sync_normalizes_inline_markdown_fences(tmp_path: Path) -> None:
