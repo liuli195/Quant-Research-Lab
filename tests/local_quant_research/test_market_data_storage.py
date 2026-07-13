@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import multiprocessing
+import queue
 from pathlib import Path
 
 import pytest
@@ -10,6 +12,7 @@ from scripts.research.market_data.contracts import SnapshotSelection
 from scripts.research.market_data.storage import (
     MarketDataConflict,
     MarketDataIntegrityError,
+    _exclusive_storage_lock,
     create_snapshot,
     import_batch,
     validate_snapshot,
@@ -33,8 +36,39 @@ FIELDS = (
 )
 
 
+def _import_in_process(
+    csv_path: str,
+    manifest: dict[str, object],
+    root: str,
+    ready: object,
+    start: object,
+    results: object,
+) -> None:
+    ready.set()
+    start.wait()
+    try:
+        record = import_batch(
+            csv_path=Path(csv_path),
+            manifest=manifest,
+            root=Path(root),
+        )
+        results.put(("ok", record.batch_id))
+    except Exception as exc:  # pragma: no cover - returned to the parent assertion
+        results.put(("error", type(exc).__name__, str(exc)))
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _canonical_digest(value: object) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _manifest() -> dict[str, object]:
@@ -51,7 +85,7 @@ def _manifest() -> dict[str, object]:
 
 def _selection(*securities: str) -> SnapshotSelection:
     return SnapshotSelection(
-        source="joinquant",
+        source={"name": "joinquant", "environment": "research"},
         asset_type="etf",
         frequency="1d",
         securities=securities,
@@ -211,3 +245,235 @@ def test_snapshot_validation_rejects_tampered_authoritative_csv(
 
     with pytest.raises(MarketDataIntegrityError, match="SHA256"):
         validate_snapshot(snapshot.snapshot_id, root=tmp_path)
+
+
+def test_tampered_batch_identity_cannot_be_repackaged_as_a_new_snapshot(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests" / "local_quant_research" / "fixtures" / "daily-bars.csv"
+    batch = import_batch(csv_path=source, manifest=_manifest(), root=tmp_path)
+    manifest_path = tmp_path / "batches" / batch.batch_id / "manifest.json"
+    document = json.loads(manifest_path.read_text(encoding="utf-8"))
+    document["source"]["environment"] = "tampered"
+    manifest_path.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(MarketDataIntegrityError, match="batch identity"):
+        create_snapshot(
+            batch_ids=[batch.batch_id],
+            selection=_selection("000001.XSHG", "000002.XSHE"),
+            root=tmp_path,
+        )
+
+
+def test_tampered_validation_evidence_cannot_be_reused(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests" / "local_quant_research" / "fixtures" / "daily-bars.csv"
+    batch = import_batch(csv_path=source, manifest=_manifest(), root=tmp_path)
+    validation_path = tmp_path / "batches" / batch.batch_id / "validation.json"
+    document = json.loads(validation_path.read_text(encoding="utf-8"))
+    document["checks"]["unique_date_security"] = False
+    validation_path.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(MarketDataIntegrityError, match="validation evidence"):
+        create_snapshot(
+            batch_ids=[batch.batch_id],
+            selection=_selection("000001.XSHG", "000002.XSHE"),
+            root=tmp_path,
+        )
+
+
+@pytest.mark.parametrize(
+    "invalid_id",
+    ["..\\..\\outside", "../../outside", "g" * 64, "a" * 63],
+)
+def test_storage_identifiers_are_strict_sha256_values(
+    invalid_id: str,
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(MarketDataIntegrityError, match="identifier"):
+        create_snapshot(
+            batch_ids=[invalid_id],
+            selection=_selection("000001.XSHG"),
+            root=tmp_path,
+        )
+    with pytest.raises(MarketDataIntegrityError, match="identifier"):
+        validate_snapshot(invalid_id, root=tmp_path)
+
+
+def test_snapshot_rejects_incomplete_end_date_coverage(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests" / "local_quant_research" / "fixtures" / "daily-bars.csv"
+    batch = import_batch(csv_path=source, manifest=_manifest(), root=tmp_path)
+    selection = SnapshotSelection(
+        source={"name": "joinquant", "environment": "research"},
+        asset_type="etf",
+        frequency="1d",
+        securities=("000001.XSHG", "000002.XSHE"),
+        start_date="2026-01-05",
+        end_date="2026-12-31",
+        fields=FIELDS,
+        price_semantics={"fq": None, "skip_paused": False},
+    )
+
+    with pytest.raises(MarketDataIntegrityError, match="end_date coverage"):
+        create_snapshot(batch_ids=[batch.batch_id], selection=selection, root=tmp_path)
+
+
+def test_import_rejects_rows_with_missing_or_extra_columns(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests" / "local_quant_research" / "fixtures" / "daily-bars.csv"
+    lines = source.read_text(encoding="utf-8").splitlines()
+    malformed_rows = {
+        "missing": ",".join(lines[1].split(",")[:-1]),
+        "extra": lines[1] + ",unexpected",
+    }
+
+    for name, row in malformed_rows.items():
+        malformed = tmp_path / f"{name}.csv"
+        malformed.write_text(lines[0] + "\n" + row + "\n", encoding="utf-8")
+        with pytest.raises(MarketDataIntegrityError, match="column count"):
+            import_batch(csv_path=malformed, manifest=_manifest(), root=tmp_path)
+
+
+def test_snapshot_can_reference_multiple_verified_batches(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests" / "local_quant_research" / "fixtures" / "daily-bars.csv"
+    first = import_batch(csv_path=source, manifest=_manifest(), root=tmp_path)
+    added = tmp_path / "added.csv"
+    header = source.read_text(encoding="utf-8").splitlines()[0]
+    added.write_text(
+        header
+        + "\n2026-01-05,000003.XSHG,30.00,30.30,29.90,30.10,30.00,700,21070,1.0000,0.0,33.00,27.00"
+        + "\n2026-01-06,000003.XSHG,30.10,30.40,30.00,30.20,30.10,750,22650,1.0000,0.0,33.11,27.09\n",
+        encoding="utf-8",
+    )
+    second = import_batch(csv_path=added, manifest=_manifest(), root=tmp_path)
+
+    snapshot = create_snapshot(
+        batch_ids=[second.batch_id, first.batch_id],
+        selection=_selection("000001.XSHG", "000003.XSHG"),
+        root=tmp_path,
+    )
+
+    assert list(snapshot.document["batch_ids"]) == sorted(
+        [first.batch_id, second.batch_id]
+    )
+    assert list(snapshot.document["coverage"]) == [
+        {
+            "security": "000001.XSHG",
+            "start_date": "2026-01-05",
+            "end_date": "2026-01-06",
+            "rows": 2,
+        },
+        {
+            "security": "000003.XSHG",
+            "start_date": "2026-01-05",
+            "end_date": "2026-01-06",
+            "rows": 2,
+        },
+    ]
+    assert all("validation_sha256" in item for item in snapshot.document["batches"])
+    assert validate_snapshot(snapshot.snapshot_id, root=tmp_path) == snapshot
+
+
+def test_snapshot_requires_the_complete_source_identity(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests" / "local_quant_research" / "fixtures" / "daily-bars.csv"
+    batch = import_batch(csv_path=source, manifest=_manifest(), root=tmp_path)
+    selection = SnapshotSelection(
+        source={"name": "joinquant", "environment": "different"},
+        asset_type="etf",
+        frequency="1d",
+        securities=("000001.XSHG",),
+        start_date="2026-01-05",
+        end_date="2026-01-06",
+        fields=FIELDS,
+        price_semantics={"fq": None, "skip_paused": False},
+    )
+
+    with pytest.raises(MarketDataIntegrityError, match="source"):
+        create_snapshot(batch_ids=[batch.batch_id], selection=selection, root=tmp_path)
+
+
+def test_storage_lock_serializes_cross_process_batch_publication(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests" / "local_quant_research" / "fixtures" / "daily-bars.csv"
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    start = context.Event()
+    results = context.Queue()
+    process = context.Process(
+        target=_import_in_process,
+        args=(str(source), _manifest(), str(tmp_path), ready, start, results),
+    )
+
+    with _exclusive_storage_lock(tmp_path):
+        process.start()
+        assert ready.wait(timeout=5)
+        start.set()
+        with pytest.raises(queue.Empty):
+            results.get(timeout=0.5)
+
+    result = results.get(timeout=5)
+    process.join(timeout=5)
+    assert result[0] == "ok", result
+    assert process.exitcode == 0
+
+
+def test_records_expose_deeply_immutable_evidence(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests" / "local_quant_research" / "fixtures" / "daily-bars.csv"
+    batch = import_batch(csv_path=source, manifest=_manifest(), root=tmp_path)
+    snapshot = create_snapshot(
+        batch_ids=[batch.batch_id],
+        selection=_selection("000001.XSHG", "000002.XSHE"),
+        root=tmp_path,
+    )
+
+    with pytest.raises(TypeError):
+        batch.manifest["source"]["environment"] = "mutated"
+    with pytest.raises(TypeError):
+        snapshot.document["selection"]["source"]["environment"] = "mutated"
+
+
+def test_snapshot_validation_rejects_duplicate_or_extra_batch_evidence(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests" / "local_quant_research" / "fixtures" / "daily-bars.csv"
+    batch = import_batch(csv_path=source, manifest=_manifest(), root=tmp_path)
+    snapshot = create_snapshot(
+        batch_ids=[batch.batch_id],
+        selection=_selection("000001.XSHG", "000002.XSHE"),
+        root=tmp_path,
+    )
+    document = json.loads(snapshot.path.read_text(encoding="utf-8"))
+    document["batch_ids"].append(batch.batch_id)
+    document["batches"].append(dict(document["batches"][0]))
+    payload = {key: value for key, value in document.items() if key != "snapshot_id"}
+    malformed_id = _canonical_digest(payload)
+    document["snapshot_id"] = malformed_id
+    malformed_path = tmp_path / "snapshots" / f"{malformed_id}.json"
+    malformed_path.write_text(
+        json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(MarketDataIntegrityError, match="canonical batch evidence"):
+        validate_snapshot(malformed_id, root=tmp_path)

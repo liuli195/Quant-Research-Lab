@@ -6,8 +6,14 @@ from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 
-def _immutable_mapping(value: Mapping[str, object]) -> Mapping[str, object]:
-    return MappingProxyType(dict(value))
+def _deep_freeze(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(key): _deep_freeze(item) for key, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_deep_freeze(item) for item in value)
+    return value
 
 
 @dataclass(frozen=True)
@@ -16,10 +22,13 @@ class BatchRecord:
     path: Path
     manifest: Mapping[str, Any]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "manifest", _deep_freeze(self.manifest))
+
 
 @dataclass(frozen=True)
 class SnapshotSelection:
-    source: str
+    source: Mapping[str, object]
     asset_type: str
     frequency: str
     securities: Sequence[str]
@@ -29,17 +38,18 @@ class SnapshotSelection:
     price_semantics: Mapping[str, object]
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "source", _deep_freeze(self.source))
         object.__setattr__(self, "securities", tuple(self.securities))
         object.__setattr__(self, "fields", tuple(self.fields))
         object.__setattr__(
             self,
             "price_semantics",
-            _immutable_mapping(self.price_semantics),
+            _deep_freeze(self.price_semantics),
         )
 
     def to_document(self) -> dict[str, object]:
         return {
-            "source": self.source,
+            "source": dict(self.source),
             "asset_type": self.asset_type,
             "frequency": self.frequency,
             "securities": sorted(self.securities),
@@ -55,3 +65,6 @@ class SnapshotRecord:
     snapshot_id: str
     path: Path
     document: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "document", _deep_freeze(self.document))

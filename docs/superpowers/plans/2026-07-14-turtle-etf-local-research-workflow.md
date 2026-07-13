@@ -263,7 +263,7 @@ assert sha256((tmp_path / "snapshots" / f"{snapshot.snapshot_id}.json").read_byt
 
 预期：PASS；测试临时目录结束后不存在 `.tmp`、`.duckdb` 或未被快照引用的伪完成目录。
 
-- [ ] **步骤 6：提交任务 3**
+- [x] **步骤 6：提交任务 3**
 
 ```powershell
 git add scripts/research/market_data tests/local_quant_research/test_market_data_storage.py tests/local_quant_research/fixtures/daily-bars.csv

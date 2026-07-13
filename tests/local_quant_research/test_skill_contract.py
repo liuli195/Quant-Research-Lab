@@ -43,8 +43,8 @@ def test_local_research_skill_has_one_fixed_orchestration_order(
 ) -> None:
     text = _skill_text(repo_root)
     stages = [
-        "校验项目配置",
         "校验行情快照",
+        "校验项目配置",
         "运行项目入口",
         "校验必需输出",
         "固化运行证据",
@@ -52,6 +52,8 @@ def test_local_research_skill_has_one_fixed_orchestration_order(
 
     positions = [text.index(stage) for stage in stages]
     assert positions == sorted(positions)
+    assert "执行前缺少身份、快照、范围或声明输入" in text
+    assert "既有证据被篡改或摘要不一致" in text
 
 
 def test_local_research_skill_ui_metadata_matches_public_entry(

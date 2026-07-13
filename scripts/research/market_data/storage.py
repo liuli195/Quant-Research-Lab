@@ -4,9 +4,12 @@ import csv
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
+import time
 from collections import defaultdict
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -24,6 +27,8 @@ _REQUIRED_MANIFEST_FIELDS = {
     "price_semantics",
     "export_code_sha256",
 }
+_STORED_MANIFEST_FIELDS = _REQUIRED_MANIFEST_FIELDS | {"csv", "securities"}
+_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
 class MarketDataError(RuntimeError):
@@ -40,6 +45,66 @@ class MarketDataIntegrityError(MarketDataError):
 
 class UnsupportedMarketData(MarketDataError):
     """Raised for data outside the first supported capability."""
+
+
+def _require_identifier(value: object, field: str) -> str:
+    if not isinstance(value, str) or _SHA256_PATTERN.fullmatch(value) is None:
+        raise MarketDataIntegrityError(f"{field} identifier must be a SHA256 digest")
+    return value
+
+
+@contextmanager
+def _exclusive_storage_lock(root: Path, *, timeout_seconds: float = 30.0):
+    storage_root = Path(root)
+    storage_root.mkdir(parents=True, exist_ok=True)
+    lock_path = storage_root / ".market-data.lock"
+    handle = lock_path.open("a+b")
+    if lock_path.stat().st_size == 0:
+        handle.write(b"\0")
+        handle.flush()
+    deadline = time.monotonic() + timeout_seconds
+    locked = False
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            while not locked:
+                handle.seek(0)
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    locked = True
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise MarketDataIntegrityError(
+                            "timed out waiting for the market-data storage lock"
+                        )
+                    time.sleep(0.01)
+        else:
+            import fcntl
+
+            while not locked:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    locked = True
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise MarketDataIntegrityError(
+                            "timed out waiting for the market-data storage lock"
+                        )
+                    time.sleep(0.01)
+        yield
+    finally:
+        if locked:
+            handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -136,6 +201,10 @@ def _read_csv(
     keys: set[tuple[str, str]] = set()
     security_dates: dict[str, list[str]] = defaultdict(list)
     for row in rows:
+        if None in row or any(value is None for value in row.values()):
+            raise MarketDataIntegrityError(
+                "CSV row column count does not match the declared fields"
+            )
         security = row.get("security", "").strip()
         row_date = row.get("date", "").strip()
         if not security or not row_date:
@@ -184,6 +253,18 @@ def _dataset_identity(manifest: Mapping[str, object]) -> tuple[bytes, object, ob
     )
 
 
+def _validation_document() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "status": "complete",
+        "checks": {
+            "field_order": True,
+            "nonempty": True,
+            "unique_date_security": True,
+        },
+    }
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -195,6 +276,7 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 
 def _validate_batch_dir(batch_dir: Path) -> dict[str, Any]:
+    _require_identifier(batch_dir.name, "batch")
     if not batch_dir.is_dir():
         raise MarketDataIntegrityError(f"batch does not exist: {batch_dir.name}")
     names = {path.name for path in batch_dir.iterdir()}
@@ -203,24 +285,48 @@ def _validate_batch_dir(batch_dir: Path) -> dict[str, Any]:
             f"batch file set is invalid: {batch_dir.name}"
         )
     manifest = _load_json(batch_dir / "manifest.json")
+    if set(manifest) != _STORED_MANIFEST_FIELDS:
+        raise MarketDataIntegrityError("batch manifest structure is invalid")
+    declared = _validate_manifest_input(manifest)
     csv_evidence = manifest.get("csv")
-    if not isinstance(csv_evidence, Mapping):
+    if not isinstance(csv_evidence, Mapping) or set(csv_evidence) != {
+        "sha256",
+        "bytes",
+        "rows",
+    }:
         raise MarketDataIntegrityError("batch manifest is missing CSV evidence")
     expected_sha = csv_evidence.get("sha256")
-    actual_sha = _sha256_path(batch_dir / "market-data.csv")
+    csv_path = batch_dir / "market-data.csv"
+    csv_bytes = csv_path.read_bytes()
+    actual_sha = _sha256_bytes(csv_bytes)
     if actual_sha != expected_sha:
         raise MarketDataIntegrityError(
             f"CSV SHA256 mismatch for batch {batch_dir.name}"
         )
-    validation = _load_json(batch_dir / "validation.json")
-    if validation.get("status") != "complete":
+    if len(csv_bytes) != csv_evidence.get("bytes"):
         raise MarketDataIntegrityError(
-            f"batch validation is not complete: {batch_dir.name}"
+            f"CSV byte count mismatch for batch {batch_dir.name}"
         )
-    rows, _ = _read_csv(batch_dir / "market-data.csv", manifest.get("fields", []))
+    validation = _load_json(batch_dir / "validation.json")
+    if validation != _validation_document():
+        raise MarketDataIntegrityError(
+            f"batch validation evidence is invalid: {batch_dir.name}"
+        )
+    rows, securities = _read_csv(csv_path, declared["fields"])
     if len(rows) != csv_evidence.get("rows"):
         raise MarketDataIntegrityError(
             f"CSV row count mismatch for batch {batch_dir.name}"
+        )
+    if securities != manifest.get("securities"):
+        raise MarketDataIntegrityError(
+            f"batch security coverage mismatch: {batch_dir.name}"
+        )
+    expected_batch_id = _sha256_bytes(
+        _canonical_bytes(_batch_identity(declared, actual_sha))
+    )
+    if batch_dir.name != expected_batch_id:
+        raise MarketDataIntegrityError(
+            f"batch identity mismatch: {batch_dir.name}"
         )
     return manifest
 
@@ -311,18 +417,18 @@ def _atomic_file_write(target: Path, content: bytes) -> None:
     temporary = Path(temporary_name)
     try:
         temporary.write_bytes(content)
-        if target.exists():
+        try:
+            os.link(temporary, target)
+        except FileExistsError:
             if target.read_bytes() != content:
                 raise MarketDataIntegrityError(
                     f"immutable snapshot collision for {target.stem}"
                 )
-            return
-        os.replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)
 
 
-def import_batch(
+def _import_batch_locked(
     *,
     csv_path: Path,
     manifest: Mapping[str, object],
@@ -341,15 +447,7 @@ def import_batch(
         },
         "securities": securities,
     }
-    validation = {
-        "schema_version": 1,
-        "status": "complete",
-        "checks": {
-            "field_order": True,
-            "nonempty": True,
-            "unique_date_security": True,
-        },
-    }
+    validation = _validation_document()
     batch_id = _sha256_bytes(_canonical_bytes(_batch_identity(declared, csv_sha256)))
     batch_dir = Path(root) / "batches" / batch_id
     files = {
@@ -370,12 +468,26 @@ def import_batch(
     return BatchRecord(batch_id=batch_id, path=batch_dir, manifest=stored_manifest)
 
 
+def import_batch(
+    *,
+    csv_path: Path,
+    manifest: Mapping[str, object],
+    root: Path,
+) -> BatchRecord:
+    with _exclusive_storage_lock(root):
+        return _import_batch_locked(
+            csv_path=csv_path,
+            manifest=manifest,
+            root=root,
+        )
+
+
 def _selection_rows(
     *,
     manifests: Sequence[tuple[str, Mapping[str, object]]],
     selection: SnapshotSelection,
     root: Path,
-) -> set[str]:
+) -> list[dict[str, object]]:
     selected_securities = set(selection.securities)
     if not selected_securities or len(selected_securities) != len(selection.securities):
         raise MarketDataIntegrityError("snapshot securities must be non-empty and unique")
@@ -389,10 +501,12 @@ def _selection_rows(
     if start > end:
         raise MarketDataIntegrityError("snapshot start_date must not exceed end_date")
 
-    found: set[str] = set()
+    selected_rows: dict[str, dict[str, dict[str, str]]] = {
+        security: {} for security in selected_securities
+    }
     for batch_id, manifest in manifests:
         source = manifest.get("source")
-        if not isinstance(source, Mapping) or source.get("name") != selection.source:
+        if not isinstance(source, Mapping) or source != dict(selection.source):
             raise MarketDataIntegrityError("snapshot source does not match its batch")
         for field, expected in (
             ("asset_type", selection.asset_type),
@@ -418,16 +532,39 @@ def _selection_rows(
         for row in rows:
             row_date = date.fromisoformat(row["date"])
             if row["security"] in selected_securities and start <= row_date <= end:
-                found.add(row["security"])
-    missing = sorted(selected_securities - found)
+                existing = selected_rows[row["security"]].get(row["date"])
+                if existing is not None and existing != row:
+                    raise MarketDataConflict(
+                        f"snapshot batches conflict at {row['security']} {row['date']}"
+                    )
+                selected_rows[row["security"]][row["date"]] = row
+    missing = sorted(
+        security for security, rows in selected_rows.items() if not rows
+    )
     if missing:
         raise MarketDataIntegrityError(
             f"snapshot selection is missing securities: {', '.join(missing)}"
         )
-    return found
+    coverage: list[dict[str, object]] = []
+    for security in sorted(selected_rows):
+        dates = sorted(selected_rows[security])
+        if dates[-1] != selection.end_date:
+            raise MarketDataIntegrityError(
+                f"snapshot end_date coverage is incomplete for {security}: "
+                f"expected {selection.end_date}, found {dates[-1]}"
+            )
+        coverage.append(
+            {
+                "security": security,
+                "start_date": dates[0],
+                "end_date": dates[-1],
+                "rows": len(dates),
+            }
+        )
+    return coverage
 
 
-def create_snapshot(
+def _create_snapshot_locked(
     *,
     batch_ids: Sequence[str],
     selection: SnapshotSelection,
@@ -439,6 +576,7 @@ def create_snapshot(
     manifests: list[tuple[str, Mapping[str, object]]] = []
     batch_evidence: list[dict[str, object]] = []
     for batch_id in unique_batch_ids:
+        _require_identifier(batch_id, "batch")
         batch_dir = Path(root) / "batches" / batch_id
         manifest = _validate_batch_dir(batch_dir)
         manifests.append((batch_id, manifest))
@@ -447,15 +585,23 @@ def create_snapshot(
                 "batch_id": batch_id,
                 "manifest_sha256": _sha256_path(batch_dir / "manifest.json"),
                 "csv_sha256": _sha256_path(batch_dir / "market-data.csv"),
+                "validation_sha256": _sha256_path(
+                    batch_dir / "validation.json"
+                ),
                 "export_code_sha256": manifest["export_code_sha256"],
             }
         )
-    _selection_rows(manifests=manifests, selection=selection, root=Path(root))
+    coverage = _selection_rows(
+        manifests=manifests,
+        selection=selection,
+        root=Path(root),
+    )
     payload = {
         "schema_version": 1,
         "batch_ids": unique_batch_ids,
         "batches": batch_evidence,
         "selection": selection.to_document(),
+        "coverage": coverage,
     }
     snapshot_id = _sha256_bytes(_canonical_bytes(payload))
     document = {**payload, "snapshot_id": snapshot_id}
@@ -468,7 +614,22 @@ def create_snapshot(
     )
 
 
+def create_snapshot(
+    *,
+    batch_ids: Sequence[str],
+    selection: SnapshotSelection,
+    root: Path,
+) -> SnapshotRecord:
+    with _exclusive_storage_lock(root):
+        return _create_snapshot_locked(
+            batch_ids=batch_ids,
+            selection=selection,
+            root=root,
+        )
+
+
 def validate_snapshot(snapshot_id: str, *, root: Path) -> SnapshotRecord:
+    _require_identifier(snapshot_id, "snapshot")
     snapshot_path = Path(root) / "snapshots" / f"{snapshot_id}.json"
     document = _load_json(snapshot_path)
     if document.get("snapshot_id") != snapshot_id:
@@ -481,6 +642,18 @@ def validate_snapshot(snapshot_id: str, *, root: Path) -> SnapshotRecord:
     evidence_rows = document.get("batches")
     if not isinstance(batch_ids, list) or not isinstance(evidence_rows, list):
         raise MarketDataIntegrityError("snapshot batch evidence is missing")
+    evidence_ids = [
+        item.get("batch_id") if isinstance(item, Mapping) else None
+        for item in evidence_rows
+    ]
+    if (
+        batch_ids != sorted(set(batch_ids))
+        or evidence_ids != batch_ids
+        or len(evidence_ids) != len(set(evidence_ids))
+    ):
+        raise MarketDataIntegrityError(
+            "snapshot canonical batch evidence is invalid"
+        )
     evidence_by_id = {
         item.get("batch_id"): item
         for item in evidence_rows
@@ -501,6 +674,12 @@ def validate_snapshot(snapshot_id: str, *, root: Path) -> SnapshotRecord:
             )
         if _sha256_path(batch_dir / "market-data.csv") != evidence.get("csv_sha256"):
             raise MarketDataIntegrityError(f"CSV SHA256 mismatch for batch {batch_id}")
+        if _sha256_path(batch_dir / "validation.json") != evidence.get(
+            "validation_sha256"
+        ):
+            raise MarketDataIntegrityError(
+                f"validation SHA256 mismatch for batch {batch_id}"
+            )
         if manifest.get("export_code_sha256") != evidence.get(
             "export_code_sha256"
         ):
@@ -513,8 +692,11 @@ def validate_snapshot(snapshot_id: str, *, root: Path) -> SnapshotRecord:
     if not isinstance(selection_document, Mapping):
         raise MarketDataIntegrityError("snapshot selection is missing")
     try:
+        source_identity = selection_document["source"]
+        if not isinstance(source_identity, Mapping):
+            raise TypeError("source must be a mapping")
         selection = SnapshotSelection(
-            source=str(selection_document["source"]),
+            source=source_identity,
             asset_type=str(selection_document["asset_type"]),
             frequency=str(selection_document["frequency"]),
             securities=selection_document["securities"],
@@ -525,7 +707,13 @@ def validate_snapshot(snapshot_id: str, *, root: Path) -> SnapshotRecord:
         )
     except (KeyError, TypeError) as exc:
         raise MarketDataIntegrityError("snapshot selection is incomplete") from exc
-    _selection_rows(manifests=manifests, selection=selection, root=Path(root))
+    coverage = _selection_rows(
+        manifests=manifests,
+        selection=selection,
+        root=Path(root),
+    )
+    if document.get("coverage") != coverage:
+        raise MarketDataIntegrityError("snapshot coverage evidence is invalid")
     return SnapshotRecord(
         snapshot_id=snapshot_id,
         path=snapshot_path,

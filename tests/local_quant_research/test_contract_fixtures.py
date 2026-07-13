@@ -48,7 +48,7 @@ def test_baseline_freezes_universe_rules_and_price_semantics(repo_root: Path) ->
         "asset_group_value_cap": 0.50,
         "portfolio_risk_cap": 0.05,
         "portfolio_value_cap": 1.0,
-        "covariance_days": 60,
+        "covariance": {"method": "sample", "window_days": 60},
         "target_volatility": 0.10,
         "risk_reduction_target_volatility": 0.095,
         "minimum_aligned_samples": 60,
@@ -131,7 +131,8 @@ def test_candidates_are_baseline_plus_six_single_factor_challenges(
         {"signal.entry_days": 60},
         {"signal.stop_n": 1.5},
         {"signal.stop_n": 2.5},
-        {"risk.covariance_days": 120},
-        {"risk.covariance_method": "ewma", "risk.ewma_half_life_days": 30},
+        {"risk.covariance": {"method": "sample", "window_days": 120}},
+        {"risk.covariance": {"method": "ewma", "half_life_days": 30}},
     ]
+    assert all(len(item["overrides"]) <= 1 for item in candidates)
     assert all("rank" not in item and "score" not in item for item in candidates)

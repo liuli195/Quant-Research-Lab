@@ -33,14 +33,19 @@
     {
       "id": "covariance-120d",
       "overrides": {
-        "risk.covariance_days": 120
+        "risk.covariance": {
+          "method": "sample",
+          "window_days": 120
+        }
       }
     },
     {
       "id": "covariance-ewma-30d",
       "overrides": {
-        "risk.covariance_method": "ewma",
-        "risk.ewma_half_life_days": 30
+        "risk.covariance": {
+          "method": "ewma",
+          "half_life_days": 30
+        }
       }
     }
   ]
