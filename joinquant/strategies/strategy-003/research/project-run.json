@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "project_id": "strategy-003",
-  "snapshot_id": "0000000000000000000000000000000000000000000000000000000000000000",
+  "snapshot_id": "64785f1607d90cf58f3db4545c2a718796659df818e283a4ec0614b0dfd12d8a",
   "snapshot_requirements": {
     "source": {
       "name": "joinquant",
@@ -22,8 +22,8 @@
       "516160.XSHG",
       "518880.XSHG"
     ],
-    "start_date": "1970-01-01",
-    "end_date": "1970-01-01",
+    "start_date": "2012-05-28",
+    "end_date": "2026-07-13",
     "fields": [
       "date",
       "security",

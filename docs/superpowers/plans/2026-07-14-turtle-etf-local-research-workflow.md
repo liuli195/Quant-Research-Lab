@@ -562,7 +562,7 @@ git commit -m "功能：生成海龟ETF本地研究报告与候选包"
 
 预期：全部 PASS；测试结束后临时目录自动清理。
 
-- [ ] **步骤 6：提交任务 9**
+- [x] **步骤 6：提交任务 9**
 
 ```powershell
 git add tests/local_quant_research tests/test_skill_layout.py .build-and-verify/config.json scripts/research .agents/skills/run-local-quant-research .claude/skills/run-local-quant-research
@@ -586,25 +586,25 @@ git commit -m "测试：贯通本地研究技能端到端流程"
 - 字段：`date, security, open, high, low, close, pre_close, volume, money, factor, paused, high_limit, low_limit`。
 - 区间：每只 ETF 自身首个可用完整交易日至显式 `snapshot_end_date`；2015-01-01 前仅作预热；新增风险需 60 个有效对齐样本。
 
-- [ ] **步骤 1：在真实聚宽研究环境执行导出**
+- [x] **步骤 1：在真实聚宽研究环境执行导出**
 
 使用任务 4 生成的程序，确认内置 `get_price`/`write_file`/`read_file`、`fq=None`、`skip_paused=False`、Pandas 0.23.4 `line_terminator` 和 `paused` 原始类型；远端文件回读字节摘要必须与下载文件一致。
 
-- [ ] **步骤 2：导入共享中心并清理远端中转文件**
+- [x] **步骤 2：导入共享中心并清理远端中转文件**
 
 先验证 13 字段、唯一键、日期、空值、实际起止日、CSV 字节摘要和规范化内容摘要，再固化批次及快照；删除聚宽端中转文件并复查不存在。若清理无法确认，运行状态必须为 `failed`。
 
-- [ ] **步骤 3：从 Skill 用户入口执行真实本地研究**
+- [x] **步骤 3：从 Skill 用户入口执行真实本地研究**
 
 运行：`.\.venv\Scripts\python.exe scripts\research\local_quant_research\cli.py run --config joinquant\strategies\strategy-003\research\project-run.json`
 
 预期：输出唯一三态之一；只有 11 只 ETF 快照、运行清单、全部审计和三类必需输出均通过摘要校验时才允许 `complete`。
 
-- [ ] **步骤 4：人工复核本地报告和临时产物**
+- [x] **步骤 4：人工复核本地报告和临时产物**
 
 确认报告给出实际平均/中位仓位、低于 50% 与接近满仓占比、现金占比和留现原因；确认没有把本地结果描述为正式回测；确认聚宽远端中转、本地下载暂存、隐藏 staging（暂存）目录均不存在，已固化批次/快照/完整运行证据保留。
 
-- [ ] **步骤 5：运行完整验证**
+- [x] **步骤 5：运行完整验证**
 
 运行：`.\.venv\Scripts\python.exe C:\Users\liuli\.codex\skills\.system\skill-creator\scripts\quick_validate.py .agents\skills\run-local-quant-research`
 
@@ -614,7 +614,7 @@ git commit -m "测试：贯通本地研究技能端到端流程"
 
 在已获授权的 PR Flow hotfix（拉取请求热修复流程）收尾前运行：`.\.venv\Scripts\python.exe .build-and-verify\runtime\build_and_verify.py verify --project . --full`，并确认新检查命中；再运行 `git ls-files | rg "(^|/)\.local/|market-data\.csv$|\.duckdb$"`，预期无输出。
 
-- [ ] **步骤 6：逐项勾选 OpenSpec 任务并提交验证证据**
+- [x] **步骤 6：逐项勾选 OpenSpec 任务并提交验证证据**
 
 只有在对应测试、真实集成和清理证据均通过后，才把 `tasks.md` 的 30 项全部改为 `[x]`。无法验证的项保持未勾选并记录精确原因，不得用说明文字代替完成证据。
 
