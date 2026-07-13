@@ -209,7 +209,7 @@ New-Item -ItemType SymbolicLink -Path '.claude\skills\run-local-quant-research' 
 
 预期：全部 PASS。
 
-- [ ] **步骤 5：提交任务 2**
+- [x] **步骤 5：提交任务 2**
 
 ```powershell
 git add .agents/skills/run-local-quant-research .claude/skills/run-local-quant-research tests/test_skill_layout.py tests/local_quant_research/test_skill_contract.py
@@ -234,11 +234,11 @@ def create_snapshot(*, batch_ids: Sequence[str], selection: SnapshotSelection, r
 def validate_snapshot(snapshot_id: str, *, root: Path) -> SnapshotRecord: ...
 ```
 
-- [ ] **步骤 1：为批次身份、去重和冲突写失败测试**
+- [x] **步骤 1：为批次身份、去重和冲突写失败测试**
 
 测试必须断言：批次目录恰好包含 `manifest.json`、`market-data.csv`、`validation.json`；相同来源和字节摘要复用同一 `batch_id`；重叠键值不同抛出 `MarketDataConflict`；新证券追加不改变旧批次摘要。
 
-- [ ] **步骤 2：为快照引用和旧快照稳定性写失败测试**
+- [x] **步骤 2：为快照引用和旧快照稳定性写失败测试**
 
 ```python
 snapshot = create_snapshot(batch_ids=[first.batch_id], selection=selection, root=tmp_path)
@@ -247,17 +247,17 @@ import_batch(csv_path=second_csv, manifest=second_manifest, root=tmp_path)
 assert sha256((tmp_path / "snapshots" / f"{snapshot.snapshot_id}.json").read_bytes()).hexdigest() == before
 ```
 
-- [ ] **步骤 3：运行失败测试**
+- [x] **步骤 3：运行失败测试**
 
 运行：`.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_market_data_storage.py -q`
 
 预期：FAIL，模块不存在。
 
-- [ ] **步骤 4：实现规范化 JSON、SHA256、原子写入和冲突索引**
+- [x] **步骤 4：实现规范化 JSON、SHA256、原子写入和冲突索引**
 
 `batch_id` 使用来源身份、导出契约和 CSV 字节摘要的规范化 JSON 摘要；`snapshot_id` 使用快照清单规范化 JSON 摘要。写入必须先进入同文件系统临时目录，再以原子替换固化；目标已存在时只允许内容完全相同。
 
-- [ ] **步骤 5：验证所有存储不变量**
+- [x] **步骤 5：验证所有存储不变量**
 
 运行：`.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_market_data_storage.py -q`
 

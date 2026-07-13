@@ -1,0 +1,1 @@
+"""Shared quantitative research capabilities."""
