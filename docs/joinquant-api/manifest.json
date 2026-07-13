@@ -1,0 +1,139 @@
+{
+  "api_entries": 1185,
+  "files": {
+    "API.md": {
+      "bytes": 307343,
+      "sha256": "497b75331477b69698a26d53b07bd6625b7cf57cfbd8a3fa5b4d1eb1611ea6fd"
+    },
+    "JQData.md": {
+      "bytes": 797739,
+      "sha256": "ba601e3b26063e8f6cbe17f4898087fd379ec476c36dd8dafecbef94a64be54b"
+    },
+    "JQ_Alpha101.md": {
+      "bytes": 44514,
+      "sha256": "67f67dc4975194171796b6667bc4b301e17a037c872b3ed2cad3404d681f900b"
+    },
+    "JQ_Alpha191.md": {
+      "bytes": 81369,
+      "sha256": "63d3e07a9203bcfd0d25a7f6c997aecb20fe46d75c0b90260782e35248663791"
+    },
+    "JQ_场内基金数据.md": {
+      "bytes": 27272,
+      "sha256": "b79840251c1a3926fc88f525de0e365d49bf19fc0e1fc5fd1174d52263d08815"
+    },
+    "JQ_宏观经济数据.md": {
+      "bytes": 261462,
+      "sha256": "084c14a36e4fb2b2fd94b0c20c73e51dc280e78ada7ed694571ad5703f563660"
+    },
+    "JQ_常见问题.md": {
+      "bytes": 49003,
+      "sha256": "a5c67dbc687180cb82d6001474e8ad58d4ec4612dd75621bbd006164551b8173"
+    },
+    "JQ_技术分析指标.md": {
+      "bytes": 195181,
+      "sha256": "fa936f9843275632533c753329b01637c2322cf2e0158fe5cd5bbaa3afef1da8"
+    },
+    "JQ_指数数据.md": {
+      "bytes": 14658,
+      "sha256": "f58ed360f1c11dcbda6f4bc8cc03d11729bbf176a813e4118a9d9fa5cd5ae901"
+    },
+    "JQ_期权数据.md": {
+      "bytes": 55185,
+      "sha256": "7fb841fd5d897f4cffa673e3f11e1408be4a4f118199cb1ccc558cc5fa62fde1"
+    },
+    "JQ_期货数据.md": {
+      "bytes": 52405,
+      "sha256": "4094a206b40f04df2cd5c7aec60c409193945e4f5acc65396135e78f1168efb8"
+    },
+    "JQ_聚宽因子库.md": {
+      "bytes": 42452,
+      "sha256": "39171e4be1ca3e942a7866f1860dfd1098a9b571e498f727eac3af30d3d618c0"
+    },
+    "JQ_股票数据.md": {
+      "bytes": 381017,
+      "sha256": "85ba2f1bb8b6bf5f63eb86aded49bf12f75280b93802136bd484acf391a47bb4"
+    },
+    "JQ_行业概念数据.md": {
+      "bytes": 66310,
+      "sha256": "3cefd83caf2b6c462af05f6f06f0722a31f884aa82c90bca5c14a4bcc2c7e8a3"
+    },
+    "api-index.json": {
+      "bytes": 302881,
+      "sha256": "ceed87a9805ea367916d337f63cd689a60f857b15827181f8e075ad81b83f6a8"
+    }
+  },
+  "generated_at": "2026-07-13T04:18:23.409769+00:00",
+  "sources": [
+    {
+      "output": "JQData.md",
+      "source_id": "jqdata",
+      "url": "https://www.joinquant.com/help/api/help?name=JQData"
+    },
+    {
+      "output": "API.md",
+      "source_id": "platform-api",
+      "url": "https://www.joinquant.com/help/api/help?name=api"
+    },
+    {
+      "output": "JQ_股票数据.md",
+      "source_id": "stock",
+      "url": "https://www.joinquant.com/help/api/help?name=Stock"
+    },
+    {
+      "output": "JQ_场内基金数据.md",
+      "source_id": "fund",
+      "url": "https://www.joinquant.com/help/api/help?name=fund"
+    },
+    {
+      "output": "JQ_期货数据.md",
+      "source_id": "future",
+      "url": "https://www.joinquant.com/help/api/help?name=Future"
+    },
+    {
+      "output": "JQ_期权数据.md",
+      "source_id": "option",
+      "url": "https://www.joinquant.com/help/api/help?name=Option"
+    },
+    {
+      "output": "JQ_指数数据.md",
+      "source_id": "index",
+      "url": "https://www.joinquant.com/help/api/help?name=index"
+    },
+    {
+      "output": "JQ_行业概念数据.md",
+      "source_id": "plate-data",
+      "url": "https://www.joinquant.com/help/api/help?name=plateData"
+    },
+    {
+      "output": "JQ_宏观经济数据.md",
+      "source_id": "macro-data",
+      "url": "https://www.joinquant.com/help/api/help?name=macroData"
+    },
+    {
+      "output": "JQ_常见问题.md",
+      "source_id": "faq",
+      "url": "https://www.joinquant.com/help/api/help?name=faq"
+    },
+    {
+      "output": "JQ_聚宽因子库.md",
+      "source_id": "factor-values",
+      "url": "https://www.joinquant.com/help/api/help?name=factor_values"
+    },
+    {
+      "output": "JQ_Alpha101.md",
+      "source_id": "alpha101",
+      "url": "https://www.joinquant.com/help/api/help?name=Alpha101"
+    },
+    {
+      "output": "JQ_Alpha191.md",
+      "source_id": "alpha191",
+      "url": "https://www.joinquant.com/help/api/help?name=Alpha191"
+    },
+    {
+      "output": "JQ_技术分析指标.md",
+      "source_id": "technical-analysis",
+      "url": "https://www.joinquant.com/help/api/help?name=technicalanalysis"
+    }
+  ],
+  "version": 1
+}

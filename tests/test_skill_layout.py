@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 
@@ -27,11 +28,7 @@ def test_skill_contains_no_plugin_manifest(repo_root: Path) -> None:
 
 def test_skill_routes_every_operation_through_one_cli(repo_root: Path) -> None:
     skill = (
-        repo_root
-        / ".agents"
-        / "skills"
-        / "joinquant-archive-sync"
-        / "SKILL.md"
+        repo_root / ".agents" / "skills" / "joinquant-archive-sync" / "SKILL.md"
     ).read_text(encoding="utf-8")
     assert skill.startswith("---\nname: joinquant-archive-sync\ndescription: Use when ")
     assert "scripts/jq_sync.py" in skill
@@ -56,3 +53,49 @@ def test_skill_routes_every_operation_through_one_cli(repo_root: Path) -> None:
     assert "auth_required" in skill
     assert "积分" in skill
     assert "归因" in skill
+
+
+def test_joinquant_docs_skill_resolves_to_agents_skill(repo_root: Path) -> None:
+    source = repo_root / ".agents" / "skills" / "joinquant-docs-sync"
+    claude = repo_root / ".claude" / "skills" / "joinquant-docs-sync"
+    assert (source / "SKILL.md").is_file()
+    assert (source / "agents" / "openai.yaml").is_file()
+    assert (source / "references" / "sources.json").is_file()
+    assert claude.is_symlink()
+    assert claude.resolve() == source.resolve()
+    assert _sha256(claude / "SKILL.md") == _sha256(source / "SKILL.md")
+    assert _sha256(claude / "scripts" / "jq_docs_sync.py") == _sha256(
+        source / "scripts" / "jq_docs_sync.py"
+    )
+
+
+def test_joinquant_docs_skill_routes_operations_through_one_cli(
+    repo_root: Path,
+) -> None:
+    skill = (
+        repo_root / ".agents" / "skills" / "joinquant-docs-sync" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    assert skill.startswith("---\nname: joinquant-docs-sync\ndescription: Use when ")
+    assert "scripts/jq_docs_sync.py" in skill
+    for command in ("preview", "sync", "verify", "self-test"):
+        assert f"`{command}`" in skill
+    assert "Cookie" in skill
+    assert "Token" in skill
+    assert "SHA-256" in skill
+
+
+def test_build_and_verify_covers_joinquant_docs_sync(repo_root: Path) -> None:
+    config = json.loads(
+        (repo_root / ".build-and-verify" / "config.json").read_text(encoding="utf-8")
+    )
+    checks = {check["id"]: check for check in config["verify"]["checks"]}
+    check = checks["verify.docs-sync"]
+    assert check["command"] == [
+        ".\\.venv\\Scripts\\python.exe",
+        "-m",
+        "pytest",
+        "tests\\joinquant_docs_sync\\test_cli.py",
+    ]
+    assert ".agents/skills/joinquant-docs-sync/**" in check["paths"]
+    assert ".claude/skills/joinquant-docs-sync" in check["paths"]
+    assert "tests/joinquant_docs_sync/test_cli.py" in check["inputs"]

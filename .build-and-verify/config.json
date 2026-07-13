@@ -27,7 +27,9 @@
           "tests\\test_skill_layout.py"
         ],
         "paths": [
+          ".agents/skills/joinquant-docs-sync/**",
           ".agents/skills/joinquant-archive-sync/**",
+          ".claude/skills/joinquant-docs-sync",
           ".claude/skills/joinquant-archive-sync",
           ".gitattributes",
           "requirements*.txt",
@@ -35,13 +37,41 @@
           "tests/test_skill_layout.py"
         ],
         "inputs": [
+          ".agents/skills/joinquant-docs-sync/**",
           ".agents/skills/joinquant-archive-sync/**",
+          ".claude/skills/joinquant-docs-sync",
           ".claude/skills/joinquant-archive-sync",
           ".gitattributes",
           "requirements.txt",
           "requirements-dev.txt",
           "tests/conftest.py",
           "tests/test_skill_layout.py"
+        ],
+        "checkParallel": true,
+        "pytestXdistWorkers": 4
+      },
+      {
+        "id": "verify.docs-sync",
+        "command": [
+          ".\\.venv\\Scripts\\python.exe",
+          "-m",
+          "pytest",
+          "tests\\joinquant_docs_sync\\test_cli.py"
+        ],
+        "paths": [
+          ".agents/skills/joinquant-docs-sync/**",
+          ".claude/skills/joinquant-docs-sync",
+          "requirements*.txt",
+          "tests/conftest.py",
+          "tests/joinquant_docs_sync/test_cli.py"
+        ],
+        "inputs": [
+          ".agents/skills/joinquant-docs-sync/**",
+          ".claude/skills/joinquant-docs-sync",
+          "requirements.txt",
+          "requirements-dev.txt",
+          "tests/conftest.py",
+          "tests/joinquant_docs_sync/test_cli.py"
         ],
         "checkParallel": true,
         "pytestXdistWorkers": 4
