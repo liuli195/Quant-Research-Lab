@@ -7,8 +7,11 @@
     "name": "etf_factor_rotation"
   },
   "source": {
-    "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=8135a213de9c6610e18a1dfe4db8f40d&backtest=115",
+    "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=8550fc0ab51897750ae63709679a9c45&backtest=115",
     "aliases": [
+      {
+        "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=8550fc0ab51897750ae63709679a9c45&backtest=115"
+      },
       {
         "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=8135a213de9c6610e18a1dfe4db8f40d&backtest=115"
       },
@@ -562,7 +565,7 @@
         "url": "https://www.joinquant.com/algorithm/index/edit?algorithmId=05d8070463bd0c212db54eed317288a1&backtest=115"
       }
     ],
-    "observed_at": "2026-07-13T14:36:36+08:00"
+    "observed_at": "2026-07-14T04:00:05+08:00"
   },
   "fence": {
     "before_sha256": "79b2bdb2c82de35a722741b34292df7ed012f8348a19f1b0acfb209020322857",
