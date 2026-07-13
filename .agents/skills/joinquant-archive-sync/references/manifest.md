@@ -61,6 +61,55 @@
 
 合法空表使用 `complete`、`rows: 0`、`verified_empty: true`，不能靠缺文件表示。
 
+## 官方回测摘要
+
+`data/official-summary.csv` 是回测详情页“导出 CSV”入口产生的官方页面源数据，不是 Research（研究环境）返回，也不是本地人工分析报告。保存它有三个目的：保留聚宽页面展示口径、为 Research 数据提供独立来源的交叉校验、在页面或接口变化时保留可复核证据。它与 Research 数据部分重复，但显示精度和聚合口径不同，不能替代结构化明细。
+
+`reports/` 只允许保存人工或 Agent（代理）生成的分析报告。回测清单必须把官方摘要记录为：
+
+```json
+{
+  "official_summary": {
+    "required": true,
+    "status": "complete",
+    "rows": 1289,
+    "files": [
+      {
+        "path": "data/official-summary.csv",
+        "sha256": "...",
+        "bytes": 66969,
+        "format": "csv"
+      }
+    ],
+    "evidence": {
+      "evidence_version": 1,
+      "source": {
+        "kind": "joinquant_backtest_detail_export",
+        "url": "<回测详情链接>",
+        "action": "export_csv"
+      },
+      "encoding": "gb18030",
+      "header": ["时间", "基准收益", "策略收益", "当日盈利", "当日亏损", "当日买入", "当日卖出", "超额收益(%)"],
+      "rows": 1289,
+      "related_datasets": ["results", "balances", "orders"]
+    }
+  }
+}
+```
+
+字段关系分为三类：
+
+| 关系 | 官方摘要字段 | Research 数据 | 使用边界 |
+|---|---|---|---|
+| 可对齐或近似推导 | `时间`、`基准收益`、`策略收益`、`超额收益(%)` | `results.time`、`benchmark_returns`、`returns` | 可核对日期和累计收益；官方文件存在百分比展示和舍入，不能反向恢复 Research 精度 |
+| 仅可交叉校验 | `当日盈利`、`当日亏损` | `balances.total_value` 的相邻交易日差额 | 可复核方向和页面口径；首日还需要初始资金，不能用摘要替代资金明细 |
+| 仅可交叉校验 | `当日买入`、`当日卖出` | `orders` 按交易日和方向汇总 | 可复核页面聚合值；手续费、成交状态、舍入和聚合口径使摘要不能替代订单明细 |
+| 不可由摘要推导 | 无对应字段 | `cash`、`aval_cash`、持仓、单笔订单、`records`、`risk`、`period_risks`、日志 | 必须读取对应 Research 或日志数据集 |
+
+分析某日盈亏时，以 `balances.total_value` 的交易日差额为明细来源，并结合 `orders` 解释交易构成；`official_summary` 只复核聚宽页面展示口径。查询单笔交易、现金、持仓、风险或日志时不得读取官方摘要代替。
+
+既有归档采用一次性迁移：在保持文件字节和 SHA256（完整性摘要）不变的前提下，将 `reports/official-summary.csv` 移到 `data/official-summary.csv`，同步更新清单路径和证据。读取方始终通过 `manifest.json`（清单）定位文件；迁移完成后不保留旧文件、旧引用或双路径兼容。
+
 ## 门禁
 
 - 必需数据集只接受 `complete`。
