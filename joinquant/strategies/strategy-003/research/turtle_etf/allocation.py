@@ -84,6 +84,90 @@ def _is_feasible(
     return not decision.reason_codes and decision.approved == intents
 
 
+def _hamilton_quantities(
+    *,
+    base: Mapping[str, int],
+    active: set[str],
+    extra_lots: int,
+    lot: int,
+    requests: Mapping[str, BuyRequest],
+) -> dict[str, int]:
+    quantities = dict(base)
+    remaining_lots = {
+        security: (requests[security].intent.quantity - quantities[security]) // lot
+        for security in active
+    }
+    total_remaining = sum(remaining_lots.values())
+    if extra_lots < 0 or extra_lots > total_remaining:
+        raise ValueError("A1 extra lots exceed remaining requests")
+    if not extra_lots or not total_remaining:
+        return quantities
+
+    floor_lots: dict[str, int] = {}
+    remainders: dict[str, int] = {}
+    for security in active:
+        numerator = extra_lots * remaining_lots[security]
+        floor_lots[security], remainders[security] = divmod(
+            numerator,
+            total_remaining,
+        )
+    remainder_lots = extra_lots - sum(floor_lots.values())
+    for security in sorted(active, key=lambda item: (-remainders[item], item)):
+        if not remainder_lots:
+            break
+        if floor_lots[security] < remaining_lots[security]:
+            floor_lots[security] += 1
+            remainder_lots -= 1
+    if remainder_lots:
+        raise ValueError("A1 remainder allocation did not converge")
+    for security, added_lots in floor_lots.items():
+        quantities[security] += added_lots * lot
+    return quantities
+
+
+def _maximum_hamilton_allocation(
+    *,
+    candidates: Sequence[BuyRequest],
+    base: Mapping[str, int],
+    active: set[str],
+    lot: int,
+    requests: Mapping[str, BuyRequest],
+    constraints: PortfolioConstraints,
+) -> tuple[int, dict[str, int]]:
+    maximum_lots = sum(
+        (requests[security].intent.quantity - base[security]) // lot
+        for security in active
+    )
+    low = 0
+    high = maximum_lots
+    best = dict(base)
+    while low < high:
+        candidate_lots = (low + high + 1) // 2
+        proposed = _hamilton_quantities(
+            base=base,
+            active=active,
+            extra_lots=candidate_lots,
+            lot=lot,
+            requests=requests,
+        )
+        if _is_feasible(candidates, proposed, constraints):
+            low = candidate_lots
+            best = proposed
+        else:
+            high = candidate_lots - 1
+    if low == 0:
+        best = dict(base)
+    elif sum(best.values()) == sum(base.values()):
+        best = _hamilton_quantities(
+            base=base,
+            active=active,
+            extra_lots=low,
+            lot=lot,
+            requests=requests,
+        )
+    return low, best
+
+
 def _audit_digest(
     candidates: Sequence[BuyRequest],
     quantities: Mapping[str, int],
@@ -127,27 +211,38 @@ def allocate_a1(
     by_security = {candidate.intent.security: candidate for candidate in ordered}
 
     while active:
-        security = min(
-            active,
-            key=lambda item: (
-                Decimal(quantities[item] + lot)
-                / Decimal(by_security[item].intent.quantity),
-                item,
-            ),
+        active = {
+            security
+            for security in active
+            if quantities[security] < by_security[security].intent.quantity
+        }
+        if not active:
+            break
+        _, proposed = _maximum_hamilton_allocation(
+            candidates=ordered,
+            base=quantities,
+            active=active,
+            lot=lot,
+            requests=by_security,
+            constraints=constraints,
         )
-        request = by_security[security]
-        next_quantity = quantities[security] + lot
-        if next_quantity > request.intent.quantity:
-            active.remove(security)
-            continue
-        proposed = dict(quantities)
-        proposed[security] = next_quantity
-        if not _is_feasible(ordered, proposed, constraints):
-            active.remove(security)
-            continue
         quantities = proposed
-        if next_quantity + lot > request.intent.quantity:
-            active.remove(security)
+        remaining_lots = sum(
+            (by_security[security].intent.quantity - quantities[security]) // lot
+            for security in active
+        )
+        if not remaining_lots:
+            break
+        blocked: set[str] = set()
+        for security in active:
+            next_quantities = dict(quantities)
+            next_quantities[security] += lot
+            if not _is_feasible(ordered, next_quantities, constraints):
+                blocked.add(security)
+        if blocked:
+            active.difference_update(blocked)
+            continue
+        break
 
     allocations = _allocated_intents(ordered, quantities)
     ratios = {

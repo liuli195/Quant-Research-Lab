@@ -157,6 +157,21 @@ def test_a1_first_lot_uses_largest_fractional_remainder_not_security_code() -> N
     assert result.allocations[0].security == "B"
 
 
+def test_a1_floors_common_scale_before_code_tied_remainder() -> None:
+    requests = (
+        BuyRequest(_intent("A", quantity=100)),
+        BuyRequest(_intent("B", quantity=300)),
+    )
+    constraints = PortfolioConstraints(
+        state=PortfolioState(Decimal("100000"), Decimal("2010")),
+        risk_inputs=_inputs(("A", "B")),
+    )
+
+    result = allocate_a1(requests, constraints)
+
+    assert dict(result.quantities) == {"A": 100, "B": 100}
+
+
 def test_a1_infeasible_candidate_does_not_block_other_budget() -> None:
     requests = (
         BuyRequest(_intent("A", quantity=1000)),
