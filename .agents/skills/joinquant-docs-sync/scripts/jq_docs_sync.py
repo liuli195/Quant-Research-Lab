@@ -10,7 +10,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
@@ -24,6 +24,122 @@ FUNCTION_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\([^()\n]{0,240}\)")
 TABLE_RE = re.compile(
     r"\b(?:finance|macro|opt|bond|fund|jy|valuation)\.[A-Z][A-Z0-9_]+\b"
 )
+FENCE_TOKEN_RE = re.compile(r"```([A-Za-z0-9_+-]+)?")
+FACTOR_SOURCE_IDS = {"alpha101", "alpha191", "technical-analysis"}
+ALPHA_HELPER_NOISE_NAMES = {"a", "i"}
+ALPHA_HEADING_RE = re.compile(r"^(alpha_\d{3})(?:$|[（(])")
+TECHNICAL_HEADING_RE = re.compile(
+    r"^([A-Z][A-Z0-9_]*(?:-[A-Z][A-Z0-9_]*)*)\s*-\s*[\u4e00-\u9fff]"
+)
+TECHNICAL_HEADING_OVERRIDES = {
+    "BOLL-": "Bollinger_Bands",
+    "CDP-STD-": "CDP_STD",
+    "LWR-LWR": "LWR",
+    "SG-LB-": "SG_LB",
+    "SG-PF-": "SG_PF",
+    "SG-SMX-": "SG_SMX",
+    "TBP-STD-": "TBP_STD",
+}
+NON_API_CALL_NAMES = {
+    "DataFrame",
+    "BytesIO",
+    "DECIMAL",
+    "Dict",
+    "INTEGER",
+    "LOG",
+    "MyObject",
+    "Rank",
+    "STD",
+    "TTM",
+    "Series",
+    "ST",
+    "StringIO",
+    "TINYINT",
+    "VARCHAR",
+    "XDCE",
+    "XSGE",
+    "__init__",
+    "a",
+    "all",
+    "any",
+    "append",
+    "array",
+    "Aroon",
+    "AVEDEV",
+    "AvgQ",
+    "char",
+    "code",
+    "conbond",
+    "date",
+    "decode",
+    "decimal",
+    "datetime",
+    "dict",
+    "display_name",
+    "end_date",
+    "enumerate",
+    "etf",
+    "factor",
+    "filter",
+    "float",
+    "format",
+    "func",
+    "func1",
+    "groupby",
+    "head",
+    "i",
+    "in_",
+    "index",
+    "int",
+    "isnan",
+    "isoweekday",
+    "items",
+    "keys",
+    "len",
+    "like",
+    "limit",
+    "list",
+    "loads",
+    "map",
+    "major_xs",
+    "max",
+    "mean",
+    "min",
+    "minor_xs",
+    "now",
+    "open",
+    "options",
+    "pcf_ratio",
+    "print",
+    "ps_ratio",
+    "rand",
+    "range",
+    "read",
+    "report_type",
+    "repr",
+    "round",
+    "set",
+    "sorted",
+    "sort_values",
+    "std",
+    "stock",
+    "str",
+    "strftime",
+    "sum",
+    "tail",
+    "time",
+    "today",
+    "to_csv",
+    "tuple",
+    "type",
+    "values",
+    "write",
+    "weight",
+    "xs",
+    "varchar",
+    "futures",
+    "zip",
+}
 DETAIL_HEADINGS = {
     "调用方法",
     "参数",
@@ -70,6 +186,7 @@ def load_sources(path: Path) -> list[dict[str, Any]]:
             "output": str(source.get("output", "")).strip(),
             "selector": str(source.get("selector", "")).strip(),
             "min_chars": source.get("min_chars"),
+            "required_markers": source.get("required_markers", []),
         }
         if not all((item["source_id"], item["url"], item["output"], item["selector"])):
             raise SyncError(f"来源 #{index} 缺少必填字段")
@@ -88,6 +205,12 @@ def load_sources(path: Path) -> list[dict[str, Any]]:
             raise SyncError(f"来源 {item['source_id']} 的 min_chars 无效") from exc
         if item["min_chars"] < 1:
             raise SyncError(f"来源 {item['source_id']} 的 min_chars 必须大于 0")
+        markers = item["required_markers"]
+        if not isinstance(markers, list) or any(
+            not isinstance(marker, str) or not marker.strip() for marker in markers
+        ):
+            raise SyncError(f"来源 {item['source_id']} 的 required_markers 无效")
+        item["required_markers"] = [marker.strip() for marker in markers]
         for field in seen:
             value = str(item[field])
             if value in seen[field]:
@@ -107,6 +230,8 @@ def _inline(node: Tag | NavigableString) -> str:
     text = "".join(_inline(child) for child in node.children).strip()
     if node.name == "a" and text:
         href = str(node.get("href", "")).strip()
+        if href.startswith("/"):
+            href = urljoin("https://www.joinquant.com", href)
         return f"[{text}]({href})" if href else text
     if node.name == "code" and text:
         return f"`{text}`"
@@ -121,7 +246,7 @@ def _table_to_markdown(table: Tag) -> str:
     rows: list[list[str]] = []
     for row in table.find_all("tr"):
         cells = [
-            re.sub(r"\s+", " ", cell.get_text(" ", strip=True))
+            re.sub(r"\s+", " ", _inline(cell)).strip()
             for cell in row.find_all(["th", "td"])
         ]
         if cells:
@@ -145,7 +270,7 @@ def _block(node: Tag | NavigableString) -> str:
         level = int(name[1])
         return f"{'#' * level} {_inline(node)}\n\n"
     if name == "pre":
-        code = node.get_text("\n", strip=True).replace("```", "`` `")
+        code = node.get_text("", strip=False).strip().replace("```", "`` `")
         return f"```\n{code}\n```\n\n"
     if name == "table":
         return _table_to_markdown(node)
@@ -154,7 +279,24 @@ def _block(node: Tag | NavigableString) -> str:
         ordered = name == "ol"
         for number, item in enumerate(node.find_all("li", recursive=False), start=1):
             prefix = f"{number}. " if ordered else "- "
-            lines.append(prefix + re.sub(r"\s+", " ", _inline(item)).strip())
+            inline_parts: list[str] = []
+            nested_blocks: list[str] = []
+            for child in item.children:
+                if isinstance(child, Tag) and child.name in {
+                    "blockquote",
+                    "ol",
+                    "pre",
+                    "table",
+                    "ul",
+                }:
+                    nested_blocks.append(_block(child).strip())
+                else:
+                    inline_parts.append(_inline(child))
+            inline_text = re.sub(r"\s+", " ", "".join(inline_parts)).strip()
+            rendered = prefix + inline_text
+            if nested_blocks:
+                rendered += "\n\n" + "\n\n".join(nested_blocks)
+            lines.append(rendered.rstrip())
         return "\n".join(lines) + "\n\n" if lines else ""
     if name == "blockquote":
         text = node.get_text(" ", strip=True)
@@ -167,7 +309,33 @@ def _block(node: Tag | NavigableString) -> str:
     return "".join(_block(child) for child in node.children)
 
 
-def html_to_markdown(html: str, selector: str, min_chars: int) -> str:
+def _normalize_markdown_fences(markdown: str) -> str:
+    parts: list[str] = []
+    position = 0
+    for match in FENCE_TOKEN_RE.finditer(markdown):
+        before = markdown[position : match.start()].rstrip(" \t")
+        parts.append(before)
+        if before and not before.endswith("\n"):
+            parts.append("\n")
+        parts.append(f"```{match.group(1) or ''}\n")
+        position = match.end()
+        while position < len(markdown) and markdown[position] in " \t":
+            position += 1
+    parts.append(markdown[position:])
+    return "".join(parts)
+
+
+def _validate_markdown_fences(markdown: str) -> None:
+    fence_lines = [line for line in markdown.splitlines() if "```" in line]
+    if any(not re.fullmatch(r"```[A-Za-z0-9_+-]*", line) for line in fence_lines):
+        raise SyncError("Markdown 包含行内代码围栏")
+    if len(fence_lines) % 2:
+        raise SyncError("Markdown 代码围栏未闭合")
+
+
+def html_to_markdown(
+    html: str, selector: str, min_chars: int, required_markers: list[str]
+) -> str:
     soup = BeautifulSoup(html, "html.parser")
     container = soup.select_one(selector)
     if container is None:
@@ -177,11 +345,18 @@ def html_to_markdown(html: str, selector: str, min_chars: int) -> str:
         raise SyncError(f"正文长度 {len(plain)} 低于门禁 {min_chars}")
     if any(marker in plain[:500] for marker in ERROR_MARKERS):
         raise SyncError("页面命中错误页特征")
-    markdown = _block(container)
+    missing_markers = [marker for marker in required_markers if marker not in plain]
+    if missing_markers:
+        raise SyncError(f"正文缺少完整性标记: {', '.join(missing_markers)}")
+    markdown = _normalize_markdown_fences(_block(container))
+    markdown = re.sub(
+        r"\]\((/[^)\s]+)\)",
+        lambda match: f"]({urljoin('https://www.joinquant.com', match.group(1))})",
+        markdown,
+    )
     markdown = re.sub(r"[ \t]+\n", "\n", markdown)
     markdown = re.sub(r"\n{3,}", "\n\n", markdown).strip() + "\n"
-    if markdown.count("```") % 2:
-        raise SyncError("Markdown 代码围栏未闭合")
+    _validate_markdown_fences(markdown)
     return markdown
 
 
@@ -206,16 +381,71 @@ def extract_api_entries(markdown: str, source_id: str) -> list[dict[str, str]]:
 
     entries: dict[str, dict[str, str]] = {}
     for current_heading, section in sections:
-        has_input = "参数" in section or "输入" in section
-        has_output = "返回" in section or "输出" in section
-        if has_input and has_output:
+        catalog_match = None
+        catalog_name = None
+        if source_id in {"alpha101", "alpha191"}:
+            catalog_match = ALPHA_HEADING_RE.match(current_heading)
+        elif source_id == "technical-analysis":
+            catalog_name = next(
+                (
+                    name
+                    for prefix, name in TECHNICAL_HEADING_OVERRIDES.items()
+                    if current_heading.startswith(prefix)
+                ),
+                None,
+            )
+            if catalog_name is None:
+                catalog_match = TECHNICAL_HEADING_RE.match(current_heading)
+        if catalog_match or catalog_name:
+            name = catalog_name or catalog_match.group(1)
+            key = f"{source_id}:factor:{name}"
+            entries[key] = {
+                "key": key,
+                "source_id": source_id,
+                "kind": "factor",
+                "name": name,
+                "heading": current_heading,
+                "evidence": current_heading,
+            }
+        if source_id in {"alpha101", "alpha191"} and current_heading.startswith(
+            "alpha（"
+        ):
+            key = f"{source_id}:function:alpha"
+            entries[key] = {
+                "key": key,
+                "source_id": source_id,
+                "kind": "function",
+                "name": "alpha",
+                "heading": current_heading,
+                "evidence": current_heading,
+            }
+        if (
+            source_id in {"alpha101", "alpha191"}
+            and current_heading == "公用函数说明"
+        ):
             for match in FUNCTION_RE.finditer(section):
                 name = match.group(1)
-                if name in {"query", "run_query", "print"}:
+                if name in ALPHA_HELPER_NOISE_NAMES:
+                    continue
+                key = f"{source_id}:function:{name}"
+                entries[key] = {
+                    "key": key,
+                    "source_id": source_id,
+                    "kind": "function",
+                    "name": name,
+                    "heading": current_heading,
+                    "evidence": match.group(0),
+                }
+        has_input = "参数" in section or "输入" in section
+        has_output = "返回" in section or "输出" in section
+        if has_input and has_output and source_id not in FACTOR_SOURCE_IDS:
+            for match in FUNCTION_RE.finditer(section):
+                name = match.group(1)
+                if name in NON_API_CALL_NAMES:
                     continue
                 kind = (
                     "factor"
-                    if name.startswith("alpha_") or "因子" in current_heading
+                    if name.startswith("alpha_") or source_id in FACTOR_SOURCE_IDS
                     else "function"
                 )
                 key = f"{source_id}:{kind}:{name}"
@@ -236,6 +466,42 @@ def extract_api_entries(markdown: str, source_id: str) -> list[dict[str, str]]:
                 "name": table,
                 "heading": current_heading,
                 "evidence": table,
+            }
+    if source_id == "factor-values":
+        in_factor_table = False
+        for line in markdown.splitlines():
+            if not line.startswith("|"):
+                in_factor_table = False
+                continue
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            if cells and cells[0].replace(" ", "").lower() == "因子code":
+                in_factor_table = True
+                continue
+            if not in_factor_table or not cells:
+                continue
+            name = cells[0]
+            if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name):
+                continue
+            key = f"{source_id}:factor:{name}"
+            entries[key] = {
+                "key": key,
+                "source_id": source_id,
+                "kind": "factor",
+                "name": name,
+                "heading": "因子目录",
+                "evidence": line,
+            }
+    if source_id == "macro-data":
+        for match in re.finditer(r"表名[：:]\s*(MAC_[A-Z0-9_]+)", markdown):
+            table = f"macro.{match.group(1)}"
+            key = f"{source_id}:table:{table}"
+            entries[key] = {
+                "key": key,
+                "source_id": source_id,
+                "kind": "table",
+                "name": table,
+                "heading": "宏观数据表",
+                "evidence": match.group(0),
             }
     return [entries[key] for key in sorted(entries)]
 
@@ -264,8 +530,12 @@ def _live_html(sources: list[dict[str, Any]]) -> dict[str, str]:
                     status = "无响应" if response is None else response.status
                     raise SyncError(f"来源 {source['source_id']} 请求失败: {status}")
                 page.wait_for_function(
-                    "([selector, minChars]) => (document.querySelector(selector)?.innerText.length || 0) >= minChars",
-                    arg=[source["selector"], source["min_chars"]],
+                    "([selector, minChars, markers]) => { const text = document.querySelector(selector)?.innerText || ''; return text.length >= minChars && markers.every(marker => text.includes(marker)); }",
+                    arg=[
+                        source["selector"],
+                        source["min_chars"],
+                        source["required_markers"],
+                    ],
                     timeout=30_000,
                 )
                 final_host = urlparse(page.url).hostname or ""
@@ -291,7 +561,10 @@ def build_candidates(
     entries: list[dict[str, str]] = []
     for source in sources:
         markdown = html_to_markdown(
-            html_by_id[source["source_id"]], source["selector"], source["min_chars"]
+            html_by_id[source["source_id"]],
+            source["selector"],
+            source["min_chars"],
+            source["required_markers"],
         )
         candidates[source["output"]] = markdown.encode("utf-8")
         entries.extend(extract_api_entries(markdown, source["source_id"]))
@@ -407,7 +680,10 @@ def sync(sources_path: Path, output: Path, html_dir: Path | None) -> dict[str, A
         },
         "api_entries": len(entries),
     }
-    with tempfile.TemporaryDirectory(prefix="joinquant-docs-sync-") as temp:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=".joinquant-docs-sync-", dir=output.parent
+    ) as temp:
         stage = Path(temp)
         for name, data in candidates.items():
             (stage / name).write_bytes(data)

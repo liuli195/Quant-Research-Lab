@@ -27,7 +27,9 @@
           "tests\\test_skill_layout.py"
         ],
         "paths": [
+          ".agents/skills/joinquant-docs-sync/**",
           ".agents/skills/joinquant-archive-sync/**",
+          ".claude/skills/joinquant-docs-sync",
           ".claude/skills/joinquant-archive-sync",
           ".gitattributes",
           "requirements*.txt",
@@ -35,7 +37,9 @@
           "tests/test_skill_layout.py"
         ],
         "inputs": [
+          ".agents/skills/joinquant-docs-sync/**",
           ".agents/skills/joinquant-archive-sync/**",
+          ".claude/skills/joinquant-docs-sync",
           ".claude/skills/joinquant-archive-sync",
           ".gitattributes",
           "requirements.txt",

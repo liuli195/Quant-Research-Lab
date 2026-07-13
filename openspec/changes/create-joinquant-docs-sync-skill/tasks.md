@@ -9,3 +9,7 @@
 ## 3. 仓库验证
 
 - [x] 3.1 扩展 Skill（技能）布局与 Build and Verify（构建与验证）配置，运行公开入口端到端回归、Skill（技能）校验和仓库完整验证
+
+## 4. 真实文档同步与对比
+
+- [x] 4.1 运行 `preview → sync → verify`（预览→同步→校验）生成聚宽官方文档快照，并与 `D:\My Project\Quant Trading\docs\joinquant-api` 的 15 份参考文档对比 API（接口）、数据表、因子和主题覆盖，确认完整性或补齐遗漏

@@ -5,15 +5,103 @@
       "source_id": "jqdata",
       "url": "https://www.joinquant.com/help/api/help?name=JQData",
       "output": "JQData.md",
-      "selector": ".js-app",
+      "selector": ".help-api-right",
       "min_chars": 5000
     },
     {
       "source_id": "platform-api",
       "url": "https://www.joinquant.com/help/api/help?name=api",
       "output": "API.md",
-      "selector": ".js-app",
+      "selector": ".help-api-right",
       "min_chars": 2000
+    },
+    {
+      "source_id": "stock",
+      "url": "https://www.joinquant.com/help/api/help?name=Stock",
+      "output": "JQ_股票数据.md",
+      "selector": ".help-api-right",
+      "min_chars": 1000
+    },
+    {
+      "source_id": "fund",
+      "url": "https://www.joinquant.com/help/api/help?name=fund",
+      "output": "JQ_场内基金数据.md",
+      "selector": ".help-api-right",
+      "min_chars": 1000
+    },
+    {
+      "source_id": "future",
+      "url": "https://www.joinquant.com/help/api/help?name=Future",
+      "output": "JQ_期货数据.md",
+      "selector": ".help-api-right",
+      "min_chars": 1000
+    },
+    {
+      "source_id": "option",
+      "url": "https://www.joinquant.com/help/api/help?name=Option",
+      "output": "JQ_期权数据.md",
+      "selector": ".help-api-right",
+      "min_chars": 1000
+    },
+    {
+      "source_id": "index",
+      "url": "https://www.joinquant.com/help/api/help?name=index",
+      "output": "JQ_指数数据.md",
+      "selector": ".help-api-right",
+      "min_chars": 1000
+    },
+    {
+      "source_id": "plate-data",
+      "url": "https://www.joinquant.com/help/api/help?name=plateData",
+      "output": "JQ_行业概念数据.md",
+      "selector": ".help-api-right",
+      "min_chars": 1000
+    },
+    {
+      "source_id": "macro-data",
+      "url": "https://www.joinquant.com/help/api/help?name=macroData",
+      "output": "JQ_宏观经济数据.md",
+      "selector": ".help-api-right",
+      "min_chars": 1000,
+      "required_markers": ["old_dependency_ratio"]
+    },
+    {
+      "source_id": "faq",
+      "url": "https://www.joinquant.com/help/api/help?name=faq",
+      "output": "JQ_常见问题.md",
+      "selector": ".help-api-right",
+      "min_chars": 1000
+    },
+    {
+      "source_id": "factor-values",
+      "url": "https://www.joinquant.com/help/api/help?name=factor_values",
+      "output": "JQ_聚宽因子库.md",
+      "selector": ".help-api-right",
+      "min_chars": 1000
+    },
+    {
+      "source_id": "alpha101",
+      "url": "https://www.joinquant.com/help/api/help?name=Alpha101",
+      "output": "JQ_Alpha101.md",
+      "selector": ".help-api-right",
+      "min_chars": 1000,
+      "required_markers": ["alpha_101("]
+    },
+    {
+      "source_id": "alpha191",
+      "url": "https://www.joinquant.com/help/api/help?name=Alpha191",
+      "output": "JQ_Alpha191.md",
+      "selector": ".help-api-right",
+      "min_chars": 1000,
+      "required_markers": ["alpha_191("]
+    },
+    {
+      "source_id": "technical-analysis",
+      "url": "https://www.joinquant.com/help/api/help?name=technicalanalysis",
+      "output": "JQ_技术分析指标.md",
+      "selector": ".help-api-right",
+      "min_chars": 1000,
+      "required_markers": ["PUCU("]
     }
   ]
 }
