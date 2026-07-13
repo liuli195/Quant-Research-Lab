@@ -1,6 +1,6 @@
 workflow: tweak
 language: zh-CN
-phase: build
+phase: archive
 context_compression: beta
 build_mode: direct
 build_pause: null
@@ -13,12 +13,12 @@ auto_transition: true
 base_ref: f5be4d9e887de0cdcde1c6fcb146e8c42a7dfec0
 design_doc: null
 plan: null
-verify_result: fail
+verify_result: pass
 verification_report: docs/superpowers/reports/2026-07-13-create-joinquant-docs-sync-skill-verify.md
 branch_status: handled
 created_at: 2026-07-13
-verified_at: null
-archived: false
+verified_at: 2026-07-13
+archived: true
 direct_override: null
 handoff_context: null
 handoff_hash: null

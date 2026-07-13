@@ -1,0 +1,69 @@
+# joinquant-docs-sync Specification
+
+## Purpose
+TBD - created by archiving change create-joinquant-docs-sync-skill. Update Purpose after archive.
+## Requirements
+### Requirement: 同步必须由显式官方来源清单驱动
+系统 MUST（必须）只读取来源清单中明确列出的聚宽官方公开文档，并为每个来源定义唯一 `source_id`、规范化 URL（网页地址）、目标文件名、正文选择器和最小内容长度。系统 MUST NOT（不得）登录聚宽、读取凭证或访问非清单来源。
+
+#### Scenario: 读取有效来源清单
+- **WHEN** 调用者运行预览或同步，且来源清单中的标识、URL（网页地址）和目标文件名均唯一
+- **THEN** 系统只访问这些官方来源并将结果映射到各自目标文件
+
+#### Scenario: 来源清单存在冲突
+- **WHEN** 两个来源具有相同标识、URL（网页地址）或目标文件名
+- **THEN** 系统在启动浏览器或写入文件前拒绝执行并报告冲突项
+
+### Requirement: 预览不得改变目标目录
+系统 MUST 提供 `preview`（预览）命令，渲染并转换全部来源，输出文档和 API（接口）的新增、修改与删除摘要，但不得创建、修改或删除目标目录中的文件。
+
+#### Scenario: 预览检测到远端变化
+- **WHEN** 远端规范化内容与本地清单摘要不同
+- **THEN** 系统返回变化文件和 API（接口）稳定键，且目标目录内容与摘要保持不变
+
+### Requirement: 同步必须验证后再写入
+系统 MUST 在写入前验证 HTTP（网页请求）结果、正文选择器、最小长度、错误页特征、Markdown（文档）代码围栏和 API（接口）索引冲突。任一来源失败时 MUST 保留上次完整版本；内容摘要未变化时 MUST 不重写文件。
+
+#### Scenario: 全部来源有效并发生变化
+- **WHEN** 调用者运行 `sync`（同步），全部候选文档和索引通过门禁且至少一个摘要变化
+- **THEN** 系统从临时目录替换变化文件，最后写入包含来源、时间、文件摘要和条目数的清单
+
+#### Scenario: 页面变成登录页或空页
+- **WHEN** 任一来源缺少正文、低于最小长度或包含登录/错误页特征
+- **THEN** 系统返回失败，不修改任何已有文档、索引或清单
+
+#### Scenario: 重复同步相同内容
+- **WHEN** 所有规范化内容与已记录 SHA-256（完整性摘要）一致
+- **THEN** 系统返回零变化并保持现有文件修改时间不变
+
+### Requirement: API 索引必须可离线复核
+系统 MUST 从规范化文档识别函数、数据表和因子条目，并为每个条目记录 `source_id`、类型、名称、稳定键、标题和签名或表名证据。稳定键 MUST 使用 `source_id:kind:name`，字段行不得被误识别为独立 API（接口）。
+
+#### Scenario: 不同来源包含同名函数
+- **WHEN** 两个来源都包含 `get_security_info` 函数
+- **THEN** 系统生成两个不同稳定键并分别保留来源和标题证据
+
+#### Scenario: 文档包含数据表和普通字段
+- **WHEN** 一个章节包含完整限定表名及其字段表
+- **THEN** 系统只为完整数据表生成 API（接口）条目，不为字段名生成独立条目
+
+### Requirement: 校验必须从文件重算证据
+系统 MUST 提供 `verify`（校验）命令，从目标文件重新计算 SHA-256（完整性摘要）、文档数量和 API（接口）索引稳定键，并与清单比较；不得只信任清单声明。
+
+#### Scenario: 已同步文件被修改
+- **WHEN** 文档、API（接口）索引或清单引用文件的内容发生变化
+- **THEN** 校验失败并指出不匹配文件，不更新清单
+
+### Requirement: 仓库 Skill 必须提供统一发现入口
+仓库 MUST 在 `.agents/skills/joinquant-docs-sync/` 保存唯一真实 Skill（技能）目录，并让 `.claude/skills/joinquant-docs-sync` 通过同仓库相对 SymbolicLink（符号链接）指向该目录。Skill（技能）所有动作 MUST 路由到同一 CLI（命令行接口）。
+
+#### Scenario: Codex 和 Claude 发现技能
+- **WHEN** Codex（代码代理）和 Claude（代码代理）分别加载 `joinquant-docs-sync`
+- **THEN** 两端解析到同一 `SKILL.md` 和 `jq_docs_sync.py` 文件摘要
+
+### Requirement: 端到端回归必须覆盖发布入口
+实现完成前 MUST 从仓库 Skill（技能）公开命令运行离线 `self-test`（自检），在临时目录复用生产转换、索引、写入和校验核心，覆盖预览、首次同步、重复同步和篡改检测。单元测试组合不得替代该主流程回归。
+
+#### Scenario: 离线主流程自检
+- **WHEN** 调用者从 `.venv`（虚拟环境）执行 Skill（技能）的 `self-test`（自检）命令
+- **THEN** 系统在临时目录完成预览、首次同步、零变化重复同步和校验，不访问网络或历史归档
