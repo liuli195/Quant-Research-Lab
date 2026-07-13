@@ -281,13 +281,13 @@ def test_complete_run_uses_fixed_stages_sanitized_environment_and_atomic_path(
 
     def assert_invocation(command: list[str], kwargs: dict[str, object]) -> None:
         assert Path(command[0]) == (fake_root / ".venv/Scripts/python.exe").resolve()
-        assert command[1:3] == [
-            "-m",
-            "scripts.research.local_quant_research.adapter_guard",
-        ]
-        assert Path(command[command.index("--entry") + 1]) == (
-            fake_root / "projects/generic-research/adapter.py"
+        assert Path(command[1]) == (
+            fake_root / "scripts/research/local_quant_research/adapter_guard.py"
         ).resolve()
+        assert Path(command[command.index("--entry") + 1]) == (
+            Path(command[command.index("--execution-root") + 1])
+            / "repository/projects/generic-research/adapter.py"
+        )
         assert kwargs["shell"] is False
         assert Path(kwargs["cwd"]) == _output_dir(command)
         assert "RESEARCH_TEST_PASSWORD" not in kwargs["env"]
@@ -534,7 +534,7 @@ def test_project_write_outside_staging_is_detected(
     assert "outside staging" in " ".join(result.reasons)
 
 
-def test_input_replaced_during_execution_cannot_publish_stale_evidence(
+def test_project_reads_frozen_input_when_original_changes_temporarily(
     tmp_path: Path,
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -545,34 +545,53 @@ def test_input_replaced_during_execution_cannot_publish_stale_evidence(
 
     def process(command: list[str], **kwargs):
         declared_input.write_text("tampered input\n", encoding="utf-8")
+        frozen_project_config = Path(command[command.index("--project-config") + 1])
+        frozen_input = frozen_project_config.parent / "input.txt"
+        value_used = frozen_input.read_text(encoding="utf-8")
         os.utime(
             declared_input,
             ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
         )
-        return _successful_process()(command, **kwargs)
+        declared_input.write_text("declared input\n", encoding="utf-8")
+        os.utime(
+            declared_input,
+            ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+        )
+        output_dir = _output_dir(command)
+        _write_json(
+            output_dir / "project-status.json",
+            {"schema_version": 1, "status": "complete", "reason_codes": []},
+        )
+        _write_json(output_dir / "result.json", {"input": value_used})
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     monkeypatch.setattr(subprocess, "run", process)
 
     result = run_project(config_path, repo_root=fake_root)
 
-    assert result.status == "failed"
-    assert "input" in " ".join(result.reasons)
+    assert result.status == "complete"
+    output = json.loads((result.run_path / "result.json").read_text(encoding="utf-8"))
+    assert output == {"input": "declared input\n"}
     project_root = fake_root / ".local/quant-research/generic-research"
-    assert not any(path.is_dir() and len(path.name) == 64 for path in project_root.iterdir())
+    assert not list(project_root.glob(".*.inputs"))
 
 
 def test_adapter_guard_allows_staging_writes_and_blocks_external_writes(
     repo_root: Path,
     tmp_path: Path,
 ) -> None:
-    adapter = tmp_path / "adapter.py"
+    execution_root = tmp_path / "execution"
+    adapter = execution_root / "repository" / "adapter.py"
+    adapter.parent.mkdir(parents=True)
     adapter.write_text(
         "from pathlib import Path\n"
         "import sys\n"
         "output = Path(sys.argv[1])\n"
         "(output / 'inside.txt').write_text('inside', encoding='utf-8')\n"
-        "if len(sys.argv) > 2:\n"
-        "    Path(sys.argv[2]).write_text('escaped', encoding='utf-8')\n",
+        "if len(sys.argv) > 3 and sys.argv[2] == 'write':\n"
+        "    Path(sys.argv[3]).write_text('escaped', encoding='utf-8')\n"
+        "if len(sys.argv) > 3 and sys.argv[2] == 'read':\n"
+        "    Path(sys.argv[3]).read_text(encoding='utf-8')\n",
         encoding="utf-8",
     )
     output_dir = tmp_path / "output"
@@ -585,6 +604,12 @@ def test_adapter_guard_allows_staging_writes_and_blocks_external_writes(
         "scripts.research.local_quant_research.adapter_guard",
         "--staging-root",
         str(output_dir),
+        "--execution-root",
+        str(execution_root),
+        "--repository-root",
+        str(repo_root),
+        "--venv-root",
+        str(repo_root / ".venv"),
         "--entry",
         str(adapter),
         "--",
@@ -604,7 +629,7 @@ def test_adapter_guard_allows_staging_writes_and_blocks_external_writes(
         check=False,
     )
     blocked = subprocess.run(
-        [*base_command, str(escaped)],
+        [*base_command, "write", str(escaped)],
         cwd=output_dir,
         env=environment,
         capture_output=True,
@@ -617,3 +642,14 @@ def test_adapter_guard_allows_staging_writes_and_blocks_external_writes(
     assert (output_dir / "inside.txt").read_text(encoding="utf-8") == "inside"
     assert blocked.returncode != 0
     assert not escaped.exists()
+
+    blocked_read = subprocess.run(
+        [*base_command, "read", str(repo_root / "AGENTS.md")],
+        cwd=output_dir,
+        env=environment,
+        capture_output=True,
+        text=True,
+        shell=False,
+        check=False,
+    )
+    assert blocked_read.returncode != 0

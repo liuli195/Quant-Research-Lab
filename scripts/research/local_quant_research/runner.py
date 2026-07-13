@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import shutil
 import subprocess
 import uuid
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Mapping, Sequence
 
@@ -69,6 +71,15 @@ class InputIntegrityError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+@dataclass(frozen=True)
+class _FrozenExecutionInputs:
+    root: Path
+    repository: Path
+    market_data: Path
+    project_entry: Path
+    project_config: Path
 
 
 def _inside(path: Path, root: Path) -> bool:
@@ -347,6 +358,7 @@ def _code_identity(config: RunConfig, *, repo_root: Path) -> tuple[str, dict[str
 def _input_evidence(config: RunConfig, *, repo_root: Path) -> tuple[str, str, dict[str, object]]:
     code_digest, code_document = _code_identity(config, repo_root=repo_root)
     project_config_digest = file_digest(config.project_config)
+    code_identity_digest = file_digest(config.code_identity)
     declared = [
         {
             "path": path.relative_to(repo_root).as_posix(),
@@ -357,17 +369,122 @@ def _input_evidence(config: RunConfig, *, repo_root: Path) -> tuple[str, str, di
     config_identity = {
         "run_config": dict(config.document),
         "project_config_sha256": project_config_digest,
+        "code_identity_sha256": code_identity_digest,
         "declared_inputs": declared,
     }
     config_digest = canonical_digest(config_identity)
     evidence = {
         "config_sha256": config_digest,
         "project_config_sha256": project_config_digest,
+        "code_identity_sha256": code_identity_digest,
         "code_sha256": code_digest,
         "code_identity": code_document,
         "declared_inputs": declared,
     }
     return config_digest, code_digest, evidence
+
+
+def _copy_verified_file(source: Path, target: Path, expected_sha256: str) -> None:
+    try:
+        content = source.read_bytes()
+    except OSError as exc:
+        raise InputIntegrityError(
+            "run_input_changed",
+            "a run input could not be frozen",
+        ) from exc
+    if hashlib.sha256(content).hexdigest() != expected_sha256:
+        raise InputIntegrityError(
+            "run_input_changed",
+            "a run input changed before it could be frozen",
+        )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content)
+
+
+def _freeze_execution_inputs(
+    *,
+    config: RunConfig,
+    repo_root: Path,
+    market_root: Path,
+    snapshot_document: Mapping[str, object],
+    snapshot_digest: str,
+    snapshot_normalized_digest: str,
+    inputs: Mapping[str, object],
+    execution_root: Path,
+) -> _FrozenExecutionInputs:
+    frozen_repo = execution_root / "repository"
+    frozen_market = execution_root / "market-data"
+    try:
+        execution_root.mkdir()
+        project_config_relative = config.project_config.relative_to(repo_root)
+        code_identity_relative = config.code_identity.relative_to(repo_root)
+        _copy_verified_file(
+            config.project_config,
+            frozen_repo / project_config_relative,
+            str(inputs["project_config_sha256"]),
+        )
+        _copy_verified_file(
+            config.code_identity,
+            frozen_repo / code_identity_relative,
+            str(inputs["code_identity_sha256"]),
+        )
+        for item in inputs["code_identity"]["files"]:
+            relative = Path(str(item["path"]))
+            _copy_verified_file(
+                repo_root / relative,
+                frozen_repo / relative,
+                str(item["sha256"]),
+            )
+        for item in inputs["declared_inputs"]:
+            relative = Path(str(item["path"]))
+            _copy_verified_file(
+                repo_root / relative,
+                frozen_repo / relative,
+                str(item["sha256"]),
+            )
+
+        snapshot_id = config.snapshot_id
+        _copy_verified_file(
+            market_root / "snapshots" / f"{snapshot_id}.json",
+            frozen_market / "snapshots" / f"{snapshot_id}.json",
+            snapshot_digest,
+        )
+        for batch in snapshot_document["batches"]:
+            batch_id = str(batch["batch_id"])
+            source_dir = market_root / "batches" / batch_id
+            target_dir = frozen_market / "batches" / batch_id
+            for name, digest_field in (
+                ("manifest.json", "manifest_sha256"),
+                ("market-data.csv", "csv_sha256"),
+                ("validation.json", "validation_sha256"),
+            ):
+                _copy_verified_file(
+                    source_dir / name,
+                    target_dir / name,
+                    str(batch[digest_field]),
+                )
+        frozen_view = open_snapshot(snapshot_id, root=frozen_market)
+        if frozen_view.digest != snapshot_normalized_digest:
+            raise InputIntegrityError(
+                "run_input_changed",
+                "the frozen market-data snapshot differs from the run identity",
+            )
+        return _FrozenExecutionInputs(
+            root=execution_root,
+            repository=frozen_repo,
+            market_data=frozen_market,
+            project_entry=frozen_repo / config.project_entry.relative_to(repo_root),
+            project_config=frozen_repo / project_config_relative,
+        )
+    except (KeyError, TypeError, OSError, MarketDataError, InputIntegrityError) as exc:
+        if execution_root.exists():
+            shutil.rmtree(execution_root, ignore_errors=True)
+        if isinstance(exc, InputIntegrityError):
+            raise
+        raise InputIntegrityError(
+            "run_input_changed",
+            "run inputs could not be frozen",
+        ) from exc
 
 
 def _run_inputs_unchanged(
@@ -416,7 +533,7 @@ def _run_inputs_unchanged(
     )
 
 
-def _sanitized_environment(repo_root: Path) -> dict[str, str]:
+def _sanitized_environment(python_path: Path) -> dict[str, str]:
     allowed = (
         "SYSTEMROOT",
         "WINDIR",
@@ -432,7 +549,7 @@ def _sanitized_environment(repo_root: Path) -> dict[str, str]:
     environment = {key: os.environ[key] for key in allowed if key in os.environ}
     environment.update(
         {
-            "PYTHONPATH": str(repo_root),
+            "PYTHONPATH": str(python_path),
             "PYTHONNOUSERSITE": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONUTF8": "1",
@@ -441,14 +558,18 @@ def _sanitized_environment(repo_root: Path) -> dict[str, str]:
     return environment
 
 
-def _repo_state(repo_root: Path, *, staging: Path) -> dict[str, tuple[int, int]]:
+def _repo_state(
+    repo_root: Path,
+    *,
+    ignored_roots: Sequence[Path],
+) -> dict[str, tuple[int, int]]:
     ignored_names = {".git", ".venv", ".pytest_cache", ".ruff_cache", "__pycache__"}
     state: dict[str, tuple[int, int]] = {}
-    staging = staging.resolve()
+    ignored = tuple(path.resolve() for path in ignored_roots)
     for path in repo_root.rglob("*"):
         if any(part in ignored_names for part in path.relative_to(repo_root).parts):
             continue
-        if _inside(path, staging):
+        if any(_inside(path, root) for root in ignored):
             continue
         if path.is_file() and not path.is_symlink():
             stat = path.stat()
@@ -632,39 +753,93 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
     project_root.mkdir(parents=True, exist_ok=True)
     attempt_id = uuid.uuid4().hex
     staging = project_root / f".{run_id}.{attempt_id}.tmp"
+    execution_root = project_root / f".{run_id}.{attempt_id}.inputs"
     staging.mkdir()
-    before_state = _repo_state(repo_root, staging=staging)
+    try:
+        frozen = _freeze_execution_inputs(
+            config=config,
+            repo_root=repo_root,
+            market_root=market_root,
+            snapshot_document=snapshot_document,
+            snapshot_digest=snapshot_digest,
+            snapshot_normalized_digest=snapshot_view.digest,
+            inputs=inputs,
+            execution_root=execution_root,
+        )
+    except InputIntegrityError:
+        return _attempt_result(
+            repo_root=repo_root,
+            project_id=config.project_id,
+            status="failed",
+            stage="project_execution",
+            code="run_input_changed",
+            message="run inputs could not be frozen for execution",
+            run_id=run_id,
+            stages=(*stages, StageRecord("project_execution", "failed")),
+            staging=staging,
+        )
+    before_state = _repo_state(
+        repo_root,
+        ignored_roots=(staging, execution_root),
+    )
     command = [
         str((repo_root / config.command[0]).resolve()),
-        "-m",
-        "scripts.research.local_quant_research.adapter_guard",
+        str(
+            (
+                repo_root
+                / "scripts/research/local_quant_research/adapter_guard.py"
+            ).resolve()
+        ),
         "--staging-root",
         str(staging.resolve()),
+        "--execution-root",
+        str(frozen.root.resolve()),
+        "--repository-root",
+        str(repo_root),
+        "--venv-root",
+        str((repo_root / ".venv").resolve()),
         "--entry",
-        str((repo_root / config.command[1]).resolve()),
+        str(frozen.project_entry.resolve()),
         "--",
         *config.command[2:],
         "--snapshot-manifest",
-        str(snapshot_path.resolve()),
+        str((frozen.market_data / "snapshots" / f"{snapshot_id}.json").resolve()),
         "--market-data-root",
-        str(market_root.resolve()),
+        str(frozen.market_data.resolve()),
         "--project-config",
-        str(config.project_config.resolve()),
+        str(frozen.project_config.resolve()),
         "--output-dir",
         str(staging.resolve()),
     ]
+    completed = None
     try:
         completed = subprocess.run(
             command,
             cwd=staging,
             shell=False,
-            env=_sanitized_environment(repo_root),
+            env=_sanitized_environment(frozen.repository),
             capture_output=True,
             text=True,
             timeout=600,
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        shutil.rmtree(execution_root)
+    except OSError:
+        return _attempt_result(
+            repo_root=repo_root,
+            project_id=config.project_id,
+            status="failed",
+            stage="project_execution",
+            code="input_cleanup_failed",
+            message="frozen run inputs could not be cleaned up",
+            run_id=run_id,
+            stages=(*stages, StageRecord("project_execution", "failed")),
+            staging=staging,
+        )
+    if completed is None:
         return _attempt_result(
             repo_root=repo_root,
             project_id=config.project_id,
@@ -676,7 +851,10 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
             stages=(*stages, StageRecord("project_execution", "failed")),
             staging=staging,
         )
-    after_state = _repo_state(repo_root, staging=staging)
+    after_state = _repo_state(
+        repo_root,
+        ignored_roots=(staging, execution_root),
+    )
     if after_state != before_state:
         return _attempt_result(
             repo_root=repo_root,

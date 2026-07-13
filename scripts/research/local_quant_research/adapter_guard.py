@@ -66,12 +66,32 @@ def _open_is_write(args: Sequence[object]) -> bool:
     return mode_writes or flag_writes
 
 
-def install_write_guard(output_dir: Path) -> None:
+def install_access_guard(
+    output_dir: Path,
+    *,
+    execution_root: Path,
+    repository_root: Path,
+    venv_root: Path,
+) -> None:
     output_root = Path(output_dir).resolve()
+    execution_root = Path(execution_root).resolve()
+    repository_root = Path(repository_root).resolve()
+    venv_root = Path(venv_root).resolve()
 
     def audit(event: str, args: tuple[object, ...]) -> None:
         if event == "open" and args and _open_is_write(args):
             _require_staging_path(args[0], output_root)
+        elif event == "open" and args:
+            path = _path_from_event(args[0])
+            if (
+                path is not None
+                and _inside(path, repository_root)
+                and not any(
+                    _inside(path, allowed)
+                    for allowed in (output_root, execution_root, venv_root)
+                )
+            ):
+                raise PermissionError("adapter read from live repository is forbidden")
         elif event in _SINGLE_PATH_MUTATIONS and args:
             _require_staging_path(args[0], output_root)
         elif event in _TWO_PATH_MUTATIONS and len(args) >= 2:
@@ -86,6 +106,9 @@ def install_write_guard(output_dir: Path) -> None:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--staging-root", type=Path, required=True)
+    parser.add_argument("--execution-root", type=Path, required=True)
+    parser.add_argument("--repository-root", type=Path, required=True)
+    parser.add_argument("--venv-root", type=Path, required=True)
     parser.add_argument("--entry", type=Path, required=True)
     return parser
 
@@ -95,10 +118,23 @@ def main(argv: list[str] | None = None) -> int:
     if adapter_args and adapter_args[0] == "--":
         adapter_args = adapter_args[1:]
     output_dir = args.staging_root.resolve()
+    execution_root = args.execution_root.resolve()
     entry = args.entry.resolve()
-    if not output_dir.is_dir() or not entry.is_file():
+    if (
+        not output_dir.is_dir()
+        or not execution_root.is_dir()
+        or not entry.is_file()
+        or not _inside(entry, execution_root)
+    ):
         return 2
-    install_write_guard(output_dir)
+    install_access_guard(
+        output_dir,
+        execution_root=execution_root,
+        repository_root=args.repository_root,
+        venv_root=args.venv_root,
+    )
+    sys.path.insert(0, str(execution_root / "repository"))
+    sys.path.insert(0, str(entry.parent))
     sys.argv = [str(entry), *adapter_args]
     runpy.run_path(str(entry), run_name="__main__")
     return 0
