@@ -20,14 +20,14 @@
 
 #### Scenario: 导入不可变行情批次
 - **WHEN** 导入一个通过字段与来源校验的日线行情批次
-- **THEN** 系统在 `.local/market-data/batches/<batch_id>/` 固化 `manifest.json`、精确原始 `market-data.csv` 和 `validation.json`，并记录来源、标的类型、频率、字段、价格口径、每只证券实际起止日、行数、导出代码摘要和 CSV 字节 SHA256（文件摘要）
+- **THEN** 系统在 `.local/market-data/batches/<batch_id>/` 固化 `manifest.json`、权威 `market-data.parquet`（列式行情）和 `validation.json`，并记录来源、标的类型、频率、字段、价格口径、每只证券实际起止日、行数、导出代码摘要、传输文件字节 SHA256（文件摘要）、规范化内容摘要和 Parquet 文件摘要
 
 #### Scenario: 创建不可变快照引用
 - **WHEN** 调用者从一个或多个已验证批次选择明确证券、日期、字段、来源和价格口径
 - **THEN** 系统在 `.local/market-data/snapshots/<snapshot_id>.json` 创建只引用批次、不复制行情的不可变快照，策略运行只保存 `snapshot_id` 及其摘要
 
 #### Scenario: 相同内容去重
-- **WHEN** 新导入内容与既有批次的来源身份和 CSV 字节摘要完全一致
+- **WHEN** 新导入内容与既有批次的来源身份、结构版本和规范化逻辑内容摘要完全一致
 - **THEN** 系统复用既有批次，不创建第二份权威行情
 
 #### Scenario: 冲突重叠拒绝
@@ -53,24 +53,28 @@
 - **WHEN** 任一身份字段缺失或任一文件摘要不匹配
 - **THEN** 系统拒绝执行研究入口；身份或来源本来就缺失时输出 `evidence_insufficient`，既有文件被篡改或内容不一致时输出 `failed`
 
-### Requirement: 权威 CSV 与可重建 DuckDB 视图
-系统 SHALL（必须）把每个批次的精确原始 `market-data.csv` 作为唯一行情事实源；DuckDB（嵌入式分析数据库）只从权威 CSV 建立可重建的内存查询视图，不得保存持久数据库副本或第二份权威行情。
+### Requirement: 权威 Parquet 与可重建 DuckDB 视图
+系统 SHALL（必须）把每个批次的 `market-data.parquet` 作为本地唯一行情事实源；聚宽导出的 CSV（逗号分隔文件）只允许存在于传输和导入暂存阶段。DuckDB（嵌入式分析数据库）只从权威 Parquet 建立可重建的内存查询视图，不得保存持久数据库副本或第二份权威行情。`batch_id` SHALL（必须）绑定规范化逻辑内容与来源契约，Parquet 字节摘要 SHALL（必须）单独用于文件完整性验证，避免编码器版本变化静默改变逻辑身份。
 
-#### Scenario: CSV 与内存视图一致
-- **WHEN** 已验证快照从权威 CSV 批次建立 DuckDB 内存视图
-- **THEN** 系统规范化字段顺序、类型、空值、排序和 `paused` 布尔类型后，CSV 与查询结果的行数和规范化内容摘要一致
+#### Scenario: Parquet 与内存视图一致
+- **WHEN** 已验证快照从权威 Parquet 批次建立 DuckDB 内存视图
+- **THEN** 系统规范化字段顺序、类型、空值、排序和 `paused` 布尔类型后，清单中的规范化内容摘要与查询结果的行数和规范化内容摘要一致
 
 #### Scenario: 派生视图发生漂移
-- **WHEN** DuckDB 查询结果与权威 CSV 的行集合、字段值、类型或规范化内容摘要不一致
+- **WHEN** DuckDB 查询结果与权威 Parquet 的行集合、字段值、类型或规范化内容摘要不一致
 - **THEN** 系统输出 `failed` 并停止项目研究，不把 DuckDB 结果视为替代事实源
 
 #### Scenario: 未复权价格口径
 - **WHEN** 批次通过 `fq=None` 或来源声明的等价方式导入
-- **THEN** CSV 精确保留实际未复权价格和 `factor`（复权因子），本流程不生成或使用复权价格序列
+- **THEN** Parquet 按固定结构保存实际未复权价格和 `factor`（复权因子），本流程不生成或使用复权价格序列
+
+#### Scenario: 传输文件完成使命后清理
+- **WHEN** 聚宽 CSV 已完成字节摘要核对、结构校验、Parquet 转换和逻辑内容复核
+- **THEN** 系统删除本地暂存 CSV 和聚宽远端临时文件，仅在批次清单保留传输摘要；任一清理步骤无法确认时本次导入输出 `failed`
 
 #### Scenario: 禁止持久 DuckDB 副本
 - **WHEN** 查询或研究运行结束
-- **THEN** `.local/market-data/` 中不存在作为长期事实源的 `.duckdb` 文件，后续查询可仅凭快照清单和权威 CSV 重建
+- **THEN** `.local/market-data/` 中不存在作为长期事实源的 `.duckdb` 文件，后续查询可仅凭快照清单和权威 Parquet 重建
 
 ### Requirement: 唯一三态收口
 每次运行 SHALL（必须）且只能以 `complete`、`evidence_insufficient` 或 `failed` 之一收口；流程状态不得与项目研究建议混为一谈。
@@ -138,7 +142,7 @@
 
 #### Scenario: 共享行情中心回归
 - **WHEN** 运行行情中心自动测试
-- **THEN** 测试覆盖不可变批次导入、相同内容去重、追加新标的、旧快照复算不变、冲突重叠拒绝、字段能力、快照摘要及 CSV 到内存 DuckDB 一致性，并确认未生成持久 DuckDB 文件
+- **THEN** 测试覆盖 CSV 暂存导入、Parquet 不可变批次、逻辑内容去重、追加新标的、旧快照复算不变、冲突重叠拒绝、字段能力、快照摘要、Parquet 到内存 DuckDB 一致性及暂存清理，并确认未生成持久 DuckDB 文件
 
 #### Scenario: 非海龟完整 E2E
 - **WHEN** 从 Skill 用户入口使用非海龟最小项目适配器和固定日线夹具运行
@@ -146,7 +150,7 @@
 
 #### Scenario: 用户入口完整回归
 - **WHEN** 从 Skill 文档公开的用户入口启动离线研究夹具
-- **THEN** 流程实际贯通快照引用、CSV 校验、内存 DuckDB 查询、项目进程、输出验证和三态收口，而不是以若干孤立单元测试代替
+- **THEN** 流程实际贯通 CSV 暂存导入、Parquet 固化、快照引用、内存 DuckDB 查询、项目进程、输出验证和三态收口，而不是以若干孤立单元测试代替
 
 #### Scenario: 公开仓库安全扫描
 - **WHEN** 运行仓库安全检查

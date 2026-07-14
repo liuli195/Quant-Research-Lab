@@ -1,6 +1,6 @@
 workflow: full
 language: zh-CN
-phase: archive
+phase: build
 context_compression: beta
 build_mode: executing-plans
 build_pause: null
@@ -13,11 +13,11 @@ auto_transition: true
 base_ref: 66cfbce81f95984aeeb7a9705b1d00ee3c8632ce
 design_doc: docs/superpowers/specs/2026-07-14-turtle-etf-local-research-workflow-design.md
 plan: docs/superpowers/plans/2026-07-14-turtle-etf-local-research-workflow.md
-verify_result: pass
+verify_result: fail
 verification_report: docs/superpowers/reports/2026-07-14-build-turtle-etf-local-research-workflow-verify.md
 branch_status: handled
 created_at: 2026-07-13
-verified_at: 2026-07-13
+verified_at: null
 archived: false
 direct_override: null
 handoff_context: openspec/changes/build-turtle-etf-local-research-workflow/.comet/handoff/spec-context.json
