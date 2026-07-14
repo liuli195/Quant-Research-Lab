@@ -19,7 +19,9 @@ def _run(tmp_path: Path) -> tuple[Path, str]:
     run_dir.mkdir()
     (run_dir / "local-research-report.md").write_text("report\n", encoding="utf-8")
     (run_dir / "recommendation.json").write_text(
-        json.dumps({"identity": {"run_id": run_id}, "recommendation": "revise_and_reassess"}),
+        json.dumps(
+            {"identity": {"run_id": run_id}, "recommendation": "revise_and_reassess"}
+        ),
         encoding="utf-8",
     )
     return run_dir, run_id
@@ -40,28 +42,43 @@ def test_human_decision_is_append_only_outside_immutable_run(tmp_path: Path) -> 
     path = record_human_decision(
         run_dir=run_dir,
         decision_root=decision_root,
+        project_id="strategy-003",
         decision=decision,
     )
-    document = validate_human_decision(run_dir=run_dir, decision_path=path)
+    document = validate_human_decision(
+        run_dir=run_dir,
+        project_id="strategy-003",
+        decision_path=path,
+    )
 
     assert path.parent.parent.name == run_id
     assert not path.is_relative_to(run_dir)
     assert document["decision"] == "revise_and_reassess"
-    assert document["report_sha256"] == hashlib.sha256(
-        (run_dir / "local-research-report.md").read_bytes()
-    ).hexdigest()
-    assert record_human_decision(
-        run_dir=run_dir,
-        decision_root=decision_root,
-        decision=decision,
-    ) == path
+    assert (
+        document["report_sha256"]
+        == hashlib.sha256(
+            (run_dir / "local-research-report.md").read_bytes()
+        ).hexdigest()
+    )
+    assert (
+        record_human_decision(
+            run_dir=run_dir,
+            decision_root=decision_root,
+            project_id="strategy-003",
+            decision=decision,
+        )
+        == path
+    )
 
 
-def test_human_decision_rejects_changed_report_or_recommendation(tmp_path: Path) -> None:
+def test_human_decision_rejects_changed_report_or_recommendation(
+    tmp_path: Path,
+) -> None:
     run_dir, _ = _run(tmp_path)
     path = record_human_decision(
         run_dir=run_dir,
         decision_root=tmp_path / "decisions",
+        project_id="strategy-003",
         decision={
             "decision": "stop_evidence_insufficient",
             "candidate_focus": [],
@@ -74,4 +91,8 @@ def test_human_decision_rejects_changed_report_or_recommendation(tmp_path: Path)
     (run_dir / "local-research-report.md").write_text("changed\n", encoding="utf-8")
 
     with pytest.raises(DecisionError, match="digest"):
-        validate_human_decision(run_dir=run_dir, decision_path=path)
+        validate_human_decision(
+            run_dir=run_dir,
+            project_id="strategy-003",
+            decision_path=path,
+        )

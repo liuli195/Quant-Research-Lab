@@ -11,6 +11,7 @@ from typing import Mapping
 
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_PROJECT_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 _DECISIONS = {
     "proceed_to_joinquant",
     "revise_and_reassess",
@@ -66,7 +67,13 @@ def _recommendation(run_dir: Path) -> tuple[dict[str, object], str]:
     return value, run_id
 
 
-def _document(run_dir: Path, decision: Mapping[str, object]) -> dict[str, object]:
+def _document(
+    run_dir: Path,
+    project_id: str,
+    decision: Mapping[str, object],
+) -> dict[str, object]:
+    if _PROJECT_ID.fullmatch(project_id) is None:
+        raise DecisionError("project_id is invalid")
     if set(decision) != _REQUIRED:
         raise DecisionError("human decision fields are incomplete or unknown")
     if decision["decision"] not in _DECISIONS:
@@ -81,12 +88,10 @@ def _document(run_dir: Path, decision: Mapping[str, object]) -> dict[str, object
     _, run_id = _recommendation(run_dir)
     payload = {
         "schema_version": 1,
-        "project_id": "strategy-003",
+        "project_id": project_id,
         "run_id": run_id,
         "report_sha256": _file_digest(Path(run_dir) / "local-research-report.md"),
-        "recommendation_sha256": _file_digest(
-            Path(run_dir) / "recommendation.json"
-        ),
+        "recommendation_sha256": _file_digest(Path(run_dir) / "recommendation.json"),
         **dict(decision),
     }
     payload["decision_id"] = _digest(payload)
@@ -98,19 +103,29 @@ def record_human_decision(
     *,
     run_dir: Path,
     decision_root: Path,
+    project_id: str,
     decision: Mapping[str, object],
 ) -> Path:
-    document = _document(Path(run_dir), decision)
+    document = _document(Path(run_dir), project_id, decision)
     target = (
         Path(decision_root)
-        / "strategy-003"
+        / project_id
         / str(document["run_id"])
         / str(document["decision_id"])
     )
     output = target / "human-decision.json"
     if output.exists():
-        if validate_human_decision(run_dir=run_dir, decision_path=output) != document:
-            raise DecisionError("existing human decision conflicts with requested decision")
+        if (
+            validate_human_decision(
+                run_dir=run_dir,
+                project_id=project_id,
+                decision_path=output,
+            )
+            != document
+        ):
+            raise DecisionError(
+                "existing human decision conflicts with requested decision"
+            )
         return output
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.parent / f".{target.name}.tmp-{uuid.uuid4().hex}"
@@ -130,6 +145,7 @@ def record_human_decision(
 def validate_human_decision(
     *,
     run_dir: Path,
+    project_id: str,
     decision_path: Path,
 ) -> dict[str, object]:
     try:
@@ -138,23 +154,26 @@ def validate_human_decision(
         raise DecisionError("human decision is invalid") from exc
     if not isinstance(document, dict):
         raise DecisionError("human decision is invalid")
-    semantic = {key: value for key, value in document.items() if key != "document_sha256"}
+    semantic = {
+        key: value for key, value in document.items() if key != "document_sha256"
+    }
     if document.get("document_sha256") != _digest(semantic):
         raise DecisionError("human decision document digest mismatch")
     _, run_id = _recommendation(Path(run_dir))
     if document.get("run_id") != run_id:
         raise DecisionError("human decision run identity mismatch")
+    if document.get("project_id") != project_id:
+        raise DecisionError("human decision project identity mismatch")
     if document.get("report_sha256") != _file_digest(
         Path(run_dir) / "local-research-report.md"
     ) or document.get("recommendation_sha256") != _file_digest(
         Path(run_dir) / "recommendation.json"
     ):
         raise DecisionError("human decision evidence digest mismatch")
-    expected_parent = (
-        Path(decision_path).parents[2]
-        / run_id
-        / str(document.get("decision_id"))
-    )
+    project_path = Path(decision_path).parents[2]
+    if project_path.name != project_id:
+        raise DecisionError("human decision path does not match its project")
+    expected_parent = project_path / run_id / str(document.get("decision_id"))
     if Path(decision_path).parent.resolve() != expected_parent.resolve():
         raise DecisionError("human decision path does not match its identity")
     return document

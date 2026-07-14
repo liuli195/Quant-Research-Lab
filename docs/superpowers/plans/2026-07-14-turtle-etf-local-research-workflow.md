@@ -330,7 +330,7 @@ Commit: `实现：生成七方案完整研究报告`
 
 **Interfaces：** Skill 公开入口仍为现有单一 CLI；只更新阶段、必需输出和停止状态，不把海龟字段写入 Skill。非海龟夹具必须使用同一 Parquet 行情、八表分析、报告和人工确认门禁，证明共用层未反向依赖海龟。
 
-- [ ] **Step 1：写失败的公开入口与完整 E2E 断言**
+- [x] **Step 1：写失败的公开入口与完整 E2E 断言**
 
 ```python
 def test_skill_documents_parquet_complete_analysis_and_human_gate(skill_text):
@@ -341,23 +341,23 @@ def test_skill_documents_parquet_complete_analysis_and_human_gate(skill_text):
 
 两个 E2E 都必须从 Skill 文档公开命令启动，检查 CSV 暂存清理、Parquet、内存 DuckDB、八表、分析、稳健性、报告、推荐、七候选和停止门禁；不得以单元测试拼接替代。
 
-- [ ] **Step 2：验证 RED**
+- [x] **Step 2：验证 RED**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_skill_contract.py tests\local_quant_research\test_generic_e2e.py tests\local_quant_research\test_turtle_e2e.py -q`
 
 Expected: FAIL，原因是 Skill 和 E2E 仍声明 CSV 与旧三类输出。
 
-- [ ] **Step 3：更新编排说明、项目配置和验证映射**
+- [x] **Step 3：更新编排说明、项目配置和验证映射**
 
 保持 `.claude/skills/run-local-quant-research` 符号链接不变；Build and Verify（构建与验证）影响映射加入 `quant_analysis`、新测试和报告配置，继续排除 `.local` 数据。
 
-- [ ] **Step 4：验证 GREEN**
+- [x] **Step 4：验证 GREEN**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_skill_contract.py tests\local_quant_research\test_generic_e2e.py tests\local_quant_research\test_turtle_e2e.py -q`
 
 Expected: PASS；两个 E2E 均从公开入口独立完成并清理临时产物。
 
-- [ ] **Step 5：勾选 OpenSpec 11.1–11.3 并提交**
+- [x] **Step 5：勾选 OpenSpec 11.1–11.3 并提交**
 
 Commit: `验证：覆盖完整本地研究端到端流程`
 

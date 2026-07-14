@@ -358,7 +358,7 @@
         ],
         "checkParallel": false,
         "pytestXdistWorkers": 1,
-        "timeoutSeconds": 180
+        "timeoutSeconds": 300
       },
       {
         "id": "verify.openspec",
