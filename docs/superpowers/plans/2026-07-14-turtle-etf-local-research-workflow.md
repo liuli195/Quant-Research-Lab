@@ -277,7 +277,7 @@ def validate_human_decision(run_dir: Path, decision_path: Path) -> Mapping[str, 
 
 必须输出 `candidate-comparison.parquet`、`candidate-screening.parquet`、`local-evidence-matrix.parquet`、`attribution.parquet`、`local-research-report.md`、`challenge-report.md`、`recommendation.json` 和七项 `candidate-strategies.json`。`recommendation.json` 只能使用 `proceed_to_joinquant`、`revise_and_reassess`、`stop_evidence_insufficient`。Vibe-Trading 仅使用仓库当前可用材料；若当前没有可调用能力，报告如实记录不可用，不安装、不新增适配器，也不阻塞确定性数字和报告主体。
 
-- [ ] **Step 1：写七次真实运行、输出门禁和人工决定失败测试**
+- [x] **Step 1：写七次真实运行、输出门禁和人工决定失败测试**
 
 ```python
 def test_all_seven_candidates_are_run_and_retained(fake_runner, candidate_config):
@@ -293,23 +293,23 @@ def test_complete_requires_reports_recommendation_and_human_next_action(output_d
 
 补充：不得自动删候选、不得替换基线、Vibe 不可用留痕、决定文件必须位于 `.local/quant-research-decisions/strategy-003/<run_id>/<decision_id>/`、决定摘要不匹配拒绝、确认前禁止外部动作。
 
-- [ ] **Step 2：验证 RED**
+- [x] **Step 2：验证 RED**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_turtle_complete_report.py tests\local_quant_research\test_human_decision.py tests\local_quant_research\test_turtle_e2e.py -q`
 
 Expected: FAIL，原因是当前项目只运行基线并输出旧三类结果。
 
-- [ ] **Step 3：实现七方案、报告和追加式人工决定**
+- [x] **Step 3：实现七方案、报告和追加式人工决定**
 
 候选按 `candidates.json` 固定顺序运行，共用代码摘要和快照。推荐基于确定性指标、稳健性证据和反对证据形成，但不得修改候选清单。人工决定引用 `run_id`、报告摘要和推荐摘要，使用原子目录写入且永不覆盖。
 
-- [ ] **Step 4：验证 GREEN 和项目回归**
+- [x] **Step 4：验证 GREEN 和项目回归**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_turtle_complete_report.py tests\local_quant_research\test_human_decision.py tests\local_quant_research\test_turtle_e2e.py tests\local_quant_research\test_runner.py -q`
 
 Expected: PASS；缺任何完整输出时项目和通用运行器都不得返回 `complete`。
 
-- [ ] **Step 5：勾选 OpenSpec 10.2–10.5 并提交**
+- [x] **Step 5：勾选 OpenSpec 10.2–10.5 并提交**
 
 Commit: `实现：生成七方案完整研究报告`
 

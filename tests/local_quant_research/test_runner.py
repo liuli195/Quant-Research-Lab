@@ -13,7 +13,7 @@ import pyarrow.parquet as pq
 
 from scripts.research.local_quant_research.contracts import OutputSpec
 from scripts.research.local_quant_research.evidence import collect_output_evidence
-from scripts.research.local_quant_research.runner import run_project
+from scripts.research.local_quant_research.runner import _project_status, run_project
 from scripts.research.local_quant_research.evidence import canonical_digest
 from scripts.research.market_data.contracts import SnapshotSelection
 from scripts.research.market_data.storage import create_snapshot, import_batch
@@ -34,6 +34,22 @@ FIELDS = (
     "high_limit",
     "low_limit",
 )
+
+
+def test_complete_project_status_can_declare_human_confirmation_next_action(
+    tmp_path: Path,
+) -> None:
+    _write_json(
+        tmp_path / "project-status.json",
+        {
+            "schema_version": 1,
+            "status": "complete",
+            "reason_codes": [],
+            "next_action": "human_confirmation_required",
+        },
+    )
+
+    assert _project_status(tmp_path) == ("complete", ())
 
 
 def _write_json(path: Path, value: object) -> None:

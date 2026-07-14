@@ -262,7 +262,11 @@ def validate_complete_run(
         raise EvidenceError("completed output digest mismatch")
 
     status = _load_json(Path(run_dir) / "project-status.json")
-    if status != {"schema_version": 1, "status": "complete", "reason_codes": []}:
+    expected_status = {"schema_version": 1, "status": "complete", "reason_codes": []}
+    if status != expected_status and status != {
+        **expected_status,
+        "next_action": "human_confirmation_required",
+    }:
         raise EvidenceError("completed project status is invalid")
     expected_files = {
         "run-manifest.json",

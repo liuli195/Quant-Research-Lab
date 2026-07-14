@@ -67,10 +67,10 @@
 ## 10. 完成本地稳健性、挑战分析和研究报告
 
 - [x] 10.1 复用稳健性变更的通用公式与配置契约，为本地基线实现参数、时期、滚动窗口、资产删除、成本执行、5/20/60 日区块抽样、历史压力、假设冲击和 CVaR（条件风险价值）完整预判；路径变化场景必须重跑本地确定性执行模块
-- [ ] 10.2 对冻结基线和六个预设单项挑战全部运行本地模拟、绩效、归因及推荐所需稳健性分析，生成 `candidate-comparison.parquet`、`candidate-screening.parquet` 和完整的有利、不利、失败及证据不足记录
-- [ ] 10.3 复用仓库现有可用的 Vibe-Trading（AI 研究助理）归因解释、证据挑战和报告能力，继续禁用存在前视偏差的组合优化器；不新增或修改 Vibe 职责、适配器、身份模型或上游代码
-- [ ] 10.4 生成并校验 `local-research-report.md`、`challenge-report.md`、`local-evidence-matrix.parquet`、`attribution.parquet`、`recommendation.json` 和带说明的七项 `candidate-strategies.json`，报告必须给出明确推荐、反对证据、不确定性和非正式边界
-- [ ] 10.5 实现独立于不可变研究运行的追加式 `human-decision.json` 契约与人工确认门禁；在确认前稳定输出 `next_action=human_confirmation_required`，不得启动聚宽、改参数、替换基线、冻结或模拟交易
+- [x] 10.2 对冻结基线和六个预设单项挑战全部运行本地模拟、绩效、归因及推荐所需稳健性分析，生成 `candidate-comparison.parquet`、`candidate-screening.parquet` 和完整的有利、不利、失败及证据不足记录
+- [x] 10.3 复用仓库现有可用的 Vibe-Trading（AI 研究助理）归因解释、证据挑战和报告能力，继续禁用存在前视偏差的组合优化器；不新增或修改 Vibe 职责、适配器、身份模型或上游代码
+- [x] 10.4 生成并校验 `local-research-report.md`、`challenge-report.md`、`local-evidence-matrix.parquet`、`attribution.parquet`、`recommendation.json` 和带说明的七项 `candidate-strategies.json`，报告必须给出明确推荐、反对证据、不确定性和非正式边界
+- [x] 10.5 实现独立于不可变研究运行的追加式 `human-decision.json` 契约与人工确认门禁；在确认前稳定输出 `next_action=human_confirmation_required`，不得启动聚宽、改参数、替换基线、冻结或模拟交易
 
 ## 11. 重新执行完整验证和真实本地研究
 

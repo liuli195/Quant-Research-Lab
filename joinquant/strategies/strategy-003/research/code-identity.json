@@ -11,7 +11,7 @@
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/cli.py",
-      "sha256": "54a048a8840d93e1fbf2da2325a36bec12aba869dcad486604eda5827e6fd995"
+      "sha256": "78b36ee547cbf5679b90eca03fd4b781b3201bb4197a48b2182f20fa9aff2764"
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/execution.py",
@@ -23,7 +23,7 @@
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/reporting.py",
-      "sha256": "2e637d6fe7ce6d747b2fc8e9a9bbfd9309a9410eb9bc1d6fa92592d74eb20124"
+      "sha256": "20045be3fef100033371dee1768f96c57840067144773ad632f04f69a91199c8"
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/risk.py",

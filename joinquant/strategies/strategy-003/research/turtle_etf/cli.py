@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 import statistics
@@ -31,6 +32,7 @@ if __package__ in {None, ""}:
         RunIdentity,
         decimal_text,
         validate_project_outputs,
+        write_complete_reports,
         write_outputs,
     )
     from turtle_etf.risk import (
@@ -52,6 +54,7 @@ else:
         RunIdentity,
         decimal_text,
         validate_project_outputs,
+        write_complete_reports,
         write_outputs,
     )
     from .risk import (
@@ -104,6 +107,64 @@ class ProjectResult:
     status: str
     reason_codes: tuple[str, ...]
     output_dir: Path
+
+
+_CANDIDATE_IDS = (
+    "baseline",
+    "entry-40",
+    "entry-60",
+    "stop-1.5n",
+    "stop-2.5n",
+    "covariance-120d",
+    "covariance-ewma-30d",
+)
+
+
+def _merge_candidate_overrides(
+    base_config: Mapping[str, object],
+    overrides: Mapping[str, object],
+) -> dict[str, object]:
+    merged = copy.deepcopy(dict(base_config))
+    for dotted_path, value in overrides.items():
+        parts = str(dotted_path).split(".")
+        target = merged
+        for part in parts[:-1]:
+            child = target.get(part)
+            if not isinstance(child, dict):
+                raise ValueError(f"candidate override path is invalid: {dotted_path}")
+            target = child
+        field = parts[-1]
+        if isinstance(value, Mapping) and isinstance(target.get(field), dict):
+            target[field].update(copy.deepcopy(dict(value)))
+        else:
+            target[field] = copy.deepcopy(value)
+    return merged
+
+
+def run_candidate_set(
+    base_config: Mapping[str, object],
+    candidates: Sequence[Mapping[str, object]],
+    run_candidate,
+    *,
+    baseline_result: object | None = None,
+) -> tuple[tuple[str, object], ...]:
+    candidate_ids = tuple(str(item.get("id")) for item in candidates)
+    if candidate_ids != _CANDIDATE_IDS:
+        raise ValueError("candidate set differs from the frozen seven")
+    results: list[tuple[str, object]] = []
+    for item in candidates:
+        overrides = item.get("overrides")
+        if not isinstance(overrides, Mapping):
+            raise ValueError("candidate overrides must be a mapping")
+        config = _merge_candidate_overrides(base_config, overrides)
+        candidate_id = str(item["id"])
+        value = (
+            baseline_result
+            if candidate_id == "baseline" and baseline_result is not None
+            else run_candidate(config)
+        )
+        results.append((candidate_id, value))
+    return tuple(results)
 
 
 def _load_object(path: Path, label: str) -> dict[str, object]:
@@ -942,13 +1003,16 @@ def _simulate(
 
 def _write_status(output_dir: Path, status: str, reasons: Sequence[str]) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
+    document = {
+        "schema_version": 1,
+        "status": status,
+        "reason_codes": list(reasons),
+    }
+    if status == "complete":
+        document["next_action"] = "human_confirmation_required"
     (output_dir / "project-status.json").write_text(
         json.dumps(
-            {
-                "schema_version": 1,
-                "status": status,
-                "reason_codes": list(reasons),
-            },
+            document,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -979,6 +1043,7 @@ def _complete_robustness_results(
     rows: Sequence[Mapping[str, object]],
     benchmark_rows: Sequence[Mapping[str, object]],
     baseline: ResearchResult,
+    candidate_results: Sequence[tuple[str, ResearchResult]],
 ) -> tuple[ScenarioResult, ...]:
     dates = sorted({str(row["date"]) for row in rows})
     securities = tuple(str(item["security"]) for item in base_config["universe"])
@@ -986,7 +1051,6 @@ def _complete_robustness_results(
         sorted({str(item["asset_group"]) for item in base_config["universe"]})
     )
     path_scenarios = (
-        *parameter_scenarios(),
         *fixed_period_scenarios(dates[-1]),
         *rolling_three_year_scenarios(max(dates[0], "2015-01-01"), dates[-1]),
         *asset_deletion_scenarios(
@@ -1017,11 +1081,26 @@ def _complete_robustness_results(
         }
 
     baseline_bundle = _analysis_bundle(baseline)
+    candidates_by_id = dict(candidate_results)
+
+    def candidate_metrics(config: dict[str, object]) -> dict[str, float | int | None]:
+        candidate = candidates_by_id[str(config["scenario_id"])]
+        return {
+            key: value
+            for key, value in calculate_performance(_analysis_bundle(candidate)).items()
+            if value is None or isinstance(value, (int, float))
+        }
+
     returns = np.asarray(
         [float(row["return"]) for row in baseline_bundle.rows("returns")],
         dtype=np.float64,
     )
     return (
+        *run_path_scenarios(
+            base_config,
+            parameter_scenarios(),
+            candidate_metrics,
+        ),
         *run_path_scenarios(base_config, path_scenarios, run_scenario),
         *calculate_bootstrap_scenarios(returns),
         *calculate_historical_stress(baseline_bundle),
@@ -1088,6 +1167,21 @@ def run_research(
             rows=snapshot_view.rows,
             benchmark_rows=benchmark_rows,
         )
+        candidate_results = run_candidate_set(
+            config,
+            candidates,
+            lambda candidate_config: _simulate(
+                config=candidate_config,
+                candidates=candidates,
+                identity=identity,
+                snapshot_normalized_sha256=snapshot_view.digest,
+                rows=snapshot_view.rows,
+                benchmark_rows=benchmark_rows,
+            ),
+            baseline_result=result,
+        )
+        if any(not isinstance(value, ResearchResult) for _, value in candidate_results):
+            raise TypeError("candidate runner returned an invalid result")
         robustness_results = _complete_robustness_results(
             base_config=config,
             candidates=candidates,
@@ -1096,6 +1190,7 @@ def run_research(
             rows=snapshot_view.rows,
             benchmark_rows=benchmark_rows,
             baseline=result,
+            candidate_results=candidate_results,
         )
         write_outputs(result, output_dir)
         evidence_path = build_evidence_matrix(
@@ -1103,6 +1198,12 @@ def run_research(
             output_dir / "local-evidence-matrix.parquet",
         )
         validate_evidence_matrix(evidence_path)
+        write_complete_reports(
+            baseline=result,
+            candidate_results=candidate_results,
+            robustness_results=robustness_results,
+            output_dir=output_dir,
+        )
         validate_project_outputs(output_dir, identity)
         _write_status(output_dir, "complete", ())
         return ProjectResult("complete", (), output_dir)

@@ -517,11 +517,17 @@ def test_project_research_writes_reports_conclusion_candidates_and_audits(
         "positions.csv",
         "risk.csv",
         "research-report.md",
+        "local-research-report.md",
+        "challenge-report.md",
         "conclusion.json",
-            "candidate-strategies.json",
-            "local-evidence-matrix.parquet",
-            *(f"{name}.parquet" for name in STANDARD_TABLES),
-        }
+        "recommendation.json",
+        "candidate-strategies.json",
+        "local-evidence-matrix.parquet",
+        "candidate-comparison.parquet",
+        "candidate-screening.parquet",
+        "attribution.parquet",
+        *(f"{name}.parquet" for name in STANDARD_TABLES),
+    }
     evidence = validate_evidence_matrix(output_dir / "local-evidence-matrix.parquet")
     assert {
         "parameter",
@@ -546,6 +552,12 @@ def test_project_research_writes_reports_conclusion_candidates_and_audits(
         (output_dir / "candidate-strategies.json").read_text(encoding="utf-8")
     )
     report = (output_dir / "research-report.md").read_text(encoding="utf-8")
+    local_report = (output_dir / "local-research-report.md").read_text(
+        encoding="utf-8"
+    )
+    recommendation = json.loads(
+        (output_dir / "recommendation.json").read_text(encoding="utf-8")
+    )
     assert conclusion["identity"] == identity.to_document()
     assert conclusion["metrics"]["filled_trades"] >= 2
     assert "cumulative_return" in conclusion["metrics"]
@@ -569,6 +581,17 @@ def test_project_research_writes_reports_conclusion_candidates_and_audits(
         snapshot.snapshot_id
     }
     assert all("rank" not in item and "score" not in item for item in candidates["candidates"])
+    assert all(
+        item["research_status"] == "retained_for_human_review"
+        for item in candidates["candidates"]
+    )
+    assert recommendation["next_action"] == "human_confirmation_required"
+    status = json.loads((output_dir / "project-status.json").read_text(encoding="utf-8"))
+    assert status["next_action"] == "human_confirmation_required"
+    assert recommendation["vibe_trading"]["status"] == "unavailable"
+    assert "七方案挑战" in local_report
+    assert "Alpha（超额收益）与 Beta（市场暴露）" in local_report
+    assert "当前仓库没有可直接调用的 Vibe-Trading 程序接口" in local_report
     with (output_dir / "trades.csv").open(encoding="utf-8", newline="") as handle:
         actions = {row["action"] for row in csv.DictReader(handle)}
     assert {"entry", "full_exit"}.issubset(actions)
@@ -690,6 +713,9 @@ def test_project_run_config_references_snapshot_and_disables_biased_optimizer(
     } == {
         *(f"{name}.parquet" for name in STANDARD_TABLES),
         "local-evidence-matrix.parquet",
+        "candidate-comparison.parquet",
+        "candidate-screening.parquet",
+        "attribution.parquet",
     }
     assert baseline["research"]["vibe_optimizer"]["enabled"] is False
     assert baseline["research"]["vibe_optimizer"]["reason"]

@@ -641,11 +641,12 @@ def _project_status(staging: Path) -> tuple[str, tuple[str, ...]]:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise EvidenceError("project status is missing or invalid") from exc
-    if not isinstance(document, dict) or set(document) != {
-        "schema_version",
-        "status",
-        "reason_codes",
-    }:
+    required = {"schema_version", "status", "reason_codes"}
+    if (
+        not isinstance(document, dict)
+        or not required.issubset(document)
+        or set(document) - required != ({"next_action"} if "next_action" in document else set())
+    ):
         raise EvidenceError("project status structure is invalid")
     status = document["status"]
     reasons = document["reason_codes"]
@@ -659,6 +660,11 @@ def _project_status(staging: Path) -> tuple[str, tuple[str, ...]]:
         raise EvidenceError("project status value is invalid")
     if status == "complete" and reasons:
         raise EvidenceError("complete project status must not contain reasons")
+    next_action = document.get("next_action")
+    if next_action is not None and (
+        status != "complete" or next_action != "human_confirmation_required"
+    ):
+        raise EvidenceError("project status next_action is invalid")
     return status, tuple(reasons)
 
 

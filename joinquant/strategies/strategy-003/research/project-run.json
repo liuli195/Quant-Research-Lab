@@ -61,8 +61,24 @@
       "format": "parquet"
     },
     {
+      "path": "attribution.parquet",
+      "format": "parquet"
+    },
+    {
+      "path": "candidate-comparison.parquet",
+      "format": "parquet"
+    },
+    {
+      "path": "candidate-screening.parquet",
+      "format": "parquet"
+    },
+    {
       "path": "candidate-strategies.json",
       "format": "json"
+    },
+    {
+      "path": "challenge-report.md",
+      "format": "markdown"
     },
     {
       "path": "conclusion.json",
@@ -85,6 +101,10 @@
       "format": "parquet"
     },
     {
+      "path": "local-research-report.md",
+      "format": "markdown"
+    },
+    {
       "path": "orders.parquet",
       "format": "parquet"
     },
@@ -95,6 +115,10 @@
     {
       "path": "positions.csv",
       "format": "csv"
+    },
+    {
+      "path": "recommendation.json",
+      "format": "json"
     },
     {
       "path": "research-report.md",
