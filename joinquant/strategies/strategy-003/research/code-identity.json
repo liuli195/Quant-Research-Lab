@@ -47,19 +47,19 @@
     },
     {
       "path": "scripts/research/market_data/__init__.py",
-      "sha256": "6f0c8a6a3ea176856ed43cb49514eb21be1aab4d514ff81e8a84177ddb0da0fb"
+      "sha256": "80a69e67a47749f1fa8eeb536056499eb1f3805cedfacbf78952291d50f7693f"
     },
     {
       "path": "scripts/research/market_data/contracts.py",
-      "sha256": "768c311e21becc130e7d188f511f75a135aec0548272a5cbdb94f945f4b4fd70"
+      "sha256": "0b8f0ed56d985d05af875500d5d7b61af695e7a573d7d8053320fed6783894ec"
     },
     {
       "path": "scripts/research/market_data/query.py",
-      "sha256": "0b52344130dbf94ab27e5c42b99a35bce042a57fea454043c672d3fba0a3bb45"
+      "sha256": "74a619ead2f14719ac6a17ad493cf64aba5c40b6bdaf917877e7db735b9b6769"
     },
     {
       "path": "scripts/research/market_data/storage.py",
-      "sha256": "15b9c09dd535ccdbe7b9273bcf7876806ff6edda58e3b52272f1fe49a0d25982"
+      "sha256": "3140f047b808de12b491e69858aaddf728784873bd7510c1fb0191fd02e39cb0"
     }
   ]
 }

@@ -473,7 +473,7 @@ def _freeze_execution_inputs(
             target_dir = frozen_market / "batches" / batch_id
             for name, digest_field in (
                 ("manifest.json", "manifest_sha256"),
-                ("market-data.csv", "csv_sha256"),
+                ("market-data.parquet", "parquet_sha256"),
                 ("validation.json", "validation_sha256"),
             ):
                 _copy_verified_file(

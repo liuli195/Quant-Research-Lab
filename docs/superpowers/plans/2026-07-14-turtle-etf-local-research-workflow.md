@@ -49,7 +49,7 @@ base-ref: 6b3e89f4b53314d17b203c9ad0424169b36d8f5b
 - `open_snapshot(snapshot_id: str, root: Path) -> SnapshotView` 使用 `duckdb.connect(':memory:')` 与 `read_parquet`。
 - 旧 `schema_version=1` CSV 批次只保留为历史证据；新快照不得引用旧批次，并返回明确迁移错误。
 
-- [ ] **Step 1：写失败测试**
+- [x] **Step 1：写失败测试**
 
 ```python
 def test_import_batch_publishes_only_parquet_and_content_identity(tmp_path, fixture_csv):
@@ -65,13 +65,13 @@ def test_import_batch_publishes_only_parquet_and_content_identity(tmp_path, fixt
 
 同时添加：同一逻辑内容不同 CSV 换行仍复用 `batch_id`、Parquet 篡改拒绝、旧 CSV 快照迁移提示、DuckDB 只使用 `:memory:`、CSV 转换失败不发布批次、成功后本地暂存和远端暂存均清理的测试。
 
-- [ ] **Step 2：验证 RED**
+- [x] **Step 2：验证 RED**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_market_data_storage.py tests\local_quant_research\test_market_data_query.py tests\local_quant_research\test_joinquant_export.py -q`
 
 Expected: FAIL，原因是现有批次仍发布 `market-data.csv`，查询仍调用 `read_csv`。
 
-- [ ] **Step 3：实现最小 Parquet 导入与查询**
+- [x] **Step 3：实现最小 Parquet 导入与查询**
 
 ```python
 def _write_parquet(rows: Sequence[Mapping[str, object]], target: Path) -> None:
@@ -93,13 +93,13 @@ def _batch_identity(manifest: Mapping[str, object], content_sha256: str) -> dict
 
 导入顺序固定为：读取传输 CSV → 规范化类型与排序 → 计算逻辑摘要 → 在同文件系统暂存 Parquet → DuckDB 回读并复核摘要 → 原子发布 → 删除本地传输 CSV；任一步失败都不产生完成批次。远端删除仍由现有聚宽传输接口执行并验证。
 
-- [ ] **Step 4：验证 GREEN 和回归**
+- [x] **Step 4：验证 GREEN 和回归**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_market_data_storage.py tests\local_quant_research\test_market_data_query.py tests\local_quant_research\test_joinquant_export.py -q`
 
 Expected: PASS，且测试临时目录不存在 `market-data.csv` 暂存和 `*.duckdb`。
 
-- [ ] **Step 5：勾选 OpenSpec 8.1–8.3 并提交**
+- [x] **Step 5：勾选 OpenSpec 8.1–8.3 并提交**
 
 Commit: `实现：迁移共享行情中心到Parquet`
 

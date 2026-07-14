@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 
 FIELDS = (
@@ -22,6 +23,18 @@ FIELDS = (
     "high_limit",
     "low_limit",
 )
+
+
+def _manifest() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "source": {"name": "joinquant", "environment": "research"},
+        "asset_type": "etf",
+        "frequency": "1d",
+        "fields": list(FIELDS),
+        "price_semantics": {"fq": None, "skip_paused": False},
+        "export_code_sha256": "a" * 64,
+    }
 
 
 def test_rendered_program_uses_verified_joinquant_research_contract() -> None:
@@ -188,3 +201,51 @@ def test_verify_transfer_fails_when_local_file_is_missing(tmp_path: Path) -> Non
     assert evidence.status == "failed"
     assert evidence.local_sha256 is None
     assert "local transfer file is missing" in evidence.reasons
+
+
+def test_import_verified_transfer_publishes_parquet_and_deletes_local_csv(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    from scripts.research.market_data.joinquant_export import import_verified_transfer
+
+    source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
+    local_file = tmp_path / "transfer" / "market-data.csv"
+    local_file.parent.mkdir()
+    local_file.write_bytes(source.read_bytes())
+    digest = hashlib.sha256(local_file.read_bytes()).hexdigest()
+
+    record = import_verified_transfer(
+        local_file=local_file,
+        remote_sha256=digest,
+        remote_cleaned=True,
+        manifest=_manifest(),
+        root=tmp_path / "store",
+    )
+
+    assert not local_file.exists()
+    assert (record.path / "market-data.parquet").is_file()
+    assert not (record.path / "market-data.csv").exists()
+
+
+def test_import_verified_transfer_cleans_local_csv_after_conversion_failure(
+    tmp_path: Path,
+) -> None:
+    from scripts.research.market_data.joinquant_export import import_verified_transfer
+    from scripts.research.market_data.storage import MarketDataIntegrityError
+
+    local_file = tmp_path / "market-data.csv"
+    local_file.write_text("not,the,declared,fields\n", encoding="utf-8")
+    digest = hashlib.sha256(local_file.read_bytes()).hexdigest()
+
+    with pytest.raises(MarketDataIntegrityError):
+        import_verified_transfer(
+            local_file=local_file,
+            remote_sha256=digest,
+            remote_cleaned=True,
+            manifest=_manifest(),
+            root=tmp_path / "store",
+        )
+
+    assert not local_file.exists()
+    assert not (tmp_path / "store" / "batches").exists()

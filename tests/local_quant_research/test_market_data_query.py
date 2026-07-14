@@ -74,16 +74,25 @@ def test_open_snapshot_uses_only_memory_and_returns_normalized_read_only_rows(
     snapshot = _snapshot(repo_root, tmp_path)
     real_connect = query.duckdb.connect
     connections: list[str] = []
+    queried_paths: list[tuple[Path, ...]] = []
+    real_reader = query._read_query_rows
 
     def recording_connect(database: str):
         connections.append(database)
         return real_connect(database)
 
+    def recording_reader(connection, parquet_paths):
+        queried_paths.append(tuple(parquet_paths))
+        return real_reader(connection, parquet_paths)
+
     monkeypatch.setattr(query.duckdb, "connect", recording_connect)
+    monkeypatch.setattr(query, "_read_query_rows", recording_reader)
 
     view = query.open_snapshot(snapshot.snapshot_id, root=tmp_path)
 
     assert connections == [":memory:"]
+    assert queried_paths
+    assert all(path.name == "market-data.parquet" for path in queried_paths[0])
     assert view.snapshot_id == snapshot.snapshot_id
     assert view.fields == FIELDS
     assert [(row["date"], row["security"]) for row in view.rows] == [
@@ -168,7 +177,7 @@ def test_normalized_digest_is_independent_of_input_order() -> None:
     assert normalized_digest(rows) == normalized_digest(reversed(rows))
 
 
-def test_open_snapshot_rejects_query_and_csv_content_drift(
+def test_open_snapshot_rejects_query_and_parquet_content_drift(
     repo_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

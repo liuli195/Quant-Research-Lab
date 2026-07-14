@@ -230,8 +230,10 @@ def test_missing_snapshot_and_tampered_snapshot_have_distinct_states(
     missing_root, missing_config, _ = _build_repo(tmp_path / "missing", repo_root)
     next((missing_root / ".local/market-data/snapshots").glob("*.json")).unlink()
     tampered_root, tampered_config, _ = _build_repo(tmp_path / "tampered", repo_root)
-    market_csv = next((tampered_root / ".local/market-data/batches").rglob("market-data.csv"))
-    market_csv.write_bytes(market_csv.read_bytes() + b"\n")
+    market_parquet = next(
+        (tampered_root / ".local/market-data/batches").rglob("market-data.parquet")
+    )
+    market_parquet.write_bytes(market_parquet.read_bytes() + b"tampered")
     monkeypatch.setattr(
         subprocess,
         "run",

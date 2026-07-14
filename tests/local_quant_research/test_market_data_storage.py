@@ -96,6 +96,69 @@ def _selection(*securities: str) -> SnapshotSelection:
     )
 
 
+def _write_legacy_batch(root: Path, source: Path) -> Path:
+    csv_bytes = source.read_bytes()
+    csv_sha256 = hashlib.sha256(csv_bytes).hexdigest()
+    legacy_manifest = {
+        **_manifest(),
+        "csv": {"sha256": csv_sha256, "bytes": len(csv_bytes), "rows": 4},
+        "securities": [
+            {
+                "security": "000001.XSHG",
+                "start_date": "2026-01-05",
+                "end_date": "2026-01-06",
+                "rows": 2,
+            },
+            {
+                "security": "000002.XSHE",
+                "start_date": "2026-01-05",
+                "end_date": "2026-01-06",
+                "rows": 2,
+            },
+        ],
+    }
+    identity = {
+        "source": legacy_manifest["source"],
+        "asset_type": legacy_manifest["asset_type"],
+        "frequency": legacy_manifest["frequency"],
+        "fields": legacy_manifest["fields"],
+        "price_semantics": legacy_manifest["price_semantics"],
+        "export_code_sha256": legacy_manifest["export_code_sha256"],
+        "csv_sha256": csv_sha256,
+    }
+    batch_dir = root / "batches" / _canonical_digest(identity)
+    batch_dir.mkdir(parents=True)
+    (batch_dir / "manifest.json").write_text(
+        json.dumps(
+            legacy_manifest,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (batch_dir / "market-data.csv").write_bytes(csv_bytes)
+    (batch_dir / "validation.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "complete",
+                "checks": {
+                    "field_order": True,
+                    "nonempty": True,
+                    "unique_date_security": True,
+                },
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return batch_dir
+
+
 def test_import_batch_is_immutable_complete_and_deduplicated(
     repo_root: Path,
     tmp_path: Path,
@@ -110,16 +173,22 @@ def test_import_batch_is_immutable_complete_and_deduplicated(
     assert first == second
     assert {path.name for path in batch_dir.iterdir()} == {
         "manifest.json",
-        "market-data.csv",
+        "market-data.parquet",
         "validation.json",
     }
-    assert (batch_dir / "market-data.csv").read_bytes() == source.read_bytes()
+    assert (batch_dir / "market-data.parquet").stat().st_size > 0
     assert {path.name: _sha256(path) for path in batch_dir.iterdir()} == before
     assert [path.name for path in (tmp_path / "batches").iterdir()] == [first.batch_id]
 
     stored_manifest = json.loads((batch_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert stored_manifest["csv"]["sha256"] == _sha256(source)
-    assert stored_manifest["csv"]["rows"] == 4
+    assert stored_manifest["schema_version"] == 2
+    assert stored_manifest["transport_csv"]["sha256"] == _sha256(source)
+    assert stored_manifest["transport_csv"]["rows"] == 4
+    assert stored_manifest["parquet"]["sha256"] == _sha256(
+        batch_dir / "market-data.parquet"
+    )
+    assert stored_manifest["parquet"]["rows"] == 4
+    assert len(stored_manifest["content_sha256"]) == 64
     assert stored_manifest["securities"] == [
         {
             "security": "000001.XSHG",
@@ -136,14 +205,127 @@ def test_import_batch_is_immutable_complete_and_deduplicated(
     ]
     validation = json.loads((batch_dir / "validation.json").read_text(encoding="utf-8"))
     assert validation == {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "complete",
         "checks": {
             "field_order": True,
             "nonempty": True,
             "unique_date_security": True,
+            "parquet_roundtrip": True,
+            "normalized_digest": True,
         },
     }
+
+
+def test_batch_identity_uses_logical_content_not_csv_line_endings(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
+    lf = tmp_path / "lf.csv"
+    crlf = tmp_path / "crlf.csv"
+    text = source.read_text(encoding="utf-8").replace("\r\n", "\n")
+    lf.write_text(text, encoding="utf-8", newline="")
+    crlf.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+
+    first = import_batch(csv_path=lf, manifest=_manifest(), root=tmp_path / "store")
+    second = import_batch(csv_path=crlf, manifest=_manifest(), root=tmp_path / "store")
+
+    assert first.batch_id == second.batch_id
+    assert first.manifest["transport_csv"]["sha256"] != _sha256(crlf)
+    assert len(list((tmp_path / "store" / "batches").iterdir())) == 1
+
+
+def test_legacy_csv_batch_allows_non_overlapping_parquet_import(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
+    legacy_dir = _write_legacy_batch(tmp_path, source)
+    added = tmp_path / "added.csv"
+    added.write_text(
+        ",".join(FIELDS)
+        + "\n2026-01-05,000003.XSHG,30,31,29,30.5,30,100,3050,1,0,33,27\n",
+        encoding="utf-8",
+    )
+
+    record = import_batch(csv_path=added, manifest=_manifest(), root=tmp_path)
+
+    assert (record.path / "market-data.parquet").is_file()
+    assert (legacy_dir / "market-data.csv").is_file()
+
+
+def test_legacy_csv_batch_still_rejects_conflicting_overlap(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
+    _write_legacy_batch(tmp_path, source)
+    conflicting = tmp_path / "conflicting.csv"
+    conflicting.write_text(
+        source.read_text(encoding="utf-8").replace(
+            "2026-01-05,000001.XSHG,10.00,10.20,9.90,10.10,",
+            "2026-01-05,000001.XSHG,10.00,10.20,9.90,10.15,",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(MarketDataConflict, match="000001.XSHG.*2026-01-05"):
+        import_batch(csv_path=conflicting, manifest=_manifest(), root=tmp_path)
+
+
+def test_new_snapshot_rejects_legacy_csv_batch_with_migration_message(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
+    legacy_dir = _write_legacy_batch(tmp_path, source)
+
+    with pytest.raises(
+        MarketDataIntegrityError,
+        match=f"legacy CSV batch requires migration: {legacy_dir.name}",
+    ):
+        create_snapshot(
+            batch_ids=[legacy_dir.name],
+            selection=_selection("000001.XSHG", "000002.XSHE"),
+            root=tmp_path,
+        )
+
+
+def test_audit_store_reports_legacy_and_parquet_batches_without_mutation(
+    repo_root: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from scripts.research.market_data.cli import main
+
+    source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
+    legacy_dir = _write_legacy_batch(tmp_path, source)
+    added = tmp_path / "added.csv"
+    added.write_text(
+        ",".join(FIELDS)
+        + "\n2026-01-05,000003.XSHG,30,31,29,30.5,30,100,3050,1,0,33,27\n",
+        encoding="utf-8",
+    )
+    parquet = import_batch(csv_path=added, manifest=_manifest(), root=tmp_path)
+    before = {
+        path.relative_to(tmp_path).as_posix(): _sha256(path)
+        for path in tmp_path.rglob("*")
+        if path.is_file() and path.name != ".market-data.lock"
+    }
+
+    assert main(["audit", "--root", str(tmp_path)]) == 0
+
+    document = json.loads(capsys.readouterr().out)
+    assert document["status"] == "complete"
+    assert document["legacy_batch_ids"] == [legacy_dir.name]
+    assert document["parquet_batch_ids"] == [parquet.batch_id]
+    after = {
+        path.relative_to(tmp_path).as_posix(): _sha256(path)
+        for path in tmp_path.rglob("*")
+        if path.is_file() and path.name != ".market-data.lock"
+    }
+    assert after == before
 
 
 def test_import_batch_retries_transient_directory_publish_lock(
@@ -259,7 +441,7 @@ def test_snapshot_only_references_batches_and_remains_stable_after_append(
     assert not list(tmp_path.rglob("*.tmp*"))
 
 
-def test_snapshot_validation_rejects_tampered_authoritative_csv(
+def test_snapshot_validation_rejects_tampered_authoritative_parquet(
     repo_root: Path,
     tmp_path: Path,
 ) -> None:
@@ -270,8 +452,8 @@ def test_snapshot_validation_rejects_tampered_authoritative_csv(
         selection=_selection("000001.XSHG", "000002.XSHE"),
         root=tmp_path,
     )
-    csv_path = tmp_path / "batches" / batch.batch_id / "market-data.csv"
-    csv_path.write_bytes(csv_path.read_bytes() + b"\n")
+    parquet_path = tmp_path / "batches" / batch.batch_id / "market-data.parquet"
+    parquet_path.write_bytes(parquet_path.read_bytes() + b"tampered")
 
     with pytest.raises(MarketDataIntegrityError, match="SHA256"):
         validate_snapshot(snapshot.snapshot_id, root=tmp_path)
@@ -412,6 +594,7 @@ def test_snapshot_can_reference_multiple_verified_batches(
         },
     ]
     assert all("validation_sha256" in item for item in snapshot.document["batches"])
+    assert all("parquet_sha256" in item for item in snapshot.document["batches"])
     assert validate_snapshot(snapshot.snapshot_id, root=tmp_path) == snapshot
 
 

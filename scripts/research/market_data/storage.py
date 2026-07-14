@@ -14,10 +14,23 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from .contracts import BatchRecord, SnapshotRecord, SnapshotSelection
+import duckdb
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+from .contracts import (
+    MARKET_DATA_FIELDS,
+    BatchRecord,
+    MarketDataContractError,
+    SnapshotRecord,
+    SnapshotSelection,
+    normalize_market_rows,
+    normalized_digest,
+)
 
 
-_BATCH_FILES = {"manifest.json", "market-data.csv", "validation.json"}
+_BATCH_FILES = {"manifest.json", "market-data.parquet", "validation.json"}
+_LEGACY_BATCH_FILES = {"manifest.json", "market-data.csv", "validation.json"}
 _REQUIRED_MANIFEST_FIELDS = {
     "schema_version",
     "source",
@@ -27,8 +40,31 @@ _REQUIRED_MANIFEST_FIELDS = {
     "price_semantics",
     "export_code_sha256",
 }
-_STORED_MANIFEST_FIELDS = _REQUIRED_MANIFEST_FIELDS | {"csv", "securities"}
+_STORED_MANIFEST_FIELDS = _REQUIRED_MANIFEST_FIELDS | {
+    "content_sha256",
+    "transport_csv",
+    "parquet",
+    "securities",
+    "writer",
+}
+_LEGACY_STORED_MANIFEST_FIELDS = _REQUIRED_MANIFEST_FIELDS | {
+    "csv",
+    "securities",
+}
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+_PARQUET_SCHEMA = pa.schema(
+    [
+        pa.field("date", pa.string(), nullable=False),
+        pa.field("security", pa.string(), nullable=False),
+        *[
+            pa.field(field, pa.float64(), nullable=True)
+            for field in MARKET_DATA_FIELDS[2:10]
+        ],
+        pa.field("paused", pa.bool_(), nullable=True),
+        pa.field("high_limit", pa.float64(), nullable=True),
+        pa.field("low_limit", pa.float64(), nullable=True),
+    ]
+)
 
 
 class MarketDataError(RuntimeError):
@@ -140,8 +176,8 @@ def _validate_manifest_input(manifest: Mapping[str, object]) -> dict[str, object
         raise MarketDataIntegrityError(
             f"manifest is missing required fields: {', '.join(missing)}"
         )
-    if manifest["schema_version"] != 1:
-        raise MarketDataIntegrityError("manifest schema_version must be 1")
+    if manifest["schema_version"] not in {1, 2}:
+        raise MarketDataIntegrityError("manifest schema_version must be 1 or 2")
 
     source = _require_mapping(manifest["source"], "source")
     if source.get("name") != "joinquant":
@@ -170,7 +206,7 @@ def _validate_manifest_input(manifest: Mapping[str, object]) -> dict[str, object
         raise MarketDataIntegrityError("export_code_sha256 must be a SHA256 digest")
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "source": source,
         "asset_type": "etf",
         "frequency": "1d",
@@ -233,7 +269,97 @@ def _read_csv(
     return rows, securities
 
 
-def _batch_identity(manifest: Mapping[str, object], csv_sha256: str) -> dict[str, object]:
+def _normalize_rows(rows: Iterable[Mapping[str, object]]) -> list[dict[str, object]]:
+    try:
+        return normalize_market_rows(rows)
+    except MarketDataContractError as exc:
+        raise MarketDataIntegrityError(str(exc)) from exc
+
+
+def _security_coverage(rows: Iterable[Mapping[str, object]]) -> list[dict[str, object]]:
+    security_dates: dict[str, list[str]] = defaultdict(list)
+    for row in rows:
+        security_dates[str(row["security"])].append(str(row["date"]))
+    return [
+        {
+            "security": security,
+            "start_date": min(dates),
+            "end_date": max(dates),
+            "rows": len(dates),
+        }
+        for security, dates in sorted(security_dates.items())
+    ]
+
+
+def _parquet_bytes(rows: Sequence[Mapping[str, object]]) -> bytes:
+    table = pa.Table.from_pylist([dict(row) for row in rows], schema=_PARQUET_SCHEMA)
+    sink = pa.BufferOutputStream()
+    pq.write_table(
+        table,
+        sink,
+        compression="zstd",
+        use_dictionary=False,
+        write_statistics=True,
+    )
+    return sink.getvalue().to_pybytes()
+
+
+def _read_parquet(path: Path) -> list[dict[str, object]]:
+    try:
+        table = pq.read_table(path)
+    except (OSError, pa.ArrowException) as exc:
+        raise MarketDataIntegrityError(f"invalid Parquet evidence: {path}") from exc
+    if tuple(table.column_names) != MARKET_DATA_FIELDS:
+        raise MarketDataIntegrityError(
+            "Parquet field order does not match the fixed market-data contract"
+        )
+    return _normalize_rows(table.to_pylist())
+
+
+def _duckdb_roundtrip(parquet_bytes: bytes, *, root: Path) -> list[dict[str, object]]:
+    Path(root).mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".market-data-import-", suffix=".parquet", dir=root
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        temporary.write_bytes(parquet_bytes)
+        connection = duckdb.connect(":memory:")
+        try:
+            relation = connection.read_parquet(str(temporary))
+            if tuple(relation.columns) != MARKET_DATA_FIELDS:
+                raise MarketDataIntegrityError(
+                    "DuckDB Parquet field order does not match the contract"
+                )
+            rows = [
+                dict(zip(relation.columns, values)) for values in relation.fetchall()
+            ]
+        finally:
+            connection.close()
+        return _normalize_rows(rows)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _batch_identity(
+    manifest: Mapping[str, object], content_sha256: str
+) -> dict[str, object]:
+    return {
+        "schema_version": 2,
+        "source": manifest["source"],
+        "asset_type": manifest["asset_type"],
+        "frequency": manifest["frequency"],
+        "fields": manifest["fields"],
+        "price_semantics": manifest["price_semantics"],
+        "export_code_sha256": manifest["export_code_sha256"],
+        "content_sha256": content_sha256,
+    }
+
+
+def _legacy_batch_identity(
+    manifest: Mapping[str, object], csv_sha256: str
+) -> dict[str, object]:
     return {
         "source": manifest["source"],
         "asset_type": manifest["asset_type"],
@@ -254,6 +380,20 @@ def _dataset_identity(manifest: Mapping[str, object]) -> tuple[bytes, object, ob
 
 
 def _validation_document() -> dict[str, object]:
+    return {
+        "schema_version": 2,
+        "status": "complete",
+        "checks": {
+            "field_order": True,
+            "nonempty": True,
+            "unique_date_security": True,
+            "parquet_roundtrip": True,
+            "normalized_digest": True,
+        },
+    }
+
+
+def _legacy_validation_document() -> dict[str, object]:
     return {
         "schema_version": 1,
         "status": "complete",
@@ -280,6 +420,10 @@ def _validate_batch_dir(batch_dir: Path) -> dict[str, Any]:
     if not batch_dir.is_dir():
         raise MarketDataIntegrityError(f"batch does not exist: {batch_dir.name}")
     names = {path.name for path in batch_dir.iterdir()}
+    if names == _LEGACY_BATCH_FILES:
+        raise MarketDataIntegrityError(
+            f"legacy CSV batch requires migration: {batch_dir.name}"
+        )
     if names != _BATCH_FILES:
         raise MarketDataIntegrityError(
             f"batch file set is invalid: {batch_dir.name}"
@@ -288,41 +432,56 @@ def _validate_batch_dir(batch_dir: Path) -> dict[str, Any]:
     if set(manifest) != _STORED_MANIFEST_FIELDS:
         raise MarketDataIntegrityError("batch manifest structure is invalid")
     declared = _validate_manifest_input(manifest)
-    csv_evidence = manifest.get("csv")
-    if not isinstance(csv_evidence, Mapping) or set(csv_evidence) != {
+    transport_evidence = manifest.get("transport_csv")
+    if not isinstance(transport_evidence, Mapping) or set(transport_evidence) != {
         "sha256",
-        "bytes",
+        "byte_count",
         "rows",
     }:
-        raise MarketDataIntegrityError("batch manifest is missing CSV evidence")
-    expected_sha = csv_evidence.get("sha256")
-    csv_path = batch_dir / "market-data.csv"
-    csv_bytes = csv_path.read_bytes()
-    actual_sha = _sha256_bytes(csv_bytes)
+        raise MarketDataIntegrityError(
+            "batch manifest is missing transport CSV evidence"
+        )
+    parquet_evidence = manifest.get("parquet")
+    if not isinstance(parquet_evidence, Mapping) or set(parquet_evidence) != {
+        "sha256",
+        "byte_count",
+        "rows",
+    }:
+        raise MarketDataIntegrityError("batch manifest is missing Parquet evidence")
+    parquet_path = batch_dir / "market-data.parquet"
+    parquet_bytes = parquet_path.read_bytes()
+    actual_sha = _sha256_bytes(parquet_bytes)
+    expected_sha = parquet_evidence.get("sha256")
     if actual_sha != expected_sha:
         raise MarketDataIntegrityError(
-            f"CSV SHA256 mismatch for batch {batch_dir.name}"
+            f"Parquet SHA256 mismatch for batch {batch_dir.name}"
         )
-    if len(csv_bytes) != csv_evidence.get("bytes"):
+    if len(parquet_bytes) != parquet_evidence.get("byte_count"):
         raise MarketDataIntegrityError(
-            f"CSV byte count mismatch for batch {batch_dir.name}"
+            f"Parquet byte count mismatch for batch {batch_dir.name}"
         )
     validation = _load_json(batch_dir / "validation.json")
     if validation != _validation_document():
         raise MarketDataIntegrityError(
             f"batch validation evidence is invalid: {batch_dir.name}"
         )
-    rows, securities = _read_csv(csv_path, declared["fields"])
-    if len(rows) != csv_evidence.get("rows"):
+    rows = _read_parquet(parquet_path)
+    if len(rows) != parquet_evidence.get("rows"):
         raise MarketDataIntegrityError(
-            f"CSV row count mismatch for batch {batch_dir.name}"
+            f"Parquet row count mismatch for batch {batch_dir.name}"
         )
+    content_sha256 = normalized_digest(rows)
+    if content_sha256 != manifest.get("content_sha256"):
+        raise MarketDataIntegrityError(
+            f"normalized content SHA256 mismatch for batch {batch_dir.name}"
+        )
+    securities = _security_coverage(rows)
     if securities != manifest.get("securities"):
         raise MarketDataIntegrityError(
             f"batch security coverage mismatch: {batch_dir.name}"
         )
     expected_batch_id = _sha256_bytes(
-        _canonical_bytes(_batch_identity(declared, actual_sha))
+        _canonical_bytes(_batch_identity(declared, content_sha256))
     )
     if batch_dir.name != expected_batch_id:
         raise MarketDataIntegrityError(
@@ -343,29 +502,86 @@ def _assert_existing_batch_matches(
             )
 
 
-def _existing_rows(batch_dir: Path, manifest: Mapping[str, object]) -> dict[tuple[str, str], dict[str, str]]:
-    rows, _ = _read_csv(batch_dir / "market-data.csv", manifest["fields"])
-    return {(row["security"], row["date"]): row for row in rows}
+def _existing_rows(
+    batch_dir: Path, manifest: Mapping[str, object]
+) -> dict[tuple[str, str], dict[str, object]]:
+    rows = _read_parquet(batch_dir / "market-data.parquet")
+    return {(str(row["security"]), str(row["date"])): row for row in rows}
+
+
+def _legacy_batch_for_overlap(
+    batch_dir: Path,
+) -> tuple[dict[str, object], dict[tuple[str, str], dict[str, object]]]:
+    manifest = _load_json(batch_dir / "manifest.json")
+    if set(manifest) != _LEGACY_STORED_MANIFEST_FIELDS:
+        raise MarketDataIntegrityError("legacy batch manifest structure is invalid")
+    if manifest.get("schema_version") != 1:
+        raise MarketDataIntegrityError("legacy batch schema_version must be 1")
+    declared = _validate_manifest_input(manifest)
+    csv_evidence = manifest.get("csv")
+    if not isinstance(csv_evidence, Mapping) or set(csv_evidence) != {
+        "sha256",
+        "bytes",
+        "rows",
+    }:
+        raise MarketDataIntegrityError("legacy batch is missing CSV evidence")
+    csv_path = batch_dir / "market-data.csv"
+    csv_bytes = csv_path.read_bytes()
+    csv_sha256 = _sha256_bytes(csv_bytes)
+    if csv_sha256 != csv_evidence.get("sha256"):
+        raise MarketDataIntegrityError(
+            f"legacy CSV SHA256 mismatch for batch {batch_dir.name}"
+        )
+    if len(csv_bytes) != csv_evidence.get("bytes"):
+        raise MarketDataIntegrityError(
+            f"legacy CSV byte count mismatch for batch {batch_dir.name}"
+        )
+    if _load_json(batch_dir / "validation.json") != _legacy_validation_document():
+        raise MarketDataIntegrityError(
+            f"legacy batch validation evidence is invalid: {batch_dir.name}"
+        )
+    raw_rows, securities = _read_csv(csv_path, declared["fields"])
+    rows = _normalize_rows(raw_rows)
+    if len(rows) != csv_evidence.get("rows") or securities != manifest.get(
+        "securities"
+    ):
+        raise MarketDataIntegrityError(
+            f"legacy batch coverage evidence is invalid: {batch_dir.name}"
+        )
+    expected_id = _sha256_bytes(
+        _canonical_bytes(_legacy_batch_identity(declared, csv_sha256))
+    )
+    if expected_id != batch_dir.name:
+        raise MarketDataIntegrityError(
+            f"legacy batch identity mismatch: {batch_dir.name}"
+        )
+    return declared, {
+        (str(row["security"]), str(row["date"])): row for row in rows
+    }
 
 
 def _reject_conflicting_overlap(
     *,
     batches_dir: Path,
     incoming_manifest: Mapping[str, object],
-    incoming_rows: Iterable[dict[str, str]],
+    incoming_rows: Iterable[dict[str, object]],
 ) -> None:
     incoming_by_key = {
-        (row["security"], row["date"]): row for row in incoming_rows
+        (str(row["security"]), str(row["date"])): row for row in incoming_rows
     }
     if not batches_dir.exists():
         return
     for batch_dir in sorted(batches_dir.iterdir()):
         if not batch_dir.is_dir() or batch_dir.name.startswith("."):
             continue
-        existing_manifest = _validate_batch_dir(batch_dir)
+        names = {path.name for path in batch_dir.iterdir()}
+        if names == _LEGACY_BATCH_FILES:
+            existing_manifest, existing_by_key = _legacy_batch_for_overlap(batch_dir)
+        else:
+            existing_manifest = _validate_batch_dir(batch_dir)
+            existing_by_key = _existing_rows(batch_dir, existing_manifest)
         if _dataset_identity(existing_manifest) != _dataset_identity(incoming_manifest):
             continue
-        existing_by_key = _existing_rows(batch_dir, existing_manifest)
         overlap = sorted(incoming_by_key.keys() & existing_by_key.keys())
         if not overlap:
             continue
@@ -450,27 +666,58 @@ def _import_batch_locked(
     declared = _validate_manifest_input(manifest)
     csv_bytes = csv_path.read_bytes()
     csv_sha256 = _sha256_bytes(csv_bytes)
-    rows, securities = _read_csv(csv_path, declared["fields"])
+    raw_rows, _ = _read_csv(csv_path, declared["fields"])
+    rows = _normalize_rows(raw_rows)
+    securities = _security_coverage(rows)
+    content_sha256 = normalized_digest(rows)
+    parquet_bytes = _parquet_bytes(rows)
+    roundtrip_rows = _duckdb_roundtrip(parquet_bytes, root=Path(root))
+    if normalized_digest(roundtrip_rows) != content_sha256:
+        raise MarketDataIntegrityError(
+            "DuckDB Parquet roundtrip normalized digest mismatch"
+        )
     stored_manifest = {
         **declared,
-        "csv": {
+        "content_sha256": content_sha256,
+        "transport_csv": {
             "sha256": csv_sha256,
-            "bytes": len(csv_bytes),
+            "byte_count": len(csv_bytes),
+            "rows": len(rows),
+        },
+        "parquet": {
+            "sha256": _sha256_bytes(parquet_bytes),
+            "byte_count": len(parquet_bytes),
             "rows": len(rows),
         },
         "securities": securities,
+        "writer": {
+            "pyarrow": pa.__version__,
+            "duckdb": duckdb.__version__,
+            "compression": "zstd",
+        },
     }
     validation = _validation_document()
-    batch_id = _sha256_bytes(_canonical_bytes(_batch_identity(declared, csv_sha256)))
+    batch_id = _sha256_bytes(
+        _canonical_bytes(_batch_identity(declared, content_sha256))
+    )
     batch_dir = Path(root) / "batches" / batch_id
     files = {
         "manifest.json": _json_file_bytes(stored_manifest),
-        "market-data.csv": csv_bytes,
+        "market-data.parquet": parquet_bytes,
         "validation.json": _json_file_bytes(validation),
     }
 
     if batch_dir.exists():
-        _assert_existing_batch_matches(batch_dir, files)
+        existing_manifest = _validate_batch_dir(batch_dir)
+        if existing_manifest.get("content_sha256") != content_sha256:
+            raise MarketDataIntegrityError(
+                f"immutable batch collision for {batch_dir.name}"
+            )
+        return BatchRecord(
+            batch_id=batch_id,
+            path=batch_dir,
+            manifest=existing_manifest,
+        )
     else:
         _reject_conflicting_overlap(
             batches_dir=Path(root) / "batches",
@@ -514,7 +761,7 @@ def _selection_rows(
     if start > end:
         raise MarketDataIntegrityError("snapshot start_date must not exceed end_date")
 
-    selected_rows: dict[str, dict[str, dict[str, str]]] = {
+    selected_rows: dict[str, dict[str, dict[str, object]]] = {
         security: {} for security in selected_securities
     }
     for batch_id, manifest in manifests:
@@ -538,19 +785,20 @@ def _selection_rows(
             manifest_fields
         ):
             raise MarketDataIntegrityError("snapshot fields are not covered")
-        rows, _ = _read_csv(
-            Path(root) / "batches" / batch_id / "market-data.csv",
-            manifest_fields,
+        rows = _read_parquet(
+            Path(root) / "batches" / batch_id / "market-data.parquet"
         )
         for row in rows:
-            row_date = date.fromisoformat(row["date"])
+            row_date_text = str(row["date"])
+            row_date = date.fromisoformat(row_date_text)
             if row["security"] in selected_securities and start <= row_date <= end:
-                existing = selected_rows[row["security"]].get(row["date"])
+                security = str(row["security"])
+                existing = selected_rows[security].get(row_date_text)
                 if existing is not None and existing != row:
                     raise MarketDataConflict(
                         f"snapshot batches conflict at {row['security']} {row['date']}"
                     )
-                selected_rows[row["security"]][row["date"]] = row
+                selected_rows[security][row_date_text] = row
     missing = sorted(
         security for security, rows in selected_rows.items() if not rows
     )
@@ -597,7 +845,10 @@ def _create_snapshot_locked(
             {
                 "batch_id": batch_id,
                 "manifest_sha256": _sha256_path(batch_dir / "manifest.json"),
-                "csv_sha256": _sha256_path(batch_dir / "market-data.csv"),
+                "parquet_sha256": _sha256_path(
+                    batch_dir / "market-data.parquet"
+                ),
+                "content_sha256": manifest["content_sha256"],
                 "validation_sha256": _sha256_path(
                     batch_dir / "validation.json"
                 ),
@@ -610,7 +861,7 @@ def _create_snapshot_locked(
         root=Path(root),
     )
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "batch_ids": unique_batch_ids,
         "batches": batch_evidence,
         "selection": selection.to_document(),
@@ -686,8 +937,16 @@ def validate_snapshot(snapshot_id: str, *, root: Path) -> SnapshotRecord:
             raise MarketDataIntegrityError(
                 f"manifest SHA256 mismatch for batch {batch_id}"
             )
-        if _sha256_path(batch_dir / "market-data.csv") != evidence.get("csv_sha256"):
-            raise MarketDataIntegrityError(f"CSV SHA256 mismatch for batch {batch_id}")
+        if _sha256_path(batch_dir / "market-data.parquet") != evidence.get(
+            "parquet_sha256"
+        ):
+            raise MarketDataIntegrityError(
+                f"Parquet SHA256 mismatch for batch {batch_id}"
+            )
+        if manifest.get("content_sha256") != evidence.get("content_sha256"):
+            raise MarketDataIntegrityError(
+                f"content SHA256 mismatch for batch {batch_id}"
+            )
         if _sha256_path(batch_dir / "validation.json") != evidence.get(
             "validation_sha256"
         ):
@@ -733,3 +992,49 @@ def validate_snapshot(snapshot_id: str, *, root: Path) -> SnapshotRecord:
         path=snapshot_path,
         document=document,
     )
+
+
+def audit_store(*, root: Path) -> dict[str, object]:
+    """Read and validate every stored batch and snapshot without mutating the store."""
+
+    storage_root = Path(root)
+    legacy_batch_ids: list[str] = []
+    parquet_batch_ids: list[str] = []
+    batches_dir = storage_root / "batches"
+    if batches_dir.exists():
+        for batch_dir in sorted(batches_dir.iterdir()):
+            if batch_dir.name.startswith("."):
+                continue
+            if not batch_dir.is_dir():
+                raise MarketDataIntegrityError(
+                    f"unexpected batch-store entry: {batch_dir.name}"
+                )
+            names = {path.name for path in batch_dir.iterdir()}
+            if names == _LEGACY_BATCH_FILES:
+                _legacy_batch_for_overlap(batch_dir)
+                legacy_batch_ids.append(batch_dir.name)
+            else:
+                _validate_batch_dir(batch_dir)
+                parquet_batch_ids.append(batch_dir.name)
+
+    snapshot_ids: list[str] = []
+    snapshots_dir = storage_root / "snapshots"
+    if snapshots_dir.exists():
+        for snapshot_path in sorted(snapshots_dir.iterdir()):
+            if snapshot_path.name.startswith("."):
+                continue
+            if not snapshot_path.is_file() or snapshot_path.suffix != ".json":
+                raise MarketDataIntegrityError(
+                    f"unexpected snapshot-store entry: {snapshot_path.name}"
+                )
+            snapshot_id = snapshot_path.stem
+            validate_snapshot(snapshot_id, root=storage_root)
+            snapshot_ids.append(snapshot_id)
+
+    return {
+        "schema_version": 1,
+        "status": "complete",
+        "legacy_batch_ids": legacy_batch_ids,
+        "parquet_batch_ids": parquet_batch_ids,
+        "snapshot_ids": snapshot_ids,
+    }

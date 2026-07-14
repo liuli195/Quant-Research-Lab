@@ -6,9 +6,10 @@ import textwrap
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Literal, Mapping, Sequence
 
-from .query import MARKET_DATA_FIELDS
+from .contracts import MARKET_DATA_FIELDS, BatchRecord
+from .storage import MarketDataIntegrityError, import_batch
 
 
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -155,3 +156,37 @@ def verify_transfer(
         remote_cleaned=remote_cleaned is True,
         reasons=tuple(reasons),
     )
+
+
+def import_verified_transfer(
+    *,
+    local_file: Path,
+    remote_sha256: str,
+    remote_cleaned: bool,
+    manifest: Mapping[str, object],
+    root: Path,
+) -> BatchRecord:
+    """Verify one owned transport file, import it, then remove the transport."""
+    transfer_path = Path(local_file)
+    try:
+        evidence = verify_transfer(
+            local_file=transfer_path,
+            remote_sha256=remote_sha256,
+            remote_cleaned=remote_cleaned,
+        )
+        if evidence.status != "complete":
+            raise MarketDataIntegrityError(
+                "transfer validation failed: " + "; ".join(evidence.reasons)
+            )
+        return import_batch(
+            csv_path=transfer_path,
+            manifest=manifest,
+            root=Path(root),
+        )
+    finally:
+        try:
+            transfer_path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise MarketDataIntegrityError(
+                "local transfer cleanup is not confirmed"
+            ) from exc
