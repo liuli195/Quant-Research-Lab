@@ -5,7 +5,7 @@ import json
 import math
 import statistics
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path
@@ -59,6 +59,10 @@ else:
     from .state import commission_fee, request_addition, request_full_exit
 
 from scripts.research.market_data.query import open_snapshot
+from scripts.research.quant_analysis.contracts import (
+    BENCHMARK_IDS,
+    read_analysis_table,
+)
 
 
 class ResearchEvidenceInsufficient(RuntimeError):
@@ -186,6 +190,223 @@ def _percent(value: Decimal) -> str:
     return f"{(value * Decimal('100')).quantize(Decimal('0.01'))}%"
 
 
+def _standard_orders(
+    audit_rows: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for item in audit_rows:
+        action = str(item["action"])
+        filled_quantity = float(item["filled_quantity"])
+        fill_price = (
+            None if item.get("fill_price") in {None, ""} else float(item["fill_price"])
+        )
+        fee = (
+            0.0
+            if filled_quantity <= 0 or fill_price is None
+            else float(commission_fee(Decimal(str(fill_price)), int(filled_quantity)))
+        )
+        rows.append(
+            {
+                "order_id": f"{item['date']}:{int(item['sequence']):06d}",
+                "date": str(item["date"]),
+                "security": str(item["security"]),
+                "side": "buy" if action in {"entry", "addition"} else "sell",
+                "requested_quantity": float(item["requested_quantity"]),
+                "filled_quantity": filled_quantity,
+                "fill_price": fill_price,
+                "fee": fee,
+                "status": str(item["status"]),
+                "reason": str(item["reason"]),
+            }
+        )
+    return rows
+
+
+def _round_trip_trades(
+    fills: Sequence[Mapping[str, object]],
+    groups: Mapping[str, str],
+) -> list[dict[str, object]]:
+    lots: defaultdict[str, list[dict[str, object]]] = defaultdict(list)
+    closed: list[dict[str, object]] = []
+    trade_sequence = 0
+    for item in sorted(
+        fills,
+        key=lambda row: (str(row["date"]), int(row["sequence"])),
+    ):
+        security = str(item["security"])
+        action = str(item["action"])
+        quantity = int(item["quantity"])
+        price = float(item["fill_price"])
+        fee = float(commission_fee(Decimal(str(price)), quantity))
+        if action in {"entry", "addition"}:
+            lots[security].append(
+                {
+                    "date": str(item["date"]),
+                    "quantity": quantity,
+                    "price": price,
+                    "fee_per_share": fee / quantity,
+                    "reason": str(item["reason"]),
+                }
+            )
+            continue
+        remaining = quantity
+        while remaining > 0:
+            if not lots[security]:
+                raise ValueError(f"sell fill exceeds tracked entry lots: {security}")
+            lot = lots[security][0]
+            matched = min(remaining, int(lot["quantity"]))
+            entry_fee = float(lot["fee_per_share"]) * matched
+            exit_fee = fee * matched / quantity
+            entry_notional = float(lot["price"]) * matched
+            pnl = (price - float(lot["price"])) * matched - entry_fee - exit_fee
+            trade_sequence += 1
+            closed.append(
+                {
+                    "trade_id": f"trade-{trade_sequence:08d}",
+                    "entry_date": str(lot["date"]),
+                    "exit_date": str(item["date"]),
+                    "security": security,
+                    "asset_group": groups[security],
+                    "quantity": float(matched),
+                    "entry_price": float(lot["price"]),
+                    "exit_price": price,
+                    "fees": entry_fee + exit_fee,
+                    "pnl": pnl,
+                    "return": pnl / (entry_notional + entry_fee),
+                    "entry_reason": str(lot["reason"]),
+                    "exit_reason": str(item["reason"]),
+                }
+            )
+            lot["quantity"] = int(lot["quantity"]) - matched
+            if int(lot["quantity"]) == 0:
+                lots[security].pop(0)
+            remaining -= matched
+    return closed
+
+
+def _standard_analysis_rows(
+    *,
+    dates: Sequence[str],
+    groups: Mapping[str, str],
+    audit_rows: Sequence[Mapping[str, object]],
+    trade_rows: Sequence[Mapping[str, object]],
+    position_rows: Sequence[Mapping[str, object]],
+    risk_rows: Sequence[Mapping[str, object]],
+    benchmark_rows: Sequence[Mapping[str, object]],
+) -> dict[str, list[dict[str, object]]]:
+    orders = _standard_orders(audit_rows)
+    fees_by_date: defaultdict[str, float] = defaultdict(float)
+    for row in orders:
+        fees_by_date[str(row["date"])] += float(row["fee"])
+    legacy_positions: defaultdict[str, list[Mapping[str, object]]] = defaultdict(list)
+    for row in position_rows:
+        legacy_positions[str(row["date"])].append(row)
+    legacy_risk = {str(row["date"]): row for row in risk_rows}
+    equity_rows: list[dict[str, object]] = []
+    return_rows: list[dict[str, object]] = []
+    standard_positions: list[dict[str, object]] = []
+    standard_risk: list[dict[str, object]] = []
+    previous_equity: float | None = None
+    for current_date in dates:
+        risk = legacy_risk[current_date]
+        equity = float(risk["equity"])
+        cash = float(risk["cash"])
+        positions_value = sum(
+            float(row["market_value"]) for row in legacy_positions[current_date]
+        )
+        daily_return = 0.0 if previous_equity is None else equity / previous_equity - 1.0
+        assigned_return = 0.0
+        for row in legacy_positions[current_date]:
+            market_value = float(row["market_value"])
+            contribution = (
+                0.0
+                if positions_value == 0
+                else daily_return * market_value / positions_value
+            )
+            assigned_return += contribution
+            standard_positions.append(
+                {
+                    "date": current_date,
+                    "security": str(row["security"]),
+                    "asset_group": str(row["asset_group"]),
+                    "quantity": float(row["quantity"]),
+                    "close": float(row["close"]),
+                    "market_value": market_value,
+                    "weight": market_value / equity,
+                    "planned_loss": float(row["planned_loss"]),
+                    "pnl_contribution": contribution
+                    * (previous_equity if previous_equity is not None else equity),
+                    "return_contribution": contribution,
+                }
+            )
+        equity_rows.append(
+            {
+                "date": current_date,
+                "portfolio_id": "strategy-003",
+                "currency": "CNY",
+                "equity": equity,
+                "cash": cash,
+                "positions_value": positions_value,
+                "daily_pnl": 0.0 if previous_equity is None else equity - previous_equity,
+                "fees": fees_by_date[current_date],
+            }
+        )
+        return_rows.append(
+            {
+                "date": current_date,
+                "portfolio_id": "strategy-003",
+                "return": daily_return,
+                "equity": equity,
+                "cash_return_contribution": daily_return - assigned_return,
+            }
+        )
+        standard_risk.append(
+            {
+                "date": current_date,
+                "portfolio_id": "strategy-003",
+                "equity": equity,
+                "cash": cash,
+                "invested_ratio": float(risk["invested_ratio"]),
+                "cash_ratio": float(risk["cash_ratio"]),
+                "planned_risk": float(risk["portfolio_planned_risk"]),
+                "portfolio_risk_usage": float(risk["portfolio_risk_usage"]),
+                "portfolio_volatility": (
+                    None
+                    if risk["portfolio_volatility"] in {None, ""}
+                    else float(risk["portfolio_volatility"])
+                ),
+                "target_volatility_usage": (
+                    None
+                    if risk["target_volatility_usage"] in {None, ""}
+                    else float(risk["target_volatility_usage"])
+                ),
+            }
+        )
+        previous_equity = equity
+    events = [
+        {
+            "event_id": f"{row['date']}:{int(row['sequence']):06d}",
+            "date": str(row["date"]),
+            "sequence": int(row["sequence"]),
+            "security": str(row["security"]) or None,
+            "event_type": str(row["action"]),
+            "status": str(row["status"]),
+            "reason": str(row["reason"]),
+        }
+        for row in audit_rows
+    ]
+    return {
+        "equity": equity_rows,
+        "returns": return_rows,
+        "trades": _round_trip_trades(trade_rows, groups),
+        "orders": orders,
+        "positions": standard_positions,
+        "risk": standard_risk,
+        "events": events,
+        "benchmarks": [dict(row) for row in benchmark_rows],
+    }
+
+
 def _simulate(
     *,
     config: Mapping[str, object],
@@ -193,6 +414,7 @@ def _simulate(
     identity: RunIdentity,
     snapshot_normalized_sha256: str,
     rows: Sequence[Mapping[str, object]],
+    benchmark_rows: Sequence[Mapping[str, object]],
 ) -> ResearchResult:
     frames, returns, securities = _prepare_frames(rows, config)
     groups = {
@@ -512,6 +734,15 @@ def _simulate(
         "maximum_portfolio_risk_usage": _percent(max(portfolio_risk_usage)),
         "maximum_target_volatility_usage": _percent(max(target_volatility_usage)),
     }
+    analysis_rows = _standard_analysis_rows(
+        dates=dates,
+        groups=groups,
+        audit_rows=audit_rows,
+        trade_rows=trade_rows,
+        position_rows=position_rows,
+        risk_rows=risk_rows,
+        benchmark_rows=benchmark_rows,
+    )
     return ResearchResult(
         identity=identity,
         snapshot_normalized_sha256=snapshot_normalized_sha256,
@@ -521,6 +752,7 @@ def _simulate(
         trade_rows=tuple(trade_rows),
         position_rows=tuple(position_rows),
         risk_rows=tuple(risk_rows),
+        analysis_rows=analysis_rows,
         metrics=metrics,
         recommendation="proceed_to_joinquant",
         reasons=(
@@ -555,6 +787,7 @@ def run_research(
     output_dir: Path,
     *,
     market_data_root: Path | None = None,
+    benchmark_input: Path | None = None,
     identity: RunIdentity | None = None,
 ) -> ProjectResult:
     output_dir = Path(output_dir)
@@ -578,12 +811,30 @@ def run_research(
             else Path(snapshot_path).resolve().parents[1]
         )
         snapshot_view = open_snapshot(identity.snapshot_id, root=root)
+        if benchmark_input is None or not Path(benchmark_input).is_file():
+            raise ResearchEvidenceInsufficient("missing_benchmark_input")
+        all_benchmark_rows = read_analysis_table("benchmarks", benchmark_input)
+        expected_dates = {str(row["date"]) for row in snapshot_view.rows}
+        benchmark_rows = tuple(
+            row for row in all_benchmark_rows if str(row["date"]) in expected_dates
+        )
+        coverage = {
+            benchmark_id: {
+                str(row["date"])
+                for row in benchmark_rows
+                if row["benchmark_id"] == benchmark_id
+            }
+            for benchmark_id in BENCHMARK_IDS
+        }
+        if any(dates != expected_dates for dates in coverage.values()):
+            raise ResearchEvidenceInsufficient("incomplete_benchmark_input")
         result = _simulate(
             config=config,
             candidates=candidates,
             identity=identity,
             snapshot_normalized_sha256=snapshot_view.digest,
             rows=snapshot_view.rows,
+            benchmark_rows=benchmark_rows,
         )
         write_outputs(result, output_dir)
         validate_project_outputs(output_dir, identity)
@@ -608,6 +859,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--snapshot-id", required=True)
     parser.add_argument("--code-sha256", required=True)
     parser.add_argument("--config-sha256", required=True)
+    parser.add_argument("--benchmark-input", type=Path)
     return parser
 
 
@@ -624,6 +876,7 @@ def main(argv: list[str] | None = None) -> int:
         args.snapshot_manifest,
         args.output_dir,
         market_data_root=args.market_data_root,
+        benchmark_input=args.benchmark_input,
         identity=identity,
     )
     return {"complete": 0, "failed": 1, "evidence_insufficient": 2}[result.status]

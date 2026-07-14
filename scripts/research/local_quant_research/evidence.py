@@ -9,6 +9,9 @@ import tempfile
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
+import pyarrow as pa
+import pyarrow.parquet as pq
+
 from .contracts import OutputSpec
 
 
@@ -98,6 +101,13 @@ def _validate_output(path: Path, output_format: str) -> None:
                         )
         except (OSError, UnicodeDecodeError, StopIteration, csv.Error) as exc:
             raise EvidenceError(f"invalid CSV output: {path.name}") from exc
+    elif output_format == "parquet":
+        try:
+            schema = pq.read_schema(path)
+        except (OSError, pa.ArrowException) as exc:
+            raise EvidenceError(f"invalid Parquet output: {path.name}") from exc
+        if not schema.names or len(schema.names) != len(set(schema.names)):
+            raise EvidenceError(f"Parquet schema is invalid: {path.name}")
     else:
         try:
             text = raw.decode("utf-8")

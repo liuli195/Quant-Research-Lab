@@ -57,6 +57,10 @@
   ],
   "required_outputs": [
     {
+      "path": "benchmarks.parquet",
+      "format": "parquet"
+    },
+    {
       "path": "candidate-strategies.json",
       "format": "json"
     },
@@ -67,6 +71,22 @@
     {
       "path": "daily-audit.csv",
       "format": "csv"
+    },
+    {
+      "path": "equity.parquet",
+      "format": "parquet"
+    },
+    {
+      "path": "events.parquet",
+      "format": "parquet"
+    },
+    {
+      "path": "orders.parquet",
+      "format": "parquet"
+    },
+    {
+      "path": "positions.parquet",
+      "format": "parquet"
     },
     {
       "path": "positions.csv",
@@ -81,8 +101,20 @@
       "format": "csv"
     },
     {
+      "path": "risk.parquet",
+      "format": "parquet"
+    },
+    {
       "path": "trades.csv",
       "format": "csv"
+    },
+    {
+      "path": "returns.parquet",
+      "format": "parquet"
+    },
+    {
+      "path": "trades.parquet",
+      "format": "parquet"
     }
   ],
   "output_root": ".local/quant-research",

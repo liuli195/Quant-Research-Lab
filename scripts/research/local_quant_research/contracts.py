@@ -12,7 +12,7 @@ RunStatus = Literal["complete", "evidence_insufficient", "failed"]
 @dataclass(frozen=True)
 class OutputSpec:
     path: str
-    format: Literal["json", "csv", "markdown", "text"]
+    format: Literal["json", "csv", "markdown", "text", "parquet"]
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,7 @@ class RunConfig:
     command: tuple[str, ...]
     project_config: Path
     code_identity: Path
+    benchmark_input: Path | None
     declared_inputs: tuple[Path, ...]
     required_outputs: tuple[OutputSpec, ...]
     output_root: Path

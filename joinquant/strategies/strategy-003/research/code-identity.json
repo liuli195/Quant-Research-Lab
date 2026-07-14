@@ -11,7 +11,7 @@
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/cli.py",
-      "sha256": "6b0757619dd1b9d67e486a4e4fe2a882f617b6ed306357294b6a3ad0e6778e9d"
+      "sha256": "74be0d9776cf05dc424270c870b151d710899b49b8dcfbda1cca1f3867c87a66"
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/execution.py",
@@ -23,7 +23,7 @@
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/reporting.py",
-      "sha256": "6ababafcf615308cd0bac0a018826e471225cdb5b926acbc01f931d4cfe75a71"
+      "sha256": "740df4971b6b649eff78a68662d0a66d160ed15854ca729c8f17d9852944e938"
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/risk.py",
@@ -60,6 +60,26 @@
     {
       "path": "scripts/research/market_data/storage.py",
       "sha256": "3140f047b808de12b491e69858aaddf728784873bd7510c1fb0191fd02e39cb0"
+    },
+    {
+      "path": "scripts/research/quant_analysis/__init__.py",
+      "sha256": "b6d0066221a2b0574ed9568b05d638a71d68300a331f320b928a1e18d1d91be0"
+    },
+    {
+      "path": "scripts/research/quant_analysis/attribution.py",
+      "sha256": "8991d344d5e81987cc1d685f905fb6ef44e70045f7ad638fa8e74f593e021faf"
+    },
+    {
+      "path": "scripts/research/quant_analysis/benchmarks.py",
+      "sha256": "4c0d2176594ae2f35f8dc31227e05a8e75e8e0cd5adcaff98daa509dcff25e8d"
+    },
+    {
+      "path": "scripts/research/quant_analysis/contracts.py",
+      "sha256": "ddee86ee2e32fa8aea8726907405105c52ccb72cb87a3f644f1a0c61a5538975"
+    },
+    {
+      "path": "scripts/research/quant_analysis/metrics.py",
+      "sha256": "1502b6874a69f6af1db64dee4151d2b414ba7dc910f4502013f78ba713a73085"
     }
   ]
 }

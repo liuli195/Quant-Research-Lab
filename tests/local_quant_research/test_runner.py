@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import Callable
 
 import pytest
+import pyarrow as pa
+import pyarrow.parquet as pq
 
+from scripts.research.local_quant_research.contracts import OutputSpec
+from scripts.research.local_quant_research.evidence import collect_output_evidence
 from scripts.research.local_quant_research.runner import run_project
 from scripts.research.local_quant_research.evidence import canonical_digest
 from scripts.research.market_data.contracts import SnapshotSelection
@@ -147,6 +151,46 @@ def _successful_process(
         return subprocess.CompletedProcess(command, 0, stdout="ignored", stderr="ignored")
 
     return fake_run
+
+
+def test_required_output_accepts_valid_parquet_and_rejects_invalid_bytes(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "analysis.parquet"
+    pq.write_table(pa.table({"date": ["2026-01-05"], "value": [1.0]}), path)
+    spec = OutputSpec(path=path.name, format="parquet")
+
+    evidence = collect_output_evidence(tmp_path, (spec,))
+
+    assert evidence[0]["format"] == "parquet"
+    path.write_bytes(b"not parquet")
+    with pytest.raises(Exception, match="Parquet"):
+        collect_output_evidence(tmp_path, (spec,))
+
+
+def test_optional_benchmark_input_is_frozen_and_passed_to_project(
+    repo_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_root, config_path, config = _build_repo(tmp_path, repo_root)
+    benchmark = fake_root / ".local/market-data/benchmarks/input.parquet"
+    benchmark.parent.mkdir(parents=True)
+    pq.write_table(pa.table({"date": ["2026-01-05"], "return": [0.0]}), benchmark)
+    config["benchmark_input"] = benchmark.relative_to(fake_root).as_posix()
+    _write_json(config_path, config)
+
+    def assert_invocation(command: list[str], _: dict[str, object]) -> None:
+        argument = Path(command[command.index("--benchmark-input") + 1])
+        assert argument.is_file()
+        assert ".inputs" in argument.as_posix()
+        assert argument.read_bytes() == benchmark.read_bytes()
+
+    monkeypatch.setattr(subprocess, "run", _successful_process(assert_invocation))
+
+    result = run_project(config_path, repo_root=fake_root)
+
+    assert result.status == "complete"
 
 
 @pytest.mark.parametrize(

@@ -46,8 +46,16 @@ from turtle_etf.state import (  # noqa: E402
     apply_entry_fill,
 )
 from scripts.research.market_data.contracts import SnapshotSelection  # noqa: E402
-from scripts.research.market_data.query import MARKET_DATA_FIELDS  # noqa: E402
+from scripts.research.market_data.query import (  # noqa: E402
+    MARKET_DATA_FIELDS,
+    open_snapshot,
+)
 from scripts.research.market_data.storage import create_snapshot, import_batch  # noqa: E402
+from scripts.research.quant_analysis.contracts import (  # noqa: E402
+    STANDARD_TABLES,
+    validate_analysis_bundle,
+    write_analysis_table,
+)
 
 
 def _sell(
@@ -420,6 +428,36 @@ def _run_identity(snapshot_id: str) -> RunIdentity:
     )
 
 
+def _benchmark_input(snapshot, market_root: Path, root: Path) -> Path:
+    dates = sorted(
+        {str(row["date"]) for row in open_snapshot(snapshot.snapshot_id, root=market_root).rows}
+    )
+    levels = {
+        "csi300_total_return_cny": 100.0,
+        "nasdaq100_total_return_cny": 100.0,
+    }
+    rows: list[dict[str, object]] = []
+    for index, current_date in enumerate(dates):
+        returns = {
+            "csi300_total_return_cny": 0.0 if index == 0 else (0.001 if index % 2 else -0.0005),
+            "nasdaq100_total_return_cny": 0.0 if index == 0 else (0.0015 if index % 3 else -0.0007),
+        }
+        for benchmark_id, value in returns.items():
+            if index:
+                levels[benchmark_id] *= 1.0 + value
+            rows.append(
+                {
+                    "date": current_date,
+                    "benchmark_id": benchmark_id,
+                    "currency": "CNY",
+                    "total_return_index": levels[benchmark_id],
+                    "return": value,
+                    "source_id": f"fixture:{benchmark_id}",
+                }
+            )
+    return write_analysis_table("benchmarks", rows, root)
+
+
 def test_project_research_writes_reports_conclusion_candidates_and_audits(
     tmp_path: Path,
     repo_root: Path,
@@ -430,12 +468,14 @@ def test_project_research_writes_reports_conclusion_candidates_and_audits(
         repo_root / "joinquant/strategies/strategy-003/research/baseline.json"
     )
     identity = _run_identity(snapshot.snapshot_id)
+    benchmark_input = _benchmark_input(snapshot, market_root, tmp_path / "benchmark")
 
     result = run_research(
         config_path,
         snapshot.path,
         output_dir,
         market_data_root=market_root,
+        benchmark_input=benchmark_input,
         identity=identity,
     )
 
@@ -449,6 +489,7 @@ def test_project_research_writes_reports_conclusion_candidates_and_audits(
         "research-report.md",
         "conclusion.json",
         "candidate-strategies.json",
+        *(f"{name}.parquet" for name in STANDARD_TABLES),
     }
     conclusion = json.loads((output_dir / "conclusion.json").read_text(encoding="utf-8"))
     candidates = json.loads(
@@ -457,6 +498,14 @@ def test_project_research_writes_reports_conclusion_candidates_and_audits(
     report = (output_dir / "research-report.md").read_text(encoding="utf-8")
     assert conclusion["identity"] == identity.to_document()
     assert conclusion["metrics"]["filled_trades"] >= 2
+    assert "cumulative_return" in conclusion["metrics"]
+    assert "max_drawdown" in conclusion["metrics"]
+    assert set(conclusion["benchmark_statistics"]) == {
+        "csi300_total_return_cny",
+        "nasdaq100_total_return_cny",
+    }
+    bundle = validate_analysis_bundle(output_dir)
+    assert tuple(bundle.tables) == STANDARD_TABLES
     assert conclusion["recommendation"] in {
         "proceed_to_joinquant",
         "revise_and_reassess",
@@ -482,6 +531,8 @@ def test_project_research_writes_reports_conclusion_candidates_and_audits(
         "留现原因",
         "资产组风险使用率",
         "组合风险使用率",
+        "收益与回撤",
+        "Alpha（超额收益）与 Beta（市场暴露）",
         "限制",
         "产物摘要",
         "不是正式回测或最终验收结论",
@@ -500,12 +551,14 @@ def test_cold_security_does_not_block_other_securities_or_the_project(
     snapshot, market_root = _research_snapshot(tmp_path, cold_security_rows=10)
     output_dir = tmp_path / "cold-output"
     identity = _run_identity(snapshot.snapshot_id)
+    benchmark_input = _benchmark_input(snapshot, market_root, tmp_path / "cold-benchmark")
 
     result = run_research(
         repo_root / "joinquant/strategies/strategy-003/research/baseline.json",
         snapshot.path,
         output_dir,
         market_data_root=market_root,
+        benchmark_input=benchmark_input,
         identity=identity,
     )
 
@@ -519,6 +572,24 @@ def test_cold_security_does_not_block_other_securities_or_the_project(
     assert "516080.XSHG" in json.loads(final_risk["cold_start_securities"])
 
 
+def test_missing_explicit_benchmark_input_is_evidence_insufficient(
+    tmp_path: Path,
+    repo_root: Path,
+) -> None:
+    snapshot, market_root = _research_snapshot(tmp_path)
+
+    result = run_research(
+        repo_root / "joinquant/strategies/strategy-003/research/baseline.json",
+        snapshot.path,
+        tmp_path / "missing-benchmark-output",
+        market_data_root=market_root,
+        identity=_run_identity(snapshot.snapshot_id),
+    )
+
+    assert result.status == "evidence_insufficient"
+    assert result.reason_codes == ("missing_benchmark_input",)
+
+
 @pytest.mark.parametrize("mutation", ["missing", "invalid-json", "identity-mismatch"])
 def test_three_required_outputs_reject_missing_invalid_or_mismatched_evidence(
     mutation: str,
@@ -528,11 +599,13 @@ def test_three_required_outputs_reject_missing_invalid_or_mismatched_evidence(
     snapshot, market_root = _research_snapshot(tmp_path)
     output_dir = tmp_path / "output"
     identity = _run_identity(snapshot.snapshot_id)
+    benchmark_input = _benchmark_input(snapshot, market_root, tmp_path / "validation-benchmark")
     run_research(
         repo_root / "joinquant/strategies/strategy-003/research/baseline.json",
         snapshot.path,
         output_dir,
         market_data_root=market_root,
+        benchmark_input=benchmark_input,
         identity=identity,
     )
     if mutation == "missing":
@@ -560,6 +633,11 @@ def test_project_run_config_references_snapshot_and_disables_biased_optimizer(
     assert run_config["project_entry"].endswith("/turtle_etf/cli.py")
     assert run_config["project_config"].endswith("/baseline.json")
     assert all(not path.lower().endswith(".csv") for path in run_config["declared_inputs"])
+    assert {
+        item["path"]
+        for item in run_config["required_outputs"]
+        if item["format"] == "parquet"
+    } == {f"{name}.parquet" for name in STANDARD_TABLES}
     assert baseline["research"]["vibe_optimizer"]["enabled"] is False
     assert baseline["research"]["vibe_optimizer"]["reason"]
 
@@ -597,6 +675,8 @@ def test_skill_public_command_runs_complete_turtle_workflow(
             snapshot_requirements=snapshot_document["selection"],
         )
         temp_project.mkdir(parents=True)
+        benchmark_input = _benchmark_input(snapshot, market_root, temp_project)
+        run_config["benchmark_input"] = benchmark_input.relative_to(repo_root).as_posix()
         config_path = temp_project / "run.json"
         config_path.write_text(
             json.dumps(run_config, ensure_ascii=False, sort_keys=True) + "\n",

@@ -140,7 +140,7 @@ def calculate_attribution(bundle: AnalysisBundle) -> tuple[dict[str, object], ..
 
 沪深 300 人民币总回报与纳斯达克 100 人民币总回报必须作为显式基准输入进入 `benchmarks.parquet`，字段至少为 `date`、`benchmark_id`、`currency`、`total_return_index`、`return`、`source_id`。仓库没有声明来源或日期不完整时返回 `evidence_insufficient`，不得使用 ETF 代理、价格指数或零收益补齐。
 
-- [ ] **Step 1：写八表和黄金指标失败测试**
+- [x] **Step 1：写八表和黄金指标失败测试**
 
 ```python
 def test_bundle_requires_all_eight_parquet_tables(tmp_path):
@@ -158,23 +158,23 @@ def test_performance_and_two_benchmark_attribution_match_golden_values(golden_bu
 
 补充主键冲突、单位错误、跨表现金/持仓/权益不勾稽、完整往返交易、基准日期错位、Alpha（超额收益）、Beta（市场暴露）、信息比率、上下行捕获率和归因求和容差测试。
 
-- [ ] **Step 2：验证 RED**
+- [x] **Step 2：验证 RED**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_analysis_contracts.py tests\local_quant_research\test_quant_metrics.py tests\local_quant_research\test_quant_attribution.py -q`
 
 Expected: FAIL，原因是 `quant_analysis` 尚不存在。
 
-- [ ] **Step 3：实现最小确定性分析层并接入项目输出**
+- [x] **Step 3：实现最小确定性分析层并接入项目输出**
 
 所有表以 PyArrow 显式结构写入，保存 `schema_version`、货币、单位、主键和摘要。指标只消费校验后的八表；交易统计只消费闭合往返 `trades.parquet`；归因按 ETF、资产组、时期、交易原因、仓位、现金、趋势过滤和风险约束输出，并检查贡献总和回到组合事实。
 
-- [ ] **Step 4：验证 GREEN 和既有输出回归**
+- [x] **Step 4：验证 GREEN 和既有输出回归**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_analysis_contracts.py tests\local_quant_research\test_quant_metrics.py tests\local_quant_research\test_quant_attribution.py tests\local_quant_research\test_turtle_e2e.py tests\local_quant_research\test_runner.py -q`
 
 Expected: PASS；输出格式校验允许 `parquet`，缺任一标准表不得 `complete`。
 
-- [ ] **Step 5：勾选 OpenSpec 9.1–9.4 并提交**
+- [x] **Step 5：勾选 OpenSpec 9.1–9.4 并提交**
 
 Commit: `实现：增加完整绩效基准与归因分析`
 

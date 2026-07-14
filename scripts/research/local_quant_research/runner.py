@@ -42,6 +42,7 @@ _CONFIG_FIELDS = {
     "output_root",
     "stop_states",
 }
+_OPTIONAL_CONFIG_FIELDS = {"benchmark_input"}
 _STOP_STATES = ("complete", "evidence_insufficient", "failed")
 _PROJECT_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -56,6 +57,7 @@ _RESERVED_ARGUMENTS = {
     "--snapshot-id",
     "--code-sha256",
     "--config-sha256",
+    "--benchmark-input",
 }
 _COMPLETE_STAGE_NAMES = (
     "snapshot_validation",
@@ -98,6 +100,7 @@ class _FrozenExecutionInputs:
     market_data: Path
     project_entry: Path
     project_config: Path
+    benchmark_input: Path | None
 
 
 def _inside(path: Path, root: Path) -> bool:
@@ -168,7 +171,8 @@ def load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
     if _contains_sensitive_key(document):
         raise ConfigurationError("credential_field", "credential fields are forbidden")
     missing = sorted(_CONFIG_FIELDS - set(document))
-    if missing or set(document) != _CONFIG_FIELDS:
+    unknown = set(document) - (_CONFIG_FIELDS | _OPTIONAL_CONFIG_FIELDS)
+    if missing or unknown:
         raise ConfigurationError("invalid_config", "run config fields are incomplete or unknown")
     if document["schema_version"] != 1:
         raise ConfigurationError("invalid_config", "schema_version must be 1")
@@ -193,6 +197,15 @@ def load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
     )
     code_identity = _resolve_repo_path(
         document["code_identity"], repo_root=repo_root, field="code_identity"
+    )
+    benchmark_input = (
+        _resolve_repo_path(
+            document["benchmark_input"],
+            repo_root=repo_root,
+            field="benchmark_input",
+        )
+        if "benchmark_input" in document
+        else None
     )
 
     command = document["command"]
@@ -229,7 +242,12 @@ def load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
     )
     if len(declared_inputs) != len(set(declared_inputs)):
         raise ConfigurationError("invalid_inputs", "declared_inputs must be unique")
-    for input_path in (project_config, code_identity, *declared_inputs):
+    for input_path in (
+        project_config,
+        code_identity,
+        *declared_inputs,
+        *((benchmark_input,) if benchmark_input is not None else ()),
+    ):
         if not input_path.is_file():
             raise ConfigurationError("missing_declared_input", "a declared input is missing")
 
@@ -248,7 +266,7 @@ def load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
         if not isinstance(item, dict) or set(item) != {"path", "format"}:
             raise ConfigurationError("invalid_output", "required output structure is invalid")
         output_format = item["format"]
-        if output_format not in {"json", "csv", "markdown", "text"}:
+        if output_format not in {"json", "csv", "markdown", "text", "parquet"}:
             raise ConfigurationError("invalid_output", "required output format is invalid")
         output_specs.append(OutputSpec(path=_output_path(item["path"]), format=output_format))
     if len({spec.path for spec in output_specs}) != len(output_specs):
@@ -271,6 +289,7 @@ def load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
         command=tuple(command),
         project_config=project_config,
         code_identity=code_identity,
+        benchmark_input=benchmark_input,
         declared_inputs=declared_inputs,
         required_outputs=tuple(output_specs),
         output_root=output_root,
@@ -384,11 +403,20 @@ def _input_evidence(config: RunConfig, *, repo_root: Path) -> tuple[str, str, di
         }
         for path in config.declared_inputs
     ]
+    benchmark_input = (
+        {
+            "path": config.benchmark_input.relative_to(repo_root).as_posix(),
+            "sha256": file_digest(config.benchmark_input),
+        }
+        if config.benchmark_input is not None
+        else None
+    )
     config_identity = {
         "run_config": dict(config.document),
         "project_config_sha256": project_config_digest,
         "code_identity_sha256": code_identity_digest,
         "declared_inputs": declared,
+        "benchmark_input": benchmark_input,
     }
     config_digest = canonical_digest(config_identity)
     evidence = {
@@ -398,6 +426,7 @@ def _input_evidence(config: RunConfig, *, repo_root: Path) -> tuple[str, str, di
         "code_sha256": code_digest,
         "code_identity": code_document,
         "declared_inputs": declared,
+        "benchmark_input": benchmark_input,
     }
     return config_digest, code_digest, evidence
 
@@ -460,6 +489,16 @@ def _freeze_execution_inputs(
                 frozen_repo / relative,
                 str(item["sha256"]),
             )
+        frozen_benchmark_input: Path | None = None
+        benchmark_evidence = inputs.get("benchmark_input")
+        if isinstance(benchmark_evidence, Mapping):
+            relative = Path(str(benchmark_evidence["path"]))
+            frozen_benchmark_input = frozen_repo / relative
+            _copy_verified_file(
+                repo_root / relative,
+                frozen_benchmark_input,
+                str(benchmark_evidence["sha256"]),
+            )
 
         snapshot_id = config.snapshot_id
         _copy_verified_file(
@@ -493,6 +532,7 @@ def _freeze_execution_inputs(
             market_data=frozen_market,
             project_entry=frozen_repo / config.project_entry.relative_to(repo_root),
             project_config=frozen_repo / project_config_relative,
+            benchmark_input=frozen_benchmark_input,
         )
     except (KeyError, TypeError, OSError, MarketDataError, InputIntegrityError) as exc:
         if execution_root.exists():
@@ -837,6 +877,10 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
         "--config-sha256",
         config_digest,
     ]
+    if frozen.benchmark_input is not None:
+        command.extend(
+            ["--benchmark-input", str(frozen.benchmark_input.resolve())]
+        )
     completed = None
     try:
         completed = subprocess.run(
