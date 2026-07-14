@@ -214,7 +214,7 @@ def build_evidence_matrix(results: Iterable[ScenarioResult], output: Path) -> Pa
 
 路径变化场景必须通过注入的现有海龟运行函数重新执行，不允许静态缩放收益。完整维度固定为：6 个参数变体、3 个固定时期、季度三年窗口、11 个逐 ETF 删除、6 个逐资产组删除、5 个成本/执行场景、5/20/60 日区块各 10,000 条 756 日路径、5 个历史压力窗口、4 个持仓冲击和 3 项 CVaR。
 
-- [ ] **Step 1：写固定场景数量、确定性和路径重跑失败测试**
+- [x] **Step 1：写固定场景数量、确定性和路径重跑失败测试**
 
 ```python
 def test_path_changing_scenarios_invoke_turtle_runner_once_each(configs):
@@ -230,23 +230,23 @@ def test_bootstrap_is_seeded_and_has_exact_shape(sample_returns):
     np.testing.assert_array_equal(first, second)
 ```
 
-- [ ] **Step 2：验证 RED**
+- [x] **Step 2：验证 RED**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_quant_robustness.py tests\local_quant_research\test_quant_stress.py -q`
 
 Expected: FAIL，原因是稳健性模块尚不存在。
 
-- [ ] **Step 3：实现向量化稳健性和证据矩阵**
+- [x] **Step 3：实现向量化稳健性和证据矩阵**
 
 区块抽样按固定种子分批计算，避免同时保存三组完整三维中间对象；证据矩阵逐场景保存维度、输入身份、公式版本、指标、状态和理由。输入不足必须写 `evidence_insufficient`，不得用零值补齐。
 
-- [ ] **Step 4：验证 GREEN 与性能边界**
+- [x] **Step 4：验证 GREEN 与性能边界**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_quant_robustness.py tests\local_quant_research\test_quant_stress.py -q`
 
 Expected: PASS；三组 10,000 路径测试使用缩小黄金夹具验证算法，完整 10,000×756 仅在集成研究运行执行。
 
-- [ ] **Step 5：勾选 OpenSpec 10.1 并提交**
+- [x] **Step 5：勾选 OpenSpec 10.1 并提交**
 
 Commit: `实现：增加完整本地稳健性分析`
 

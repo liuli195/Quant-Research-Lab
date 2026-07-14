@@ -126,6 +126,8 @@ def estimate_covariance(
     *,
     securities: Sequence[str],
     days: int = 60,
+    method: str = "sample",
+    half_life_days: int | None = None,
 ) -> CovarianceEstimate | None:
     securities = tuple(securities)
     if not isinstance(days, int) or days < 2:
@@ -139,7 +141,25 @@ def estimate_covariance(
     if len(aligned) < days:
         return None
     window = aligned.tail(days)
-    covariance = window.cov()
+    if method == "sample":
+        covariance = window.cov()
+    elif method == "ewma":
+        if not isinstance(half_life_days, int) or half_life_days <= 0:
+            raise ValueError("ewma covariance requires a positive half_life_days")
+        decay = math.exp(math.log(0.5) / half_life_days)
+        weights = np.power(decay, np.arange(len(window) - 1, -1, -1))
+        weights = weights / weights.sum()
+        values = window.to_numpy(dtype=float)
+        centered = values - np.average(values, axis=0, weights=weights)
+        denominator = 1.0 - float(np.sum(weights**2))
+        matrix_values = (centered * weights[:, None]).T @ centered / denominator
+        covariance = pd.DataFrame(
+            matrix_values,
+            index=window.columns,
+            columns=window.columns,
+        )
+    else:
+        raise ValueError("unsupported covariance method")
     matrix_values = covariance.to_numpy(dtype=float)
     if not np.isfinite(matrix_values).all():
         return None

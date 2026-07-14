@@ -10,6 +10,7 @@ from scripts.research.quant_analysis.contracts import (
     write_analysis_table,
 )
 from scripts.research.quant_analysis.metrics import calculate_performance
+from scripts.research.quant_analysis.metrics import _drawdown
 
 
 def test_performance_matches_golden_returns_drawdown_trades_and_exposure(
@@ -46,3 +47,19 @@ def test_performance_matches_golden_returns_drawdown_trades_and_exposure(
         "rolling_annual_returns",
     ):
         assert required in metrics
+
+
+def test_drawdown_recovery_is_measured_from_trough_to_first_old_peak() -> None:
+    maximum, duration, recovery = _drawdown([100.0, 80.0, 100.0, 110.0])
+
+    assert maximum == pytest.approx(-0.2)
+    assert duration == 1
+    assert recovery == 1
+
+
+def test_drawdown_recovery_is_none_when_old_peak_is_not_recovered() -> None:
+    maximum, duration, recovery = _drawdown([100.0, 80.0, 90.0])
+
+    assert maximum == pytest.approx(-0.2)
+    assert duration == 2
+    assert recovery is None

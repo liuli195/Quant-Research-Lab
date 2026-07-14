@@ -20,6 +20,7 @@ from scripts.research.quant_analysis.contracts import (
     write_analysis_table,
 )
 from scripts.research.quant_analysis.metrics import calculate_performance
+from scripts.research.quant_analysis.evidence import validate_evidence_matrix
 
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -141,7 +142,9 @@ _CSV_FIELDS = {
         "close",
         "market_value",
         "common_stop",
+        "signal_n",
         "planned_loss",
+        "stop_failure_loss",
     ),
     "risk.csv": (
         "date",
@@ -334,7 +337,7 @@ def _report_body(
 
 - 归因事实数：{len(attribution)}
 - 维度：ETF、资产组、时期、交易原因、仓位、现金、趋势过滤和风险约束。
-- 归因采用确定性守恒检查；无法直接归属的部分明确列为 `unattributed`（未归属），不静默补零。
+- 归因采用逐证券真实损益与确定性守恒检查；任何维度无法勾稽时直接失败，不用残差补平。
 
 ## 限制
 
@@ -430,8 +433,13 @@ def validate_project_outputs(output_dir: Path, identity: RunIdentity) -> None:
     output_dir = Path(output_dir)
     try:
         bundle = validate_analysis_bundle(output_dir)
+        evidence_rows = validate_evidence_matrix(
+            output_dir / "local-evidence-matrix.parquet"
+        )
     except ValueError as exc:
         raise OutputValidationError("standard analysis bundle is invalid") from exc
+    if not evidence_rows:
+        raise OutputValidationError("local evidence matrix is empty")
     conclusion = _read_json_object(output_dir / "conclusion.json")
     candidates = _read_json_object(output_dir / "candidate-strategies.json")
     expected_identity = identity.to_document()

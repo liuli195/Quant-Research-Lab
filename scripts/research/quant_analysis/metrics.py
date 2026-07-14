@@ -18,18 +18,16 @@ def _ratio(numerator: float, denominator: float) -> float | None:
     return None if denominator == 0 else numerator / denominator
 
 
-def _drawdown(equities: list[float]) -> tuple[float, int, int]:
+def _drawdown(equities: list[float]) -> tuple[float, int, int | None]:
     peak = equities[0]
     max_drawdown = 0.0
     current_duration = 0
     max_duration = 0
-    recovery_duration = 0
     trough_index = 0
-    peak_index = 0
+    drawdown_peak = peak
     for index, value in enumerate(equities):
         if value >= peak:
             peak = value
-            peak_index = index
             current_duration = 0
         else:
             current_duration += 1
@@ -38,9 +36,19 @@ def _drawdown(equities: list[float]) -> tuple[float, int, int]:
         if drawdown < max_drawdown:
             max_drawdown = drawdown
             trough_index = index
-            recovery_duration = 0
-        elif index > trough_index and value >= equities[peak_index]:
-            recovery_duration = index - trough_index
+            drawdown_peak = peak
+    recovery_duration = next(
+        (
+            index - trough_index
+            for index, value in enumerate(
+                equities[trough_index + 1 :], trough_index + 1
+            )
+            if value >= drawdown_peak
+        ),
+        None,
+    )
+    if max_drawdown == 0.0:
+        recovery_duration = 0
     return max_drawdown, max_duration, recovery_duration
 
 

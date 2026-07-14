@@ -24,10 +24,13 @@ _NON_MONOTONIC_REASONS = frozenset(
 @dataclass(frozen=True)
 class BuyRequest:
     intent: OrderIntent
+    commission_multiplier: Decimal = Decimal("1")
 
     def __post_init__(self) -> None:
         if self.intent.action not in {"entry", "addition"}:
             raise ValueError("A1 candidates must be entry or addition requests")
+        if self.commission_multiplier <= 0:
+            raise ValueError("commission_multiplier must be positive")
 
 
 @dataclass(frozen=True)
@@ -71,7 +74,8 @@ def _allocated_intents(
             estimated_fee=commission_fee(
                 candidate.intent.expected_price,
                 quantities[candidate.intent.security],
-            ),
+            )
+            * candidate.commission_multiplier,
         )
         for candidate in candidates
         if quantities[candidate.intent.security] > 0

@@ -7,15 +7,15 @@
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/allocation.py",
-      "sha256": "7f075e23ad067be83bd7218e4fe8f30a9026307959001582500a6b96558bf29d"
+      "sha256": "80b9f7d44227a3f9168e1615aca16765fb6e5b472c0516718930828cf8486e59"
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/cli.py",
-      "sha256": "74be0d9776cf05dc424270c870b151d710899b49b8dcfbda1cca1f3867c87a66"
+      "sha256": "54a048a8840d93e1fbf2da2325a36bec12aba869dcad486604eda5827e6fd995"
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/execution.py",
-      "sha256": "9ffab26424a70afb74a3baad2dcb9036180e56fba851b8ef93567eed71d14ebb"
+      "sha256": "88089c553572c02797722a001e6ee91e4baedf83e0265d83fa9e42d66b7f15f9"
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/indicators.py",
@@ -23,11 +23,11 @@
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/reporting.py",
-      "sha256": "740df4971b6b649eff78a68662d0a66d160ed15854ca729c8f17d9852944e938"
+      "sha256": "2e637d6fe7ce6d747b2fc8e9a9bbfd9309a9410eb9bc1d6fa92592d74eb20124"
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/risk.py",
-      "sha256": "d82841db39ddd3d28a598614b81181bb31d72072d30adf0f682e1f8f2b5d9917"
+      "sha256": "2c2d2afaa894928735703022cdf917e268ea3ca4fe9a5de72654cb7d021d083f"
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/signals.py",
@@ -63,23 +63,39 @@
     },
     {
       "path": "scripts/research/quant_analysis/__init__.py",
-      "sha256": "b6d0066221a2b0574ed9568b05d638a71d68300a331f320b928a1e18d1d91be0"
+      "sha256": "1cf4fa8cf64ae822705f6663a430fac7aed098549b0210dbf7db9f00f19dd88b"
     },
     {
       "path": "scripts/research/quant_analysis/attribution.py",
-      "sha256": "8991d344d5e81987cc1d685f905fb6ef44e70045f7ad638fa8e74f593e021faf"
+      "sha256": "d3eebeff126bce500d92027bdee1bf6c5464581227e5f89283325a28373a13dd"
     },
     {
       "path": "scripts/research/quant_analysis/benchmarks.py",
-      "sha256": "4c0d2176594ae2f35f8dc31227e05a8e75e8e0cd5adcaff98daa509dcff25e8d"
+      "sha256": "20df7f8eab956cf4b0f192d03cac73ee82726c6748abcc573ac1a503698cc768"
     },
     {
       "path": "scripts/research/quant_analysis/contracts.py",
-      "sha256": "ddee86ee2e32fa8aea8726907405105c52ccb72cb87a3f644f1a0c61a5538975"
+      "sha256": "7b72937c9ecb490c7e4a587d392199791b483f27e24e6e9b598a23460b92d7f3"
+    },
+    {
+      "path": "scripts/research/quant_analysis/cvar.py",
+      "sha256": "b5d6fb3fe8ae6b4058fb32685839728c7b94d3533da0432e4ffa0987036e2271"
+    },
+    {
+      "path": "scripts/research/quant_analysis/evidence.py",
+      "sha256": "f17ff2d9ced44bf7b8bd65617918abd6c1d7ee3091c1b011cf72da7ab0b303b0"
     },
     {
       "path": "scripts/research/quant_analysis/metrics.py",
-      "sha256": "1502b6874a69f6af1db64dee4151d2b414ba7dc910f4502013f78ba713a73085"
+      "sha256": "b881250d5c68d4fa3a981d14e9940bf1680ccfc395a07a068f32c4d7f9fc684b"
+    },
+    {
+      "path": "scripts/research/quant_analysis/robustness.py",
+      "sha256": "dcb0e7b300603f3408730eb66137eda79155626282ccc64e72baad1ba372ef33"
+    },
+    {
+      "path": "scripts/research/quant_analysis/stress.py",
+      "sha256": "7cf4f66dc505f483c95cb3780f0d1237e312d6647c563c833c4c7a6768f186ad"
     }
   ]
 }

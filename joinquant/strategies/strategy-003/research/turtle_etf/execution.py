@@ -81,6 +81,26 @@ class DailyMarket:
         object.__setattr__(self, "quotes", MappingProxyType(normalized))
 
 
+@dataclass(frozen=True)
+class ExecutionCosts:
+    commission_multiplier: Decimal = Decimal("1")
+    one_way_slippage: Decimal = Decimal("0")
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "commission_multiplier",
+            _decimal(self.commission_multiplier, "commission_multiplier", positive=True),
+        )
+        object.__setattr__(
+            self,
+            "one_way_slippage",
+            _decimal(self.one_way_slippage, "one_way_slippage"),
+        )
+        if self.one_way_slippage < 0 or self.one_way_slippage >= 1:
+            raise ValueError("one_way_slippage must be between zero and one")
+
+
 ExecutionStatus = Literal["filled", "unfilled", "cancelled"]
 
 
@@ -93,6 +113,7 @@ class ExecutionRecord:
     requested_quantity: int
     filled_quantity: int
     fill_price: Decimal | None
+    fee: Decimal
     reason: str
 
     def to_document(self) -> dict[str, object]:
@@ -104,6 +125,7 @@ class ExecutionRecord:
             "requested_quantity": self.requested_quantity,
             "filled_quantity": self.filled_quantity,
             "fill_price": None if self.fill_price is None else str(self.fill_price),
+            "fee": str(self.fee),
             "reason": self.reason,
         }
 
@@ -153,17 +175,22 @@ def _adjust_buy_to_open(
     intent: OrderIntent,
     quote: MarketQuote,
     positions: Mapping[str, TrendState],
+    costs: ExecutionCosts,
 ) -> OrderIntent:
+    fill_price = quote.open * (Decimal("1") + costs.one_way_slippage)
     distance = intent.expected_price - intent.common_stop_after
-    common_stop = quote.open - distance
+    common_stop = fill_price - distance
     existing = positions.get(intent.security)
     if existing is not None:
         common_stop = max(existing.common_stop, common_stop)
     return replace(
         intent,
-        expected_price=quote.open,
+        expected_price=fill_price,
         common_stop_after=common_stop,
-        estimated_fee=commission_fee(quote.open, intent.quantity),
+        estimated_fee=(
+            commission_fee(fill_price, intent.quantity)
+            * costs.commission_multiplier
+        ),
     )
 
 
@@ -182,6 +209,8 @@ def process_day(
     day: TradingDay,
     state: PortfolioState,
     market: DailyMarket,
+    *,
+    costs: ExecutionCosts = ExecutionCosts(),
 ) -> DayResult:
     positions = {position.security: position for position in state.positions}
     cash = state.cash
@@ -193,6 +222,7 @@ def process_day(
         *,
         filled_quantity: int = 0,
         fill_price: Decimal | None = None,
+        fee: Decimal = Decimal("0"),
         reason: str,
     ) -> None:
         audit.append(
@@ -204,6 +234,7 @@ def process_day(
                 requested_quantity=intent.quantity,
                 filled_quantity=filled_quantity,
                 fill_price=fill_price,
+                fee=fee,
                 reason=reason,
             )
         )
@@ -223,13 +254,16 @@ def process_day(
             record(intent, "unfilled", reason=reason or "position_missing")
             continue
         quantity = position.quantity
-        cash += quote.open * quantity - commission_fee(quote.open, quantity)
+        fill_price = quote.open * (Decimal("1") - costs.one_way_slippage)
+        fee = commission_fee(fill_price, quantity) * costs.commission_multiplier
+        cash += fill_price * quantity - fee
         del positions[intent.security]
         record(
             intent,
             "filled",
             filled_quantity=quantity,
-            fill_price=quote.open,
+            fill_price=fill_price,
+            fee=fee,
             reason="full_exit",
         )
 
@@ -259,12 +293,15 @@ def process_day(
             del positions[intent.security]
         else:
             positions[intent.security] = reduced
-        cash += quote.open * quantity - commission_fee(quote.open, quantity)
+        fill_price = quote.open * (Decimal("1") - costs.one_way_slippage)
+        fee = commission_fee(fill_price, quantity) * costs.commission_multiplier
+        cash += fill_price * quantity - fee
         record(
             intent,
             "filled",
             filled_quantity=quantity,
-            fill_price=quote.open,
+            fill_price=fill_price,
+            fee=fee,
             reason="mandatory_risk_reduction",
         )
 
@@ -288,7 +325,7 @@ def process_day(
         if reason is not None:
             record(intent, "unfilled", reason=reason)
             continue
-        candidate_intents.append(_adjust_buy_to_open(intent, quote, positions))
+        candidate_intents.append(_adjust_buy_to_open(intent, quote, positions, costs))
 
     current_state = PortfolioState(
         equity=state.equity,
@@ -301,7 +338,10 @@ def process_day(
         prices[security] = None if quote is None else quote.open
     risk_inputs = replace(market.risk_inputs, prices=prices)
     allocation = allocate_a1(
-        tuple(BuyRequest(intent) for intent in candidate_intents),
+        tuple(
+            BuyRequest(intent, costs.commission_multiplier)
+            for intent in candidate_intents
+        ),
         PortfolioConstraints(state=current_state, risk_inputs=risk_inputs),
     )
     allocated = {intent.security: intent for intent in allocation.allocations}
@@ -334,6 +374,7 @@ def process_day(
             "filled",
             filled_quantity=fill.quantity,
             fill_price=fill.expected_price,
+            fee=fill.estimated_fee,
             reason="a1_allocation",
         )
 

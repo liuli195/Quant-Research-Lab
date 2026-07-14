@@ -22,6 +22,13 @@ def _ratio(numerator: float, denominator: float) -> float | None:
     return None if denominator == 0 else numerator / denominator
 
 
+def _annualized_conditional_return(values: list[float], annualization: int) -> float:
+    if not values:
+        return 0.0
+    total = _product_return(values)
+    return (1.0 + total) ** (annualization / len(values)) - 1.0
+
+
 def calculate_benchmark_statistics(
     strategy_returns: Mapping[str, float],
     benchmark_returns: Mapping[str, float],
@@ -57,10 +64,10 @@ def calculate_benchmark_statistics(
         statistics.stdev(active) * math.sqrt(annualization) if len(active) > 1 else 0.0
     )
     information_ratio = _ratio(statistics.fmean(active) * annualization, tracking_error)
-    up_strategy = sum(left for left, right in zip(strategy, benchmark) if right > 0)
-    up_benchmark = sum(right for right in benchmark if right > 0)
-    down_strategy = sum(left for left, right in zip(strategy, benchmark) if right < 0)
-    down_benchmark = sum(right for right in benchmark if right < 0)
+    up_strategy = [left for left, right in zip(strategy, benchmark) if right > 0]
+    up_benchmark = [right for right in benchmark if right > 0]
+    down_strategy = [left for left, right in zip(strategy, benchmark) if right < 0]
+    down_benchmark = [right for right in benchmark if right < 0]
     strategy_total = _product_return(strategy)
     benchmark_total = _product_return(benchmark)
     return {
@@ -69,8 +76,14 @@ def calculate_benchmark_statistics(
         "correlation": correlation,
         "tracking_error": tracking_error,
         "information_ratio": information_ratio,
-        "up_capture": _ratio(up_strategy, up_benchmark),
-        "down_capture": _ratio(down_strategy, down_benchmark),
+        "up_capture": _ratio(
+            _annualized_conditional_return(up_strategy, annualization),
+            _annualized_conditional_return(up_benchmark, annualization),
+        ),
+        "down_capture": _ratio(
+            _annualized_conditional_return(down_strategy, annualization),
+            _annualized_conditional_return(down_benchmark, annualization),
+        ),
         "strategy_return": strategy_total,
         "benchmark_return": benchmark_total,
         "active_return": strategy_total - benchmark_total,

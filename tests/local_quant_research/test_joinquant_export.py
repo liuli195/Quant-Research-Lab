@@ -203,7 +203,7 @@ def test_verify_transfer_fails_when_local_file_is_missing(tmp_path: Path) -> Non
     assert "local transfer file is missing" in evidence.reasons
 
 
-def test_import_verified_transfer_publishes_parquet_and_deletes_local_csv(
+def test_import_verified_transfer_publishes_before_deleting_remote_and_local_csv(
     repo_root: Path,
     tmp_path: Path,
 ) -> None:
@@ -215,20 +215,29 @@ def test_import_verified_transfer_publishes_parquet_and_deletes_local_csv(
     local_file.write_bytes(source.read_bytes())
     digest = hashlib.sha256(local_file.read_bytes()).hexdigest()
 
+    events: list[str] = []
+
+    def cleanup_remote() -> bool:
+        assert (tmp_path / "store" / "batches").is_dir()
+        assert local_file.exists()
+        events.append("remote-cleaned")
+        return True
+
     record = import_verified_transfer(
         local_file=local_file,
         remote_sha256=digest,
-        remote_cleaned=True,
+        cleanup_remote=cleanup_remote,
         manifest=_manifest(),
         root=tmp_path / "store",
     )
 
+    assert events == ["remote-cleaned"]
     assert not local_file.exists()
     assert (record.path / "market-data.parquet").is_file()
     assert not (record.path / "market-data.csv").exists()
 
 
-def test_import_verified_transfer_cleans_local_csv_after_conversion_failure(
+def test_import_verified_transfer_preserves_both_transports_after_conversion_failure(
     tmp_path: Path,
 ) -> None:
     from scripts.research.market_data.joinquant_export import import_verified_transfer
@@ -238,14 +247,46 @@ def test_import_verified_transfer_cleans_local_csv_after_conversion_failure(
     local_file.write_text("not,the,declared,fields\n", encoding="utf-8")
     digest = hashlib.sha256(local_file.read_bytes()).hexdigest()
 
+    remote_cleanup_calls = 0
+
+    def cleanup_remote() -> bool:
+        nonlocal remote_cleanup_calls
+        remote_cleanup_calls += 1
+        return True
+
     with pytest.raises(MarketDataIntegrityError):
         import_verified_transfer(
             local_file=local_file,
             remote_sha256=digest,
-            remote_cleaned=True,
+            cleanup_remote=cleanup_remote,
             manifest=_manifest(),
             root=tmp_path / "store",
         )
 
-    assert not local_file.exists()
+    assert local_file.exists()
+    assert remote_cleanup_calls == 0
     assert not (tmp_path / "store" / "batches").exists()
+
+
+def test_import_verified_transfer_fails_and_preserves_local_when_remote_cleanup_unconfirmed(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    from scripts.research.market_data.joinquant_export import import_verified_transfer
+    from scripts.research.market_data.storage import MarketDataIntegrityError
+
+    source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
+    local_file = tmp_path / "market-data.csv"
+    local_file.write_bytes(source.read_bytes())
+    digest = hashlib.sha256(local_file.read_bytes()).hexdigest()
+
+    with pytest.raises(MarketDataIntegrityError, match="remote cleanup"):
+        import_verified_transfer(
+            local_file=local_file,
+            remote_sha256=digest,
+            cleanup_remote=lambda: False,
+            manifest=_manifest(),
+            root=tmp_path / "store",
+        )
+
+    assert local_file.exists()

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Iterable, Mapping
 
-from .contracts import AnalysisBundle
+from .contracts import AnalysisBundle, AnalysisContractError
 
 
 _DIMENSIONS = (
@@ -35,10 +35,11 @@ def _reconciled_rows(
     target: float,
 ) -> list[dict[str, object]]:
     completed = dict(values)
-    residual = target - sum(completed.values())
-    if abs(residual) > _TOLERANCE or not completed:
-        completed["unattributed"] = residual
     error = sum(completed.values()) - target
+    if not completed or abs(error) > _TOLERANCE:
+        raise AnalysisContractError(
+            f"{dimension} attribution does not reconcile to portfolio return"
+        )
     return [
         {
             "dimension": dimension,
@@ -54,48 +55,52 @@ def _reconciled_rows(
 def calculate_attribution(bundle: AnalysisBundle) -> tuple[dict[str, object], ...]:
     target = sum(float(row["return"]) for row in bundle.rows("returns"))
     positions = list(bundle.rows("positions"))
+    cash_by_date = {
+        str(row["date"]): float(row["cash_return_contribution"])
+        for row in bundle.rows("returns")
+    }
+    cash_total = sum(cash_by_date.values())
+    invested_total = sum(float(row["return_contribution"]) for row in positions)
+    security = _group_contributions(positions, "security")
+    security["cash"] = cash_total
+    asset_group = _group_contributions(positions, "asset_group")
+    asset_group["cash"] = cash_total
     values_by_dimension: dict[str, dict[str, float]] = {
-        "security": _group_contributions(positions, "security"),
-        "asset_group": _group_contributions(positions, "asset_group"),
+        "security": security,
+        "asset_group": asset_group,
         "period": {},
         "trading_reason": {},
         "exposure": {
-            "invested": sum(float(row["return_contribution"]) for row in positions),
-            "cash": sum(
-                float(row["cash_return_contribution"])
-                for row in bundle.rows("returns")
-            ),
+            "invested": invested_total,
+            "cash": cash_total,
         },
         "cash": {
-            "cash": sum(
-                float(row["cash_return_contribution"])
-                for row in bundle.rows("returns")
-            )
+            "invested_assets": invested_total,
+            "cash": cash_total,
         },
-        "trend_filter": {},
-        "risk_constraint": {},
+        "trend_filter": {
+            "breakout_path": invested_total,
+            "cash": cash_total,
+        },
+        "risk_constraint": {
+            "risk_budgeted_path": invested_total,
+            "cash": cash_total,
+        },
     }
     period: defaultdict[str, float] = defaultdict(float)
     for row in positions:
         period[str(row["date"])[:7]] += float(row["return_contribution"])
+    for current_date, contribution in cash_by_date.items():
+        period[current_date[:7]] += contribution
     values_by_dimension["period"] = dict(period)
 
-    initial_equity = float(bundle.rows("equity")[0]["equity"])
     trading_reason: defaultdict[str, float] = defaultdict(float)
-    for row in bundle.rows("trades"):
-        trading_reason[str(row["exit_reason"])] += float(row["pnl"]) / initial_equity
+    for row in positions:
+        trading_reason[str(row["attribution_reason"])] += float(
+            row["return_contribution"]
+        )
+    trading_reason["cash"] += cash_total
     values_by_dimension["trading_reason"] = dict(trading_reason)
-
-    trend_filter: defaultdict[str, float] = defaultdict(float)
-    risk_constraint: defaultdict[str, float] = defaultdict(float)
-    for row in bundle.rows("events"):
-        reason = str(row["reason"])
-        if "trend" in reason or "breakout" in reason:
-            trend_filter[reason] += 0.0
-        if "risk" in reason or "volatility" in reason:
-            risk_constraint[reason] += 0.0
-    values_by_dimension["trend_filter"] = dict(trend_filter)
-    values_by_dimension["risk_constraint"] = dict(risk_constraint)
 
     output: list[dict[str, object]] = []
     for dimension in _DIMENSIONS:

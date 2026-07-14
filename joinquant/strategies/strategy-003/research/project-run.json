@@ -81,6 +81,10 @@
       "format": "parquet"
     },
     {
+      "path": "local-evidence-matrix.parquet",
+      "format": "parquet"
+    },
+    {
       "path": "orders.parquet",
       "format": "parquet"
     },

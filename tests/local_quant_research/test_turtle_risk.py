@@ -112,6 +112,34 @@ def test_covariance_requires_sixty_complete_aligned_return_rows() -> None:
     assert insufficient is None
 
 
+def test_ewma_covariance_differs_from_sample_and_is_deterministic() -> None:
+    returns = pd.DataFrame(
+        {
+            "A": [0.001] * 50 + [0.04, -0.04] * 5,
+            "B": [0.002] * 50 + [-0.03, 0.03] * 5,
+        }
+    )
+
+    sample = estimate_covariance(returns, securities=("A", "B"), days=60)
+    first = estimate_covariance(
+        returns,
+        securities=("A", "B"),
+        days=60,
+        method="ewma",
+        half_life_days=5,
+    )
+    second = estimate_covariance(
+        returns,
+        securities=("A", "B"),
+        days=60,
+        method="ewma",
+        half_life_days=5,
+    )
+
+    assert first == second
+    assert first.matrix != sample.matrix
+
+
 def test_valid_lot_passes_all_risk_gates() -> None:
     request = _intent("A")
     state = PortfolioState(equity=Decimal("1000000"), cash=Decimal("1000000"))

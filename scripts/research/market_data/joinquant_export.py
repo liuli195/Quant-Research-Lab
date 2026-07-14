@@ -6,7 +6,7 @@ import textwrap
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Literal, Mapping, Sequence
+from typing import Callable, Literal, Mapping, Sequence
 
 from .contracts import MARKET_DATA_FIELDS, BatchRecord
 from .storage import MarketDataIntegrityError, import_batch
@@ -162,31 +162,47 @@ def import_verified_transfer(
     *,
     local_file: Path,
     remote_sha256: str,
-    remote_cleaned: bool,
+    cleanup_remote: Callable[[], bool],
     manifest: Mapping[str, object],
     root: Path,
 ) -> BatchRecord:
-    """Verify one owned transport file, import it, then remove the transport."""
+    """Publish a verified transfer, then confirm remote and local cleanup."""
     transfer_path = Path(local_file)
+    evidence = verify_transfer(
+        local_file=transfer_path,
+        remote_sha256=remote_sha256,
+        remote_cleaned=True,
+    )
+    if evidence.status != "complete":
+        byte_reasons = tuple(
+            reason
+            for reason in evidence.reasons
+            if reason != "remote cleanup is not confirmed"
+        )
+        raise MarketDataIntegrityError(
+            "transfer validation failed: " + "; ".join(byte_reasons)
+        )
+
+    record = import_batch(
+        csv_path=transfer_path,
+        manifest=manifest,
+        root=Path(root),
+    )
     try:
-        evidence = verify_transfer(
-            local_file=transfer_path,
-            remote_sha256=remote_sha256,
-            remote_cleaned=remote_cleaned,
-        )
-        if evidence.status != "complete":
-            raise MarketDataIntegrityError(
-                "transfer validation failed: " + "; ".join(evidence.reasons)
-            )
-        return import_batch(
-            csv_path=transfer_path,
-            manifest=manifest,
-            root=Path(root),
-        )
-    finally:
+        remote_cleaned = cleanup_remote()
+    except Exception as exc:
+        raise MarketDataIntegrityError("remote cleanup is not confirmed") from exc
+    if remote_cleaned is not True:
+        raise MarketDataIntegrityError("remote cleanup is not confirmed")
+
+    try:
         try:
             transfer_path.unlink(missing_ok=True)
         except OSError as exc:
             raise MarketDataIntegrityError(
                 "local transfer cleanup is not confirmed"
             ) from exc
+    finally:
+        if transfer_path.exists():
+            raise MarketDataIntegrityError("local transfer cleanup is not confirmed")
+    return record

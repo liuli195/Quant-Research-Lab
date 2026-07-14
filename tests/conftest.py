@@ -140,6 +140,10 @@ def analysis_rows() -> dict[str, list[dict[str, object]]]:
                 "market_value": positions_value,
                 "weight": invested[index],
                 "planned_loss": 1.0,
+                "common_stop": positions_value / 5.0 - 2.0,
+                "signal_n": 1.0,
+                "stop_failure_loss": 20.0,
+                "attribution_reason": "holding",
                 "pnl_contribution": daily_pnl,
                 "return_contribution": returns[index],
             }

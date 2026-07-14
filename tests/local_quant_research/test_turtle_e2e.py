@@ -26,6 +26,7 @@ sys.path.insert(0, str(RESEARCH_ROOT))
 
 from turtle_etf.execution import (  # noqa: E402
     DailyMarket,
+    ExecutionCosts,
     MarketQuote,
     TradingDay,
     process_day,
@@ -55,6 +56,9 @@ from scripts.research.quant_analysis.contracts import (  # noqa: E402
     STANDARD_TABLES,
     validate_analysis_bundle,
     write_analysis_table,
+)
+from scripts.research.quant_analysis.evidence import (  # noqa: E402
+    validate_evidence_matrix,
 )
 
 
@@ -289,6 +293,32 @@ def test_gap_exit_recomputes_commission_from_actual_quantity_and_open() -> None:
     assert result.audit[0].filled_quantity == 10000
 
 
+def test_execution_cost_override_changes_fill_prices_fees_and_cash() -> None:
+    state = PortfolioState(Decimal("100000"), Decimal("100000"))
+    day = TradingDay(date="2026-01-06", intents=(_buy("COST"),))
+    market = DailyMarket(
+        quotes={"COST": MarketQuote(open=Decimal("10"))},
+        risk_inputs=_risk_inputs(("COST",)),
+    )
+
+    baseline = process_day(day, state, market)
+    stressed = process_day(
+        day,
+        state,
+        market,
+        costs=ExecutionCosts(
+            commission_multiplier=Decimal("2"),
+            one_way_slippage=Decimal("0.01"),
+        ),
+    )
+
+    assert baseline.audit[0].fill_price == Decimal("10")
+    assert baseline.audit[0].fee == Decimal("5")
+    assert stressed.audit[0].fill_price == Decimal("10.10")
+    assert stressed.audit[0].fee == Decimal("10")
+    assert stressed.portfolio.cash < baseline.portfolio.cash
+
+
 UNIVERSE = (
     "510300.XSHG",
     "512100.XSHG",
@@ -488,9 +518,29 @@ def test_project_research_writes_reports_conclusion_candidates_and_audits(
         "risk.csv",
         "research-report.md",
         "conclusion.json",
-        "candidate-strategies.json",
-        *(f"{name}.parquet" for name in STANDARD_TABLES),
-    }
+            "candidate-strategies.json",
+            "local-evidence-matrix.parquet",
+            *(f"{name}.parquet" for name in STANDARD_TABLES),
+        }
+    evidence = validate_evidence_matrix(output_dir / "local-evidence-matrix.parquet")
+    assert {
+        "parameter",
+        "fixed_period",
+        "asset_delete_etf",
+        "asset_delete_group",
+        "cost_execution",
+        "block_bootstrap",
+        "historical_stress",
+        "position_shock",
+        "cvar",
+    }.issubset({row.dimension for row in evidence})
+    by_id = {row.scenario_id: row for row in evidence}
+    assert by_id["cost-high-slippage"].metrics["cagr"] < by_id[
+        "cost-double-commission"
+    ].metrics["cagr"]
+    assert by_id["execution-delay-one-day"].metrics != by_id[
+        "cost-high-slippage"
+    ].metrics
     conclusion = json.loads((output_dir / "conclusion.json").read_text(encoding="utf-8"))
     candidates = json.loads(
         (output_dir / "candidate-strategies.json").read_text(encoding="utf-8")
@@ -637,7 +687,10 @@ def test_project_run_config_references_snapshot_and_disables_biased_optimizer(
         item["path"]
         for item in run_config["required_outputs"]
         if item["format"] == "parquet"
-    } == {f"{name}.parquet" for name in STANDARD_TABLES}
+    } == {
+        *(f"{name}.parquet" for name in STANDARD_TABLES),
+        "local-evidence-matrix.parquet",
+    }
     assert baseline["research"]["vibe_optimizer"]["enabled"] is False
     assert baseline["research"]["vibe_optimizer"]["reason"]
 

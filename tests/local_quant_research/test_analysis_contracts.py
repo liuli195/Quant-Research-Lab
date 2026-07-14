@@ -41,6 +41,7 @@ def test_bundle_roundtrip_records_schema_units_keys_and_digest(
 
     assert tuple(bundle.tables) == STANDARD_TABLES
     assert bundle.rows("equity")[0]["currency"] == "CNY"
+    assert bundle.rows("positions")[0]["stop_failure_loss"] == 20.0
     metadata = pq.read_schema(tmp_path / "equity.parquet").metadata
     assert metadata is not None
     assert metadata[b"schema_version"] == b"1"

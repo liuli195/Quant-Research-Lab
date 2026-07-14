@@ -12,11 +12,18 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 import pandas as pd
+import numpy as np
 
 if __package__ in {None, ""}:
     RESEARCH_ROOT = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(RESEARCH_ROOT))
-    from turtle_etf.execution import DailyMarket, MarketQuote, TradingDay, process_day
+    from turtle_etf.execution import (
+        DailyMarket,
+        ExecutionCosts,
+        MarketQuote,
+        TradingDay,
+        process_day,
+    )
     from turtle_etf.indicators import breakout_levels, turtle_n
     from turtle_etf.reporting import (
         OutputValidationError,
@@ -37,7 +44,7 @@ if __package__ in {None, ""}:
     from turtle_etf.signals import entry_signal, make_entry_intent
     from turtle_etf.state import commission_fee, request_addition, request_full_exit
 else:
-    from .execution import DailyMarket, MarketQuote, TradingDay, process_day
+    from .execution import DailyMarket, ExecutionCosts, MarketQuote, TradingDay, process_day
     from .indicators import breakout_levels, turtle_n
     from .reporting import (
         OutputValidationError,
@@ -60,8 +67,31 @@ else:
 
 from scripts.research.market_data.query import open_snapshot
 from scripts.research.quant_analysis.contracts import (
+    AnalysisBundle,
     BENCHMARK_IDS,
     read_analysis_table,
+)
+from scripts.research.quant_analysis.cvar import calculate_cvar_scenarios
+from scripts.research.quant_analysis.evidence import (
+    ScenarioResult,
+    build_evidence_matrix,
+    evidence_digest,
+    validate_evidence_matrix,
+)
+from scripts.research.quant_analysis.metrics import calculate_performance
+from scripts.research.quant_analysis.robustness import (
+    asset_deletion_scenarios,
+    calculate_bootstrap_scenarios,
+    cost_execution_scenarios,
+    fixed_period_scenarios,
+    parameter_scenarios,
+    rolling_three_year_scenarios,
+    run_path_scenarios,
+)
+from scripts.research.quant_analysis.stress import (
+    POSITION_SHOCKS,
+    calculate_historical_stress,
+    calculate_position_shocks,
 )
 
 
@@ -103,7 +133,8 @@ def _risk_inputs(
     prices: Mapping[str, Decimal | None],
 ) -> RiskInputs:
     risk = config["risk"]
-    window_days = int(risk["covariance"]["window_days"])
+    covariance_config = risk["covariance"]
+    window_days = int(covariance_config["window_days"])
     through_returns = returns.loc[:through_date]
     eligible_securities = tuple(
         security
@@ -124,6 +155,12 @@ def _risk_inputs(
             through_returns,
             securities=eligible_securities,
             days=window_days,
+            method=str(covariance_config.get("method", "sample")),
+            half_life_days=(
+                None
+                if covariance_config.get("half_life_days") is None
+                else int(covariance_config["half_life_days"])
+            ),
         )
     )
     turnover: dict[str, Decimal] = {}
@@ -200,11 +237,7 @@ def _standard_orders(
         fill_price = (
             None if item.get("fill_price") in {None, ""} else float(item["fill_price"])
         )
-        fee = (
-            0.0
-            if filled_quantity <= 0 or fill_price is None
-            else float(commission_fee(Decimal(str(fill_price)), int(filled_quantity)))
-        )
+        fee = float(item.get("fee", 0.0))
         rows.append(
             {
                 "order_id": f"{item['date']}:{int(item['sequence']):06d}",
@@ -237,7 +270,7 @@ def _round_trip_trades(
         action = str(item["action"])
         quantity = int(item["quantity"])
         price = float(item["fill_price"])
-        fee = float(commission_fee(Decimal(str(price)), quantity))
+        fee = float(item["fee"])
         if action in {"entry", "addition"}:
             lots[security].append(
                 {
@@ -296,49 +329,120 @@ def _standard_analysis_rows(
 ) -> dict[str, list[dict[str, object]]]:
     orders = _standard_orders(audit_rows)
     fees_by_date: defaultdict[str, float] = defaultdict(float)
+    orders_by_date_security: defaultdict[
+        tuple[str, str], list[Mapping[str, object]]
+    ] = defaultdict(list)
     for row in orders:
         fees_by_date[str(row["date"])] += float(row["fee"])
-    legacy_positions: defaultdict[str, list[Mapping[str, object]]] = defaultdict(list)
+        if row["status"] == "filled":
+            orders_by_date_security[(str(row["date"]), str(row["security"]))].append(row)
+    actions_by_date_security: defaultdict[tuple[str, str], list[str]] = defaultdict(list)
+    for row in audit_rows:
+        if row["status"] == "filled":
+            actions_by_date_security[(str(row["date"]), str(row["security"]))].append(
+                str(row["action"])
+            )
+    legacy_positions: defaultdict[
+        str, dict[str, Mapping[str, object]]
+    ] = defaultdict(dict)
     for row in position_rows:
-        legacy_positions[str(row["date"])].append(row)
+        legacy_positions[str(row["date"])][str(row["security"])] = row
     legacy_risk = {str(row["date"]): row for row in risk_rows}
     equity_rows: list[dict[str, object]] = []
     return_rows: list[dict[str, object]] = []
     standard_positions: list[dict[str, object]] = []
     standard_risk: list[dict[str, object]] = []
     previous_equity: float | None = None
+    previous_positions: dict[str, Mapping[str, object]] = {}
     for current_date in dates:
         risk = legacy_risk[current_date]
         equity = float(risk["equity"])
         cash = float(risk["cash"])
+        current_positions = legacy_positions[current_date]
         positions_value = sum(
-            float(row["market_value"]) for row in legacy_positions[current_date]
+            float(row["market_value"]) for row in current_positions.values()
         )
         daily_return = 0.0 if previous_equity is None else equity / previous_equity - 1.0
-        assigned_return = 0.0
-        for row in legacy_positions[current_date]:
-            market_value = float(row["market_value"])
-            contribution = (
-                0.0
-                if positions_value == 0
-                else daily_return * market_value / positions_value
+        attributed_return = 0.0
+        traded_securities = {
+            security
+            for date_security in orders_by_date_security
+            if date_security[0] == current_date
+            for security in (date_security[1],)
+        }
+        attribution_securities = sorted(
+            set(current_positions) | set(previous_positions) | traded_securities
+        )
+        for security in attribution_securities:
+            row = current_positions.get(security)
+            previous = previous_positions.get(security)
+            template = row if row is not None else previous
+            if template is None:
+                raise ValueError("position attribution identity is missing")
+            transactions = orders_by_date_security[(current_date, security)]
+            buys = sum(
+                float(item["filled_quantity"]) * float(item["fill_price"])
+                for item in transactions
+                if item["side"] == "buy"
             )
-            assigned_return += contribution
+            sales = sum(
+                float(item["filled_quantity"]) * float(item["fill_price"])
+                for item in transactions
+                if item["side"] == "sell"
+            )
+            transaction_fees = sum(float(item["fee"]) for item in transactions)
+            market_value = 0.0 if row is None else float(row["market_value"])
+            previous_value = (
+                0.0 if previous is None else float(previous["market_value"])
+            )
+            pnl_contribution = (
+                0.0
+                if previous_equity is None
+                else market_value - previous_value + sales - buys - transaction_fees
+            )
+            return_contribution = (
+                0.0
+                if previous_equity is None
+                else pnl_contribution / previous_equity
+            )
+            attributed_return += return_contribution
+            actions = actions_by_date_security[(current_date, security)]
+            attribution_reason = (
+                "+".join(sorted(set(actions)))
+                if actions
+                else ("initial_position" if previous_equity is None else "holding")
+            )
+            close = (
+                float(row["close"])
+                if row is not None
+                else (
+                    float(transactions[-1]["fill_price"])
+                    if transactions
+                    else float(previous["close"])
+                )
+            )
             standard_positions.append(
                 {
                     "date": current_date,
-                    "security": str(row["security"]),
-                    "asset_group": str(row["asset_group"]),
-                    "quantity": float(row["quantity"]),
-                    "close": float(row["close"]),
+                    "security": security,
+                    "asset_group": str(template["asset_group"]),
+                    "quantity": 0.0 if row is None else float(row["quantity"]),
+                    "close": close,
                     "market_value": market_value,
                     "weight": market_value / equity,
-                    "planned_loss": float(row["planned_loss"]),
-                    "pnl_contribution": contribution
-                    * (previous_equity if previous_equity is not None else equity),
-                    "return_contribution": contribution,
+                    "planned_loss": 0.0 if row is None else float(row["planned_loss"]),
+                    "common_stop": 0.0 if row is None else float(row["common_stop"]),
+                    "signal_n": 0.0 if row is None else float(row["signal_n"]),
+                    "stop_failure_loss": (
+                        0.0 if row is None else float(row["stop_failure_loss"])
+                    ),
+                    "attribution_reason": attribution_reason,
+                    "pnl_contribution": pnl_contribution,
+                    "return_contribution": return_contribution,
                 }
             )
+        if not math.isclose(attributed_return, daily_return, rel_tol=1e-9, abs_tol=1e-12):
+            raise ValueError("actual security PnL does not reconcile to portfolio return")
         equity_rows.append(
             {
                 "date": current_date,
@@ -357,7 +461,7 @@ def _standard_analysis_rows(
                 "portfolio_id": "strategy-003",
                 "return": daily_return,
                 "equity": equity,
-                "cash_return_contribution": daily_return - assigned_return,
+                "cash_return_contribution": 0.0,
             }
         )
         standard_risk.append(
@@ -383,6 +487,7 @@ def _standard_analysis_rows(
             }
         )
         previous_equity = equity
+        previous_positions = dict(current_positions)
     events = [
         {
             "event_id": f"{row['date']}:{int(row['sequence']):06d}",
@@ -416,6 +521,40 @@ def _simulate(
     rows: Sequence[Mapping[str, object]],
     benchmark_rows: Sequence[Mapping[str, object]],
 ) -> ResearchResult:
+    excluded_securities = {
+        str(value) for value in config.get("exclude_securities", ())
+    }
+    excluded_groups = {
+        str(value) for value in config.get("exclude_asset_groups", ())
+    }
+    config = {
+        **dict(config),
+        "universe": [
+            dict(item)
+            for item in config["universe"]
+            if str(item["security"]) not in excluded_securities
+            and str(item["asset_group"]) not in excluded_groups
+        ],
+    }
+    if not config["universe"]:
+        raise ResearchEvidenceInsufficient("scenario_universe_empty")
+    research_window = config.get("research_window", {})
+    start_date = str(research_window.get("start_date", "0001-01-01"))
+    end_date = str(research_window.get("end_date", "9999-12-31"))
+    allowed_securities = {str(item["security"]) for item in config["universe"]}
+    rows = tuple(
+        row
+        for row in rows
+        if start_date <= str(row["date"]) <= end_date
+        and str(row["security"]) in allowed_securities
+    )
+    benchmark_rows = tuple(
+        row
+        for row in benchmark_rows
+        if start_date <= str(row["date"]) <= end_date
+    )
+    if not rows:
+        raise ResearchEvidenceInsufficient("scenario_window_empty")
     frames, returns, securities = _prepare_frames(rows, config)
     groups = {
         str(item["security"]): str(item["asset_group"])
@@ -424,7 +563,19 @@ def _simulate(
     dates = tuple(sorted(set(str(row["date"]) for row in rows)))
     initial_cash = Decimal(str(config["research"]["initial_cash"]))
     portfolio = PortfolioState(initial_cash, initial_cash)
-    pending: TradingDay | None = None
+    pending_by_date: defaultdict[str, list[object]] = defaultdict(list)
+    costs_config = config.get("costs", {})
+    execution_costs = ExecutionCosts(
+        commission_multiplier=Decimal(
+            str(costs_config.get("commission_multiplier", 1.0))
+        ),
+        one_way_slippage=Decimal(str(costs_config.get("one_way_slippage", 0.0))),
+    )
+    additional_delay_days = int(
+        config.get("execution", {}).get("additional_delay_days", 0)
+    )
+    if additional_delay_days < 0:
+        raise ValueError("additional_delay_days must not be negative")
     audit_rows: list[dict[str, object]] = []
     trade_rows: list[dict[str, object]] = []
     position_rows: list[dict[str, object]] = []
@@ -461,9 +612,10 @@ def _simulate(
             through_date=previous_date,
             prices=open_prices,
         )
-        if pending is not None:
+        pending_intents = tuple(pending_by_date.pop(current_date, ()))
+        if pending_intents:
             day_result = process_day(
-                pending,
+                TradingDay(date=current_date, intents=pending_intents),
                 portfolio,
                 DailyMarket(
                     quotes={
@@ -471,6 +623,7 @@ def _simulate(
                     },
                     risk_inputs=open_risk,
                 ),
+                costs=execution_costs,
             )
             portfolio = day_result.portfolio
             for item in day_result.audit:
@@ -489,6 +642,7 @@ def _simulate(
                             "action": item.action,
                             "quantity": item.filled_quantity,
                             "fill_price": decimal_text(item.fill_price),
+                            "fee": decimal_text(item.fee),
                             "reason": item.reason,
                         }
                     )
@@ -546,7 +700,21 @@ def _simulate(
                     "close": decimal_text(close_price),
                     "market_value": decimal_text(value),
                     "common_stop": decimal_text(position.common_stop),
+                    "signal_n": decimal_text(position.signal_n),
                     "planned_loss": decimal_text(position.planned_loss),
+                    "stop_failure_loss": decimal_text(
+                        max(
+                            Decimal("0"),
+                            (
+                                close_price
+                                - (
+                                    position.common_stop
+                                    - Decimal("2") * position.signal_n
+                                )
+                            )
+                            * position.quantity,
+                        )
+                    ),
                 }
             )
         invested = sum(group_values.values(), Decimal("0")) / equity
@@ -621,24 +789,33 @@ def _simulate(
             }
         )
 
-        pending = None
-        if index + 1 >= len(dates):
+        execution_index = index + 1 + additional_delay_days
+        if execution_index >= len(dates):
             continue
-        next_date = dates[index + 1]
+        next_date = dates[execution_index]
+        pending_securities = {
+            str(intent.security)
+            for scheduled in pending_by_date.values()
+            for intent in scheduled
+        }
         intents = list(
-            target_volatility_reductions(
-                portfolio,
-                close_risk,
-                signal_date=current_date,
-                execution_date=next_date,
-                reduction_target=Decimal(
-                    str(config["risk"]["risk_reduction_target_volatility"])
-                ),
-            )
+            intent
+            for intent in target_volatility_reductions(
+                    portfolio,
+                    close_risk,
+                    signal_date=current_date,
+                    execution_date=next_date,
+                    reduction_target=Decimal(
+                        str(config["risk"]["risk_reduction_target_volatility"])
+                    ),
+                )
+            if intent.security not in pending_securities
         )
         positions = {position.security: position for position in portfolio.positions}
         for security in securities:
             if security not in rows_today:
+                continue
+            if security in pending_securities:
                 continue
             row = rows_today[security]
             close = _decimal(row["close"])
@@ -709,7 +886,7 @@ def _simulate(
             portfolio.cash,
             tuple(positions[security] for security in sorted(positions)),
         )
-        pending = TradingDay(date=next_date, intents=tuple(intents))
+        pending_by_date[next_date].extend(intents)
 
     count = Decimal(len(invested_ratios))
     metrics = {
@@ -781,6 +958,81 @@ def _write_status(output_dir: Path, status: str, reasons: Sequence[str]) -> None
     )
 
 
+def _analysis_bundle(result: ResearchResult) -> AnalysisBundle:
+    digest_input = {
+        name: [dict(row) for row in rows]
+        for name, rows in result.analysis_rows.items()
+    }
+    return AnalysisBundle(
+        path=Path("."),
+        tables=result.analysis_rows,
+        digest=evidence_digest(digest_input),
+    )
+
+
+def _complete_robustness_results(
+    *,
+    base_config: Mapping[str, object],
+    candidates: Sequence[Mapping[str, object]],
+    identity: RunIdentity,
+    snapshot_normalized_sha256: str,
+    rows: Sequence[Mapping[str, object]],
+    benchmark_rows: Sequence[Mapping[str, object]],
+    baseline: ResearchResult,
+) -> tuple[ScenarioResult, ...]:
+    dates = sorted({str(row["date"]) for row in rows})
+    securities = tuple(str(item["security"]) for item in base_config["universe"])
+    asset_groups = tuple(
+        sorted({str(item["asset_group"]) for item in base_config["universe"]})
+    )
+    path_scenarios = (
+        *parameter_scenarios(),
+        *fixed_period_scenarios(dates[-1]),
+        *rolling_three_year_scenarios(max(dates[0], "2015-01-01"), dates[-1]),
+        *asset_deletion_scenarios(
+            securities=securities,
+            asset_groups=asset_groups,
+        ),
+        *cost_execution_scenarios(),
+    )
+
+    def run_scenario(config: dict[str, object]) -> dict[str, float | int | None]:
+        scenario_result = _simulate(
+            config=config,
+            candidates=candidates,
+            identity=identity,
+            snapshot_normalized_sha256=snapshot_normalized_sha256,
+            rows=rows,
+            benchmark_rows=benchmark_rows,
+        )
+        metrics = calculate_performance(_analysis_bundle(scenario_result))
+        return {
+            key: value
+            for key, value in {
+                **metrics,
+                "audit_events": len(scenario_result.audit_rows),
+                "filled_orders": len(scenario_result.trade_rows),
+            }.items()
+            if value is None or isinstance(value, (int, float))
+        }
+
+    baseline_bundle = _analysis_bundle(baseline)
+    returns = np.asarray(
+        [float(row["return"]) for row in baseline_bundle.rows("returns")],
+        dtype=np.float64,
+    )
+    return (
+        *run_path_scenarios(base_config, path_scenarios, run_scenario),
+        *calculate_bootstrap_scenarios(returns),
+        *calculate_historical_stress(baseline_bundle),
+        *calculate_position_shocks(
+            baseline_bundle.rows("positions"),
+            POSITION_SHOCKS,
+        ),
+        *calculate_cvar_scenarios(returns),
+    )
+
+
 def run_research(
     config_path: Path,
     snapshot_path: Path,
@@ -836,7 +1088,21 @@ def run_research(
             rows=snapshot_view.rows,
             benchmark_rows=benchmark_rows,
         )
+        robustness_results = _complete_robustness_results(
+            base_config=config,
+            candidates=candidates,
+            identity=identity,
+            snapshot_normalized_sha256=snapshot_view.digest,
+            rows=snapshot_view.rows,
+            benchmark_rows=benchmark_rows,
+            baseline=result,
+        )
         write_outputs(result, output_dir)
+        evidence_path = build_evidence_matrix(
+            robustness_results,
+            output_dir / "local-evidence-matrix.parquet",
+        )
+        validate_evidence_matrix(evidence_path)
         validate_project_outputs(output_dir, identity)
         _write_status(output_dir, "complete", ())
         return ProjectResult("complete", (), output_dir)

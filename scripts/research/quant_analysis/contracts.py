@@ -151,6 +151,10 @@ _SPECS: dict[str, _TableSpec] = {
                 _field("market_value", pa.float64()),
                 _field("weight", pa.float64()),
                 _field("planned_loss", pa.float64()),
+                _field("common_stop", pa.float64()),
+                _field("signal_n", pa.float64()),
+                _field("stop_failure_loss", pa.float64()),
+                _field("attribution_reason", pa.string()),
                 _field("pnl_contribution", pa.float64()),
                 _field("return_contribution", pa.float64()),
             ]
@@ -162,6 +166,9 @@ _SPECS: dict[str, _TableSpec] = {
             "market_value": "CNY",
             "weight": "decimal",
             "planned_loss": "CNY",
+            "common_stop": "CNY/share",
+            "signal_n": "CNY/share",
+            "stop_failure_loss": "CNY",
             "pnl_contribution": "CNY",
             "return_contribution": "decimal",
         },
@@ -431,6 +438,12 @@ def _validate_cross_table(rows: Mapping[str, Sequence[Mapping[str, object]]]) ->
         ) + float(return_row["cash_return_contribution"])
         if not _close(contributions, return_row["return"]):
             raise AnalysisContractError("position attribution does not reconcile to return")
+        attributed_pnl = sum(
+            float(row["pnl_contribution"])
+            for row in positions_by_date[current_date]
+        )
+        if not _close(attributed_pnl, equity_row["daily_pnl"]):
+            raise AnalysisContractError("position PnL does not reconcile to equity PnL")
         expected_return = (
             0.0
             if previous_equity is None
