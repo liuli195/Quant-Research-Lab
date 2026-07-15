@@ -10,10 +10,10 @@ review_mode: thorough
 isolation: branch
 verify_mode: full
 auto_transition: true
-base_ref: 66cfbce81f95984aeeb7a9705b1d00ee3c8632ce
+base_ref: 4400fec8149f02bc7d42f0294be65e9dacc9b639
 design_doc: docs/superpowers/specs/2026-07-14-turtle-etf-local-research-workflow-design.md
 plan: docs/superpowers/plans/2026-07-14-turtle-etf-local-research-workflow.md
-verify_result: fail
+verify_result: pending
 verification_report: docs/superpowers/reports/2026-07-14-build-turtle-etf-local-research-workflow-verify.md
 branch_status: handled
 created_at: 2026-07-13

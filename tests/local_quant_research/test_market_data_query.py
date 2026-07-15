@@ -28,6 +28,23 @@ FIELDS = (
     "low_limit",
 )
 
+CORPORATE_ACTION_FIELDS = (
+    "source_event_id",
+    "security",
+    "event_type",
+    "announcement_date",
+    "record_date",
+    "ex_date",
+    "effective_date",
+    "pay_date",
+    "status",
+    "knowledge_cutoff_date",
+    "split_ratio",
+    "cash_per_share",
+    "source",
+    "source_record_sha256",
+)
+
 
 def _manifest() -> dict[str, object]:
     return {
@@ -38,6 +55,14 @@ def _manifest() -> dict[str, object]:
         "fields": list(FIELDS),
         "price_semantics": {"fq": None, "skip_paused": False},
         "export_code_sha256": "a" * 64,
+        "corporate_actions": {
+            "source": {
+                "name": "joinquant",
+                "dataset": "finance.FUND_DIVIDEND",
+            },
+            "knowledge_cutoff_date": "2026-07-15",
+            "status": "verified_empty",
+        },
     }
 
 
@@ -104,8 +129,77 @@ def test_open_snapshot_uses_only_memory_and_returns_normalized_read_only_rows(
     assert view.rows[0]["open"] == 10.0
     assert view.rows[0]["paused"] is False
     assert view.digest == query.normalized_digest(view.rows)
+    assert view.corporate_actions == ()
+    assert view.corporate_actions_digest
     with pytest.raises(TypeError):
         view.rows[0]["close"] = 99.0
+    assert not list(tmp_path.rglob("*.duckdb"))
+
+
+def test_open_snapshot_returns_corporate_actions_from_the_same_memory_database(
+    repo_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.market_data import query
+
+    source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
+    action_path = tmp_path / "corporate-actions.csv"
+    action_path.write_text(
+        ",".join(CORPORATE_ACTION_FIELDS)
+        + "\n"
+        + ",".join(
+            (
+                "jq-000001-20260106-cash",
+                "000001.XSHG",
+                "cash_dividend",
+                "2026-01-05",
+                "2026-01-05",
+                "2026-01-06",
+                "2026-01-06",
+                "2026-01-08",
+                "active",
+                "2026-07-15",
+                "",
+                "0.1",
+                "joinquant.finance.FUND_DIVIDEND",
+                "b" * 64,
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    manifest = _manifest()
+    manifest["corporate_actions"]["status"] = "complete"
+    batch = import_batch(
+        csv_path=source,
+        corporate_actions_csv_path=action_path,
+        manifest=manifest,
+        root=tmp_path / "store",
+    )
+    snapshot = create_snapshot(
+        batch_ids=[batch.batch_id],
+        selection=_selection("000001.XSHG", "000002.XSHE"),
+        root=tmp_path / "store",
+    )
+    connections: list[str] = []
+    real_connect = query.duckdb.connect
+
+    def recording_connect(database: str):
+        connections.append(database)
+        return real_connect(database)
+
+    monkeypatch.setattr(query.duckdb, "connect", recording_connect)
+
+    view = query.open_snapshot(snapshot.snapshot_id, root=tmp_path / "store")
+
+    assert connections == [":memory:"]
+    assert view.corporate_action_fields == CORPORATE_ACTION_FIELDS
+    assert len(view.corporate_actions) == 1
+    assert view.corporate_actions[0]["source_event_id"] == "jq-000001-20260106-cash"
+    assert view.corporate_actions[0]["cash_per_share"] == 0.1
+    with pytest.raises(TypeError):
+        view.corporate_actions[0]["cash_per_share"] = 1.0
     assert not list(tmp_path.rglob("*.duckdb"))
 
 

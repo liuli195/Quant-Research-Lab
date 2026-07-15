@@ -129,15 +129,44 @@ def collect_output_evidence(
             path.relative_to(resolved_root)
         except ValueError as exc:
             raise EvidenceError("required output escapes the staging directory") from exc
-        _validate_output(path, spec.format)
-        evidence.append(
-            {
-                "path": spec.path,
-                "format": spec.format,
-                "bytes": path.stat().st_size,
-                "sha256": file_digest(path),
-            }
-        )
+        if spec.format == "directory":
+            if not path.is_dir() or path.is_symlink():
+                raise EvidenceError(f"required output directory is missing: {path.name}")
+            files: list[dict[str, object]] = []
+            for item in sorted(path.rglob("*")):
+                if item.is_symlink():
+                    raise EvidenceError("required output directory contains a symlink")
+                if not item.is_file():
+                    continue
+                relative = item.relative_to(path).as_posix()
+                files.append(
+                    {
+                        "path": relative,
+                        "bytes": item.stat().st_size,
+                        "sha256": file_digest(item),
+                    }
+                )
+            if not files:
+                raise EvidenceError("required output directory is empty")
+            evidence.append(
+                {
+                    "path": spec.path,
+                    "format": spec.format,
+                    "bytes": sum(int(item["bytes"]) for item in files),
+                    "sha256": canonical_digest(files),
+                    "files": files,
+                }
+            )
+        else:
+            _validate_output(path, spec.format)
+            evidence.append(
+                {
+                    "path": spec.path,
+                    "format": spec.format,
+                    "bytes": path.stat().st_size,
+                    "sha256": file_digest(path),
+                }
+            )
     return evidence
 
 
@@ -263,16 +292,21 @@ def validate_complete_run(
 
     status = _load_json(Path(run_dir) / "project-status.json")
     expected_status = {"schema_version": 1, "status": "complete", "reason_codes": []}
-    if status != expected_status and status != {
-        **expected_status,
-        "next_action": "human_confirmation_required",
-    }:
+    accepted_statuses = [
+        expected_status,
+        {**expected_status, "next_action": "human_confirmation_required"},
+        {**expected_status, "next_action": "return_to_caller"},
+    ]
+    if status not in accepted_statuses:
         raise EvidenceError("completed project status is invalid")
-    expected_files = {
-        "run-manifest.json",
-        "project-status.json",
-        *(item["path"] for item in outputs),
-    }
+    expected_files = {"run-manifest.json", "project-status.json"}
+    for item in outputs:
+        if item["format"] == "directory":
+            expected_files.update(
+                f"{item['path']}/{nested['path']}" for nested in item["files"]
+            )
+        else:
+            expected_files.add(item["path"])
     actual_files = {
         path.relative_to(run_dir).as_posix()
         for path in Path(run_dir).rglob("*")

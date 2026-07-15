@@ -4,8 +4,6 @@ import math
 import statistics
 from typing import Mapping
 
-from .contracts import AnalysisBundle, BENCHMARK_IDS
-
 
 class BenchmarkAlignmentError(ValueError):
     """Raised when strategy and benchmark returns do not share exact dates."""
@@ -54,16 +52,24 @@ def calculate_benchmark_statistics(
         for left, right in zip(strategy, benchmark)
     )
     beta = _ratio(covariance, benchmark_variance)
-    alpha = None if beta is None else (mean_strategy - beta * mean_benchmark) * annualization
+    alpha = (
+        None
+        if beta is None
+        else (mean_strategy - beta * mean_benchmark) * annualization
+    )
     strategy_variance = statistics.fmean(
         (value - mean_strategy) ** 2 for value in strategy
     )
-    correlation = _ratio(covariance, math.sqrt(strategy_variance * benchmark_variance))
+    correlation = _ratio(
+        covariance, math.sqrt(strategy_variance * benchmark_variance)
+    )
     active = [left - right for left, right in zip(strategy, benchmark)]
     tracking_error = (
         statistics.stdev(active) * math.sqrt(annualization) if len(active) > 1 else 0.0
     )
-    information_ratio = _ratio(statistics.fmean(active) * annualization, tracking_error)
+    information_ratio = _ratio(
+        statistics.fmean(active) * annualization, tracking_error
+    )
     up_strategy = [left for left, right in zip(strategy, benchmark) if right > 0]
     up_benchmark = [right for right in benchmark if right > 0]
     down_strategy = [left for left, right in zip(strategy, benchmark) if right < 0]
@@ -88,27 +94,4 @@ def calculate_benchmark_statistics(
         "benchmark_return": benchmark_total,
         "active_return": strategy_total - benchmark_total,
         "relative_return": (1.0 + strategy_total) / (1.0 + benchmark_total) - 1.0,
-    }
-
-
-def calculate_bundle_benchmark_statistics(
-    bundle: AnalysisBundle,
-    *,
-    annualization: int = 252,
-) -> dict[str, dict[str, float | None]]:
-    strategy = {
-        str(row["date"]): float(row["return"]) for row in bundle.rows("returns")
-    }
-    benchmark_rows = bundle.rows("benchmarks")
-    return {
-        benchmark_id: calculate_benchmark_statistics(
-            strategy,
-            {
-                str(row["date"]): float(row["return"])
-                for row in benchmark_rows
-                if row["benchmark_id"] == benchmark_id
-            },
-            annualization=annualization,
-        )
-        for benchmark_id in BENCHMARK_IDS
     }

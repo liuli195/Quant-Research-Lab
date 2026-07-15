@@ -1,418 +1,530 @@
 ---
 change: build-turtle-etf-local-research-workflow
 design-doc: docs/superpowers/specs/2026-07-14-turtle-etf-local-research-workflow-design.md
-base-ref: 6b3e89f4b53314d17b203c9ad0424169b36d8f5b
+base-ref: 4400fec8149f02bc7d42f0294be65e9dacc9b639
 ---
 
-# 海龟 ETF 完整本地研究流程实施计划
+# 海龟 ETF 本地研究流程、聚宽原生分析数据与 vectorbt 执行内核实施计划
 
-> **给执行 Agent（代理）：** 必须按任务逐项使用 `superpowers:executing-plans`（计划执行）；所有代码任务遵循 TDD（测试驱动开发）的 RED（失败）→ GREEN（通过）→ REFACTOR（重构）循环。
+> **给执行 Agent（代理）：** 必须按任务逐项使用 `superpowers:executing-plans`（计划执行），代码任务遵循 TDD（测试驱动开发）的 RED（失败）→ GREEN（通过）→ REFACTOR（重构）循环。不得执行或恢复已废弃的旧逐日方案。
 
-**目标：** 把现有 CSV（逗号分隔文件）版本地研究升级为 Parquet（列式文件）行情中心、完整确定性分析、完整本地稳健性、七方案报告、推荐和人工确认门禁。
+## 目标与边界
 
-**架构：** `run-local-quant-research` Skill（技能）只编排；`scripts/research/market_data/` 管理 Parquet 唯一行情事实源和 DuckDB（嵌入式分析数据库）内存查询；`scripts/research/quant_analysis/` 提供与海龟解耦的确定性分析；`strategy-003/research/turtle_etf/` 复用现有状态、A1（同日共享预算分配）、风险和执行模块运行七方案并形成项目事实。报告阶段只复用当前可用的 Vibe-Trading（AI 研究助理）材料，不新增其职责、适配器或身份模型。
+- 本地研究 Skill（技能）每次只编排一个快照、一个场景、一份聚宽口径兼容结果和不可变证据，并以 `next_action=return_to_caller` 停止；它不接收候选数组，也不知道冻结基线和六个挑战这一组合。
+- JoinQuant（聚宽）现有回测目录、清单和归档流程保持零改动；它们是标准物理基准。
+- 本地 vectorbt（向量化回测框架）结果从 `<run_id>/backtests/<local_backtest_id>/` 向内尽量对齐聚宽目录，但使用独立本地 Schema（结构约束）明确身份。
+- 本地物理落盘只有 `results`、`balances`、`positions`、`orders` 四类共同执行事实；`risk`、`period_risks` 只作为缺失的来源参考条目。统一读取器提供六类逻辑视图。
+- 策略分析 Skill 另立变更。本变更只在本地 Skill 外使用通用确定性分析脚本完成一次真实、完整的独立验收，不创建策略分析 Skill；Vibe-Trading（氛围量化）仅记录安全单体能力与边界审计，禁止群体分析。
+- 单次回测性能门槛为180秒。主 agent（代理）每调用一次 Skill，都必须为该单场景提供冷启动与预热证据；两次执行和摘要一致性在暂存区通过后才发布一份权威结果。
+- 聚宽正式复核、聚宽回测 Skill、策略分析 Skill、规则冻结、模拟交易和实盘不在本变更范围。
 
-**技术栈：** Python 3.12、pytest（测试框架）、DuckDB 1.5.4、Pandas 3.0.2、PyArrow 23.0.1、NumPy 2.4.4、JSON（结构化清单）、Parquet、PowerShell。
+仍有效的现有基础只有三项：真实 `strategy-003` 身份、共享 Parquet（列式文件）行情中心、通用本地研究 Skill 与三态证据。旧逐日执行模块、旧八表物理契约、流程内分析/报告/人工门禁不属于当前方案，不能作为任务、兼容接口或验收依据保留。
+
+## 固定输出
+
+本地基础研究：
+
+```text
+.local/quant-research/strategy-003/<run_id>/
+└── backtests/
+    └── <local_backtest_id>/
+        ├── manifest.json
+        ├── code.py
+        ├── params.json
+        ├── params_versions/<params_sha256>.json
+        ├── performance.json
+        └── data/
+            ├── results.parquet
+            ├── balances.parquet
+            ├── positions.parquet
+            ├── orders.parquet
+            └── attribution_log-<sha256>.parquet（strategy-003 必需扩展）
+```
+
+共享分析基准：
+
+```text
+.local/market-data/benchmark-sets/<benchmark_set_id>/
+├── manifest.json
+└── benchmark-returns.parquet
+```
+
+独立分析验收：
+
+```text
+.local/strategy-analysis-preparations/<preparation_id>/
+├── analysis-scenarios.json
+├── preparation.json
+└── scenario-configs/<scenario_id>/
+    ├── params.json
+    └── run.json
+
+.local/strategy-analysis/<analysis_id>/
+├── analysis-scenarios.json
+├── preparation.json
+├── source-results.json
+├── deterministic-analysis.json
+├── evidence-matrix.parquet
+├── local-strategy-analysis-report.md
+├── vibe-evidence.json
+└── recommendation.json
+```
 
 ## 全局约束
 
-- 所有本地 Python（编程语言）命令必须使用 `.\.venv\Scripts\python.exe`，不得回退系统 Python 或静默安装依赖。
-- 完整行情和研究结果只能写入已忽略的 `.local/`；不得提交行情值、账号、Token（访问令牌）或 Cookie（浏览器凭证）。
-- `market-data.parquet` 是本地唯一行情事实源；聚宽 CSV 只作传输暂存，转换和双重摘要校验成功后删除。
-- DuckDB 只能连接 `:memory:` 并通过 `read_parquet` 查询；不得产生持久 `.duckdb` 文件。
-- Skill 只负责编排，共用能力沉淀为脚本；共用脚本不得导入海龟模块或硬编码海龟资产、参数和规则。
-- 现有海龟 `state.py`、`allocation.py`、`risk.py`、`execution.py` 继续作为交易路径事实源，不另建通用回测引擎。
-- 冻结基线和六个预设挑战全部运行、全部保留；不得按本地收益自动删除候选、替换基线或新增参数。
-- 本变更在完整报告、明确推荐和 `next_action=human_confirmation_required` 处停止；不得启动聚宽正式复核、冻结、模拟交易或实盘。
-- 不新增或修改 Vibe-Trading 的职责、适配器、身份模型或上游代码；已知前视偏差组合优化器继续禁用。
+- 所有本地 Python（编程语言）命令使用 `.\.venv\Scripts\python.exe`；依赖变更必须先明确记录并经用户授权，不得静默安装。
+- 完整行情和研究结果只写入已忽略的 `.local/`；不得提交行情值、账号、Token（访问令牌）或 Cookie（浏览器凭证）。
+- `market-data.parquet` 是行情事实源；DuckDB（嵌入式分析数据库）只连接 `:memory:`。
+- 共享批次以原始 `market-data.parquet` 和 `corporate-actions.parquet` 共同构成行情事实；连续信号价格只在内存派生。无法解释的除权差异必须关闭运行。
+- 海龟策略层完全不读取成交额，不设置最低成交额、单笔成交额占比、订单参与率或其他流动性规则；共享成交额字段只供上游 ETF 池筛选和其他策略使用。
+- vectorbt 只属于 `strategy-003` 项目执行层；共享行情、统一读取、通用运行器和分析算法不得依赖 vectorbt 对象。
+- 所有 T 日收盘信号和滚动输入必须显式错位到 T+1 执行行；海龟状态只按实际成交更新。
+- 当日顺序固定为退出、强制风险减仓、A1 买入；卖出实际成交后才能按最新现金和持仓计算一次 A1。
+- 冻结基线与六个预设挑战全部保留，由主 agent 从策略自有机器可读 `analysis-plan.json` 读取并分别调用 Skill 七次；Skill 不读取该计划，本身不得包含数量、顺序或循环逻辑。
+- `preparation_id` 只绑定分析计划、基准集、运行模板和七份待执行配置；七次调用完成后，主 agent 必须显式登记 `scenario_id -> run_id`，校验七份结果共享快照、代码和执行后端，再由全部来源摘要派生不可变 `analysis_id`。不得扫描目录猜测来源或覆盖同计划下的旧分析。
+- 旧实现通过新路径验收后直接删除；不运行旧完整流程，不新旧双跑，不保留兼容模块、导入别名、双引擎开关、回退或死代码。
+- 确定性指标、稳健性数值、证据挑战、报告和推荐均由统一读取与 `quant_analysis`（量化分析）完成；Vibe 不执行回测、不替代数值裁判。加载方法文档不算实际分析，已知缺陷的群体分析不得调用或进入结论。
 
 ---
 
-### Task 1：把共享行情中心迁移为 Parquet 唯一事实源
+## Task 1：锁定 vectorbt 依赖、输入与官方回调
 
-**对应 OpenSpec：** 8.1、8.2、8.3
+**对应 OpenSpec：** 2.1—2.4
 
 **Files：**
+
+- Modify: `pyproject.toml` 或仓库现有依赖锁定文件
+- Create: `joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_inputs.py`
+- Create: `joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_callbacks.py`
+- Create: `joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_engine.py`
+- Create: `tests/local_quant_research/test_turtle_vectorbt_inputs.py`
+- Create: `tests/local_quant_research/test_turtle_vectorbt_callbacks.py`
+- Create: `tests/local_quant_research/test_turtle_vectorbt_engine.py`
+- Modify: `joinquant/strategies/strategy-003/research/code-identity.json`
+- Modify only if affected mapping requires: `.build-and-verify/config.json`
+
+**接口：**
+
+- `prepare_simulation_inputs(frames, config) -> SimulationInputs`
+- `run_vectorbt_simulation(inputs, config) -> VectorbtSimulationResult`
+- 回调固定使用 `pre_sim_func_nb`、`pre_segment_func_nb`、`order_func_nb`、`post_order_func_nb`
+
+### Step 1：RED
+
+先写失败测试，覆盖依赖版本与许可记录、稳定数组类型、T→T+1 错位、无未来数据、单一共享现金组、普通订单函数、卖出优先、成交后 A1、成交后状态更新、停牌/涨跌停/拒单和 `nopython`（无 Python 模式）。
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_turtle_vectorbt_inputs.py tests\local_quant_research\test_turtle_vectorbt_callbacks.py tests\local_quant_research\test_turtle_vectorbt_engine.py -q
+```
+
+Expected: FAIL，原因是 vectorbt 新入口尚未形成唯一执行路径。
+
+### Step 2：GREEN
+
+在获得依赖变更授权后，使用项目 `.venv` 固定实测兼容版本。所有 ETF 使用一个 `cash_sharing=True`（共享现金）组；不得启用 `flexible=True`（灵活多订单）或私有模拟函数。实现已确认的海龟状态、共同止损、风险门槛与 A1，并用固定合成夹具直接验证订单、成交、现金、持仓、批次和原因码。
+
+### Step 3：回归
+
+运行本任务测试和现有海龟规则测试。测试预期只来自规格夹具，不调用旧 `process_day` 或旧 `_simulate` 生成答案。
+
+---
+
+## Task 2：建立双 Schema、统一读取和双基准契约
+
+**对应 OpenSpec：** 3.1—3.4
+
+**Files：**
+
+- Create: `scripts/research/analysis_data/schemas/local-backtest-manifest.schema.json`
+- Create: `scripts/research/analysis_data/__init__.py`
+- Create: `scripts/research/analysis_data/manifest.py`
+- Create: `scripts/research/analysis_data/views.py`
+- Create: `scripts/research/analysis_data/derived.py`
+- Create: `scripts/research/analysis_data/cli.py`
+- Create: `scripts/research/market_data/benchmark_sets.py`
+- Modify: `scripts/research/quant_analysis/benchmarks.py`
+- Delete: `scripts/research/quant_analysis/contracts.py`
+- Create: `tests/local_quant_research/test_analysis_manifest_schemas.py`
+- Create: `tests/local_quant_research/test_analysis_data_contract.py`
+- Create: `tests/local_quant_research/test_benchmark_set_contract.py`
+- Read only fixture: `joinquant/strategies/strategy-001/backtests/111/`
+- Read only fixture: `joinquant/strategies/strategy-001/backtests/109/`
+- Read only fixture: `joinquant/strategies/strategy-002/backtests/9/`
+
+**接口：**
+
+- `open_analysis_source(result_dir: Path) -> AnalysisSource`
+- `validate_analysis_source(source: AnalysisSource) -> ValidationResult`
+- `register_core_views(connection, source) -> CoreViews`
+- `build_derived_views(connection, views) -> DerivedViews`
+- `build_benchmark_set(definitions, source_snapshots, output_root) -> BenchmarkSet`
+
+### Step 1：RED——本地清单 Schema
+
+本地清单必须使用：
+
+```text
+schema_version = "local-backtest/1"
+object.kind = "local_backtest"
+source.kind = "local_vectorbt"
+authority = "local_research"
+```
+
+Schema 必须固定代码、参数、运行、场景、快照、引擎版本、六类数据集条目、`performance.json` 路径/字节数/SHA256（文件摘要）、文件摘要、行数、空表和门禁。四类共同事实必须 `complete`；`risk` 与 `period_risks` 必须 `required=false`、`status=missing_at_source`、`reason=computed_by_strategy_analysis`。本地清单禁止出现聚宽 URL、`research_response`、`research_lineage`、`collection_fence` 或 `official_summary`。
+
+测试还要覆盖未知版本、`local_backtest` 冒充聚宽版本、聚宽字段混入本地清单、本地字段混入聚宽清单、Schema 失败后回退另一分支等拒绝场景。
+
+### Step 2：RED——聚宽零改动与六类逻辑视图
+
+读取器只按顶层 `schema_version` 选择契约：整数 `1` 使用现有聚宽 Schema；字符串 `local-backtest/1` 使用本地 Schema；其他值直接拒绝。聚宽路径验证原 `manifest.json`、对象、来源、门禁、文件摘要和合法空表，运行前后目录摘要必须一致。
+
+聚宽来源读取六类物理数据集；本地来源读取四类物理事实，并为 `risk`、`period_risks` 建立带来源缺失状态的空参考视图。两个来源最终都暴露六类逻辑视图；权益、完整往返交易和事件只在查询期派生。
+
+真实只读核对已确认聚宽 `results` 的 `time:string`、`returns:double`、`benchmark_returns:double` 均表示累计序列。本地 `results.parquet` 也固定这三个字段：`returns` 为从初始资金起算的累计净收益，`benchmark_returns` 全列为空但物理类型必须保持 `double`，清单记录 `source_benchmark_returns.status=missing_at_source`、`reason=independent_benchmark_set` 和空值行数。禁止填零或任选双基准之一冒充聚宽单基准。
+
+统一读取器把 `results.time` 规范化为 Asia/Shanghai（亚洲/上海）交易日，并按 `(1 + cumulative_return_t) / (1 + cumulative_return_t-1) - 1` 在查询期派生策略单日收益；首样本累计收益不为零时因缺少前值而排除。双基准文件保存单日人民币总回报，分析只能在共同有效交易日比较单日序列，不得把来源累计收益直接与基准单日收益比较。
+
+### Step 3：RED——双基准集
+
+固定仅有：
+
+- `CSI300_CNY_TOTAL_RETURN`：沪深300人民币总回报；
+- `NASDAQ100_CNY_TOTAL_RETURN`：纳斯达克100人民币总回报，包含美元兑人民币变化。
+
+`benchmark-returns.parquet` 至少包含 `time`、`benchmark_id`、`returns`。清单记录币种、总回报定义、汇率公式、源标识、实际日期范围、底层快照与文件摘要。实现前必须对配置的数据源做真实最小可行性验证；覆盖不足、来源不明或汇率口径不完整时输出 `evidence_insufficient`，禁止使用 ETF 代理或零收益补齐。
+
+聚宽 `results.benchmark_returns` 只注册为 `source_benchmark_returns` 官方参考；除非其清单能证明与目标基准身份和口径完全一致，否则不能代替上述两条分析基准。
+
+### Step 4：GREEN 与回归
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_analysis_manifest_schemas.py tests\local_quant_research\test_analysis_data_contract.py tests\local_quant_research\test_benchmark_set_contract.py tests\local_quant_research\test_analysis_contracts.py -q
+```
+
+Expected: PASS；聚宽目录零改动，本地清单有独立可执行契约，双基准可复算且不污染来源回测目录。
+
+---
+
+## Task 3：适配本地结果、切换唯一入口并删除旧方案
+
+**对应 OpenSpec：** 4.1—4.4
+
+**Files：**
+
+- Create: `joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_adapter.py`
+- Modify: `joinquant/strategies/strategy-003/research/turtle_etf/cli.py`
+- Modify: `joinquant/strategies/strategy-003/research/turtle_etf/__init__.py`
+- Modify: `scripts/research/local_quant_research/contract.py`
+- Modify: `scripts/research/local_quant_research/runner.py`
+- Create: `tests/local_quant_research/test_turtle_vectorbt_contract_execution.py`
+- Create: `tests/local_quant_research/test_turtle_attribution_contract.py`
+- Delete: `joinquant/strategies/strategy-003/research/turtle_etf/execution.py`
+- Delete: `joinquant/strategies/strategy-003/research/turtle_etf/state.py`
+- Delete: `joinquant/strategies/strategy-003/research/turtle_etf/signals.py`
+- Delete: `joinquant/strategies/strategy-003/research/turtle_etf/risk.py`
+- Delete: `joinquant/strategies/strategy-003/research/turtle_etf/allocation.py`
+- Delete: `joinquant/strategies/strategy-003/research/turtle_etf/reporting.py`
+- Delete old-only tests after replacement coverage exists
+
+**接口：**
+
+- `to_joinquant_facts(inputs, simulation, scenario_id) -> LocalExecutionFacts`
+- `write_local_result(backtest_dir, manifest, performance, facts, attribution) -> LocalResultPackage`
+- `run_candidate_with_vectorbt(frames, config, candidate_id, output_dir) -> LocalResultPackage`
+
+### Step 1：RED
+
+测试目录、清单 Schema、代码与参数摘要、`performance.json`、四类物理事实字段和跨表勾稽。对 `strategy-003` 强制 `attribution_log-<sha256>.parquet`，固定 `event_id` 唯一主键、字段、`turtle-etf-attribution/2` 原因码版本和最小原因码集合，并记录公司行动应用；缺失、摘要错误、未知原因码或无法覆盖实际订单、风险状态变化及公司行动应用时拒绝完成。明确断言不存在 `data/risk.parquet`、`data/period_risks.parquet`、`data/equity.parquet`、`data/trades.parquet` 或本地 `raw/` 伪证据。
+
+### Step 2：GREEN
+
+每次调用只执行传入的一个场景，通过 vectorbt 唯一入口把一份结果写入 `<run_id>/backtests/<local_backtest_id>/`。完成后输出 `next_action=return_to_caller`，不得读取其他候选、循环调用自身、生成候选/聚合清单或调用 `quant_analysis`、Vibe、报告和推荐。冻结基线与六个挑战由主 agent 分别调用七次。
+
+### Step 3：删除旧方案
+
+新规则夹具、适配和公开入口通过后，在同一任务中删除旧模块、旧导出与旧专用测试。扫描必须确认不存在：
+
+```text
+process_day
+def _simulate
+旧 execution/state/signals/risk/allocation/reporting 导入
+旧八表物理契约
+流程内 quant_analysis 或 Vibe 调用
+兼容层、双引擎和回退
+```
+
+### Step 4：回归
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_turtle_vectorbt_contract_execution.py tests\local_quant_research\test_analysis_manifest_schemas.py tests\local_quant_research\test_analysis_data_contract.py tests\local_quant_research\test_runner.py -q
+```
+
+---
+
+## Task 4：逐场景验证单次回测不超过180秒
+
+**对应 OpenSpec：** 5.1—5.3
+
+**Files：**
+
+- Create: `joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_benchmark.py`
+- Create: `tests/local_quant_research/test_turtle_vectorbt_performance_contract.py`
+- Create: `tests/local_quant_research/test_turtle_vectorbt_e2e.py`
+- Runtime failure evidence: `.local/quant-research/strategy-003/.attempts/<attempt_id>.json`
+
+**接口：**
+
+- `benchmark_scenario(scenario_config, prepared_inputs, output_dir) -> PerformanceEvidence`
+
+### Step 1：固定计时方法
+
+每个场景通过一个全新子进程启动。子进程中：
+
+1. 读取已经准备好的输入，并创建一个尚不可见为完成结果的暂存区；
+2. 第一次执行 vectorbt、写四类事实与海龟归因日志并完成校验，记为 `cold_seconds`；
+3. 在同一已编译进程再次执行同一场景到暂存子目录，完成相同校验，记为 `warm_seconds`；
+4. 比较冷/热规范化结果摘要，要求完全一致且两次均不超过180秒；
+5. 保留冷启动权威候选目录，先删除预热副本和所有可丢弃暂存并验证清理结果；
+6. 把已验证清理结果写入 `performance.json`，再生成并校验最终本地清单和全部摘要；
+7. 只把已整理好的权威候选目录原子发布；发布后不再依赖任何写入或清理动作。任一前置门禁失败只留下 attempt（尝试）证据。
+
+每次计时都从“准备后输入交给 vectorbt 执行内核”开始，到“交易执行、四类共同事实、海龟必需归因日志及其结构、摘要和跨表勾稽校验完成”时停止。停止计时后才写入并校验 `performance.json` 和最终本地清单；二者属于原子完成门禁，但不计入 `cold_seconds`、`warm_seconds`。行情导出、输入准备和独立策略分析同样不计入单次回测门槛。
+
+### Step 2：逐场景证据
+
+主 agent 只对冻结基线和六个挑战分别调用 Skill，共七次；每次调用都必须保存环境、依赖、输入、代码、参数、场景、冷/热结果摘要，以及 `cold_seconds`、`warm_seconds`。摘要不一致或任一数值超过180秒即失败，不得使用多次调用的整体墙钟时间替代，也不得先发布 `complete` 目录后补性能或清理证据。
+
+### Step 3：公开入口 E2E
+
+从 Skill 文档命令启动一个单场景完整 E2E，验证只产生一份结果、一次运行证据、逐场景性能证据、原子固化、`next_action=return_to_caller` 和临时产物清理，并明确断言没有候选数组或内部循环。另由主 agent 的集成 E2E 连续调用七次并在独立分析目录生成 `source-results.json`；聚宽归档只读 E2E 前后全部文件摘要与 Git 状态必须一致。
+
+---
+
+## Task 5：在本地 Skill 外完成完整稳健性、归因与确定性报告
+
+**对应 OpenSpec：** 6.1—6.5
+
+**Files：**
+
+- Modify: `scripts/research/quant_analysis/benchmarks.py`
+- Modify: `scripts/research/quant_analysis/robustness.py`
+- Modify: `scripts/research/quant_analysis/cvar.py`
+- Modify: `scripts/research/quant_analysis/evidence.py`
+- Create: `scripts/research/quant_analysis/analysis_plan.py`
+- Create: `scripts/research/quant_analysis/orchestration.py`
+- Create: `scripts/research/quant_analysis/unified_analysis.py`
+- Create: `scripts/research/quant_analysis/reporting.py`
+- Create: `scripts/research/quant_analysis/schemas/analysis-plan.schema.json`
+- Create: `joinquant/strategies/strategy-003/research/analysis-plan.json`
+- Create: `tests/quant_analysis/test_analysis_plan.py`
+- Create: `tests/quant_analysis/test_unified_analysis.py`
+- Create: `tests/quant_analysis/test_reporting.py`
+- Create: `tests/quant_analysis/test_statistics.py`
+- Runtime only: `.local/strategy-analysis-preparations/<preparation_id>/`、`.local/strategy-analysis/<analysis_id>/`
+
+### Step 1：生成完整且封闭的场景矩阵
+
+`strategy-003/research/analysis-plan.json` 是策略自有的机器可读分析定义，固定 `schema_version=strategy-analysis-plan/1`。顶层包含 `strategy_id`、`baseline_config`、七个 `scenarios`、`universe`、`analyses`、`expected` 和 `thresholds`；每个基础场景包含唯一 `scenario_id`、`dimension` 和结构化 `overrides`，其余分析包含日期、资产、成本、抽样、冲击、门槛或固定种子等确定性配置。通用 `quant_analysis` 只按 `analysis-plan.schema.json` 校验并展开 `analysis-scenarios.json`，不得解析 Markdown、导入海龟模块或硬编码海龟资产、参数、分组、数量和门槛。本地研究 Skill 不读取该文件。
+
+展开后的 `analysis-scenarios.json` 必须记录计划摘要和版本，逐项分类：
+
+| 分析维度 | 执行方式 |
+|---|---|
+| 冻结基线与六个参数邻域 | 引用主 agent 七次独立调用结果 |
+| 三个固定时期 | 基线既有路径切片 |
+| 三年滚动窗口、每季度移动 | 基线既有路径滚动切片 |
+| 逐只删除11只 ETF | 删除对应收益贡献，不重新分配资金 |
+| 逐组删除资产组 | 删除对应收益贡献，不重新分配资金 |
+| 成本与延迟执行场景 | 一阶订单级敏感性估算 |
+| 5/20/60日区块抽样各10,000条 | 从基线收益确定性计算 |
+| 五个历史压力窗口 | 从基线收益、持仓和事件视图计算 |
+| 四个持仓冲击 | 从每日实际持仓确定性计算 |
+| 95%/99%及5日 CVaR | 从基线收益确定性计算 |
+
+`analysis-plan.json` 与场景矩阵必须给出七个来源的期望数量、实际数量、参数摘要和输入范围，以及每项派生稳健性的计算方法。缺一项或摘要不一致即 `evidence_insufficient`，不得用 Vibe 补齐。
+
+### Step 2：执行七个基础场景
+
+独立分析准备入口只校验策略分析计划并在 `preparation_id` 下生成七份通用单场景配置，不导入海龟模块或直接循环本地运行器。主 agent 对每份配置调用一次本地研究 Skill；配置由 `strategy-003` 项目入口解释并使用同一 vectorbt 回调执行，结果保存在新的 `.local/quant-research/strategy-003/<scenario_run_id>/backtests/<local_backtest_id>/`。七次调用后，主 agent 显式传入七组 `scenario_id=run_id`；分析入口逐项校验唯一运行、参数摘要、结果摘要、性能证据、同一 `snapshot_id`、同一代码身份及结果清单后端。所有来源 `run_id` 保持不可变，`source-results.json` 只保存路径、摘要引用、登记表摘要和共享执行身份。
+
+七个场景都执行Task 4的冷/热性能门禁。其余稳健性不再调用 Skill；报告必须声明时期是既有路径切片、资产删除不重新分配资金、成本和延迟是一阶估算。
+
+### Step 3：确定性分析
+
+通过统一读取器和双基准集计算收益、CAGR（复合年增长率）、波动率、回撤、Sharpe（夏普比率）、Sortino（索提诺比率）、Calmar（卡玛比率）、Alpha/Beta、上下行捕获、持仓与现金分布、风险预算使用、按 ETF/资产组/时期/交易原因归因，以及最终方案规定的全部稳健性、压力、CVaR和挑战门槛。
+
+分析输出必须区分：来源事实、确定性派生值、门槛判断和 Vibe 安全边界审计。所有数值和结论由本地算法固化，Vibe 不得重新定义计算口径。
+
+### Step 4：Vibe 安全边界审计
+
+最终 `analysis_id` 由 `preparation_id`、七份显式来源清单/结果摘要和共享执行身份共同派生，在其目录下记录来源、基准集、配置和确定性结果摘要；相同计划下的另一批运行得到不同身份，不能覆盖旧证据。Vibe 的研究目标和证据登记只作审计编排；只允许调用无已知缺陷的单体公开分析入口。禁止 `run_swarm`（运行群体分析）、Vibe 回测和有前视偏差风险的组合优化器；没有安全单体入口时记录 `evidence_insufficient`。若安全入口只能传 CSV（逗号分隔文件），必须由统一视图按明确字段与日期临时物化，确认读取后删除并记录清理结果。
+
+### Step 5：完整报告与推荐
+
+必须生成收益、回撤、Alpha/Beta、仓位与风险控制、归因、六个挑战、完整稳健性、压力和尾部风险、反对证据、不确定性、推荐和工具证据。输出 `next_action=human_confirmation_required`，等待用户人工确认；不得启动聚宽、改参数、替换基线、冻结或模拟交易。
+
+---
+
+## Task 6：全量验证与交付
+
+**对应 OpenSpec：** 7.1—7.3
+
+### Step 1：删除与边界扫描
+
+扫描并确认没有旧执行符号、旧模块、旧八表物理契约、流程内分析调用、兼容层、双引擎、回退、死测试、聚宽归档修改或转换副本。历史原因只允许存在于说明本次迁移原因的非执行文档，不能形成任务、接口或验收要求。
+
+### Step 2：完整业务回归
+
+使用项目 `.venv` 运行：
+
+- 全量单元与集成测试；
+- 从 Skill 用户入口贯通一次单场景行情快照、兼容结果、性能和 `return_to_caller` 状态的完整 E2E；另由主 agent 连续调用七次，证明 Skill 不含七方案耦合并聚合为独立分析来源；
+- 独立分析入口贯通场景矩阵、路径重跑、双基准、确定性报告、Vibe 安全边界审计和人工确认前停止状态的完整 E2E；
+- OpenSpec（开放规格）严格校验；
+- Build and Verify（构建与验证）完整门禁；
+- 敏感数据、临时文件和持久 DuckDB 扫描；
+- 现有聚宽回测归档零改动断言；
+- 独立前向验证。
+
+不能用几个单元测试拼接代替完整入口。
+
+### Step 3：完成报告
+
+逐项记录已验证、无法验证、性能结果、实际分析结果、Vibe 安全边界证据和临时产物清理。只有阻断项为零才进入完成审查；本任务不提交、不推送、不创建 PR（拉取请求），除非用户另行授权。
+
+---
+
+## Task 7：实现行情时点可知的公司行动近似核算并重建研究证据
+
+**对应 OpenSpec：** 8.1—8.7；8.4、8.5 已完成，本任务只实施 8.2、8.3、8.6、8.7。
+
+**Files：**
+
+- Modify: `scripts/research/market_data/contracts.py`
 - Modify: `scripts/research/market_data/storage.py`
 - Modify: `scripts/research/market_data/query.py`
 - Modify: `scripts/research/market_data/joinquant_export.py`
-- Modify: `scripts/research/market_data/contracts.py`
-- Create: `scripts/research/market_data/cli.py`
+- Modify: `joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_cli.py`
+- Modify: `joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_inputs.py`
+- Modify: `joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_engine.py`
+- Modify: `joinquant/strategies/strategy-003/research/turtle_etf/result_adapter.py`
+- Modify: `joinquant/strategies/strategy-003/research/turtle_etf/single_scenario.py`
+- Modify: `scripts/research/analysis_data/schemas/local-backtest-manifest.schema.json`
+- Modify: `scripts/research/analysis_data/manifest.py`
 - Modify: `tests/local_quant_research/test_market_data_storage.py`
 - Modify: `tests/local_quant_research/test_market_data_query.py`
 - Modify: `tests/local_quant_research/test_joinquant_export.py`
-
-**Interfaces：**
-- 保留 `import_batch(csv_path: Path, manifest: Mapping[str, object], root: Path) -> BatchRecord`，但其成功产物改为 `market-data.parquet`。
-- 批次清单升级到 `schema_version=2`，保存 `content_sha256`、`parquet.sha256`、`parquet.byte_count`、`transport_csv.sha256`、写入器版本和行数。
-- `batch_id` 只由来源身份、结构版本、导出契约和规范化逻辑内容摘要决定；Parquet 字节摘要只验证完整性。
-- `open_snapshot(snapshot_id: str, root: Path) -> SnapshotView` 使用 `duckdb.connect(':memory:')` 与 `read_parquet`。
-- 旧 `schema_version=1` CSV 批次只保留为历史证据；新快照不得引用旧批次，并返回明确迁移错误。
-
-- [x] **Step 1：写失败测试**
-
-```python
-def test_import_batch_publishes_only_parquet_and_content_identity(tmp_path, fixture_csv):
-    record = import_batch(csv_path=fixture_csv, manifest=manifest(), root=tmp_path)
-    assert (record.path / "market-data.parquet").is_file()
-    assert not (record.path / "market-data.csv").exists()
-    stored = json.loads((record.path / "manifest.json").read_text("utf-8"))
-    assert stored["schema_version"] == 2
-    assert stored["content_sha256"]
-    assert stored["parquet"]["sha256"]
-    assert stored["transport_csv"]["sha256"]
-```
-
-同时添加：同一逻辑内容不同 CSV 换行仍复用 `batch_id`、Parquet 篡改拒绝、旧 CSV 快照迁移提示、DuckDB 只使用 `:memory:`、CSV 转换失败不发布批次、成功后本地暂存和远端暂存均清理的测试。
-
-- [x] **Step 2：验证 RED**
-
-Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_market_data_storage.py tests\local_quant_research\test_market_data_query.py tests\local_quant_research\test_joinquant_export.py -q`
-
-Expected: FAIL，原因是现有批次仍发布 `market-data.csv`，查询仍调用 `read_csv`。
-
-- [x] **Step 3：实现最小 Parquet 导入与查询**
-
-```python
-def _write_parquet(rows: Sequence[Mapping[str, object]], target: Path) -> None:
-    table = pa.Table.from_pylist(list(rows), schema=MARKET_DATA_ARROW_SCHEMA)
-    pq.write_table(table, target, compression="zstd", use_dictionary=False)
-
-def _batch_identity(manifest: Mapping[str, object], content_sha256: str) -> dict[str, object]:
-    return {
-        "source": manifest["source"],
-        "asset_type": manifest["asset_type"],
-        "frequency": manifest["frequency"],
-        "schema_version": 2,
-        "fields": manifest["fields"],
-        "price_semantics": manifest["price_semantics"],
-        "export_code_sha256": manifest["export_code_sha256"],
-        "content_sha256": content_sha256,
-    }
-```
-
-导入顺序固定为：读取传输 CSV → 规范化类型与排序 → 计算逻辑摘要 → 在同文件系统暂存 Parquet → DuckDB 回读并复核摘要 → 原子发布 → 删除本地传输 CSV；任一步失败都不产生完成批次。远端删除仍由现有聚宽传输接口执行并验证。
-
-- [x] **Step 4：验证 GREEN 和回归**
-
-Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_market_data_storage.py tests\local_quant_research\test_market_data_query.py tests\local_quant_research\test_joinquant_export.py -q`
-
-Expected: PASS，且测试临时目录不存在 `market-data.csv` 暂存和 `*.duckdb`。
-
-- [x] **Step 5：勾选 OpenSpec 8.1–8.3 并提交**
-
-Commit: `实现：迁移共享行情中心到Parquet`
-
----
-
-### Task 2：建立八表分析数据包、绩效、基准和归因
-
-**对应 OpenSpec：** 9.1、9.2、9.3、9.4
-
-**Files：**
-- Create: `scripts/research/quant_analysis/__init__.py`
-- Create: `scripts/research/quant_analysis/contracts.py`
-- Create: `scripts/research/quant_analysis/metrics.py`
-- Create: `scripts/research/quant_analysis/benchmarks.py`
-- Create: `scripts/research/quant_analysis/attribution.py`
-- Modify: `scripts/research/local_quant_research/runner.py`
-- Modify: `scripts/research/local_quant_research/contracts.py`
-- Modify: `joinquant/strategies/strategy-003/research/turtle_etf/reporting.py`
-- Modify: `joinquant/strategies/strategy-003/research/project-run.json`
-- Create: `tests/local_quant_research/test_analysis_contracts.py`
-- Create: `tests/local_quant_research/test_quant_metrics.py`
-- Create: `tests/local_quant_research/test_quant_attribution.py`
-
-**Interfaces：**
-
-```python
-STANDARD_TABLES = (
-    "equity", "returns", "trades", "orders",
-    "positions", "risk", "events", "benchmarks",
-)
-
-def write_analysis_table(name: str, rows: Iterable[Mapping[str, object]], output_dir: Path) -> Path: ...
-def validate_analysis_bundle(output_dir: Path) -> AnalysisBundle: ...
-def calculate_performance(bundle: AnalysisBundle, annualization: int = 252) -> dict[str, float | int | None]: ...
-def calculate_benchmark_statistics(strategy_returns, benchmark_returns) -> dict[str, float | None]: ...
-def calculate_attribution(bundle: AnalysisBundle) -> tuple[dict[str, object], ...]: ...
-```
-
-沪深 300 人民币总回报与纳斯达克 100 人民币总回报必须作为显式基准输入进入 `benchmarks.parquet`，字段至少为 `date`、`benchmark_id`、`currency`、`total_return_index`、`return`、`source_id`。仓库没有声明来源或日期不完整时返回 `evidence_insufficient`，不得使用 ETF 代理、价格指数或零收益补齐。
-
-- [x] **Step 1：写八表和黄金指标失败测试**
-
-```python
-def test_bundle_requires_all_eight_parquet_tables(tmp_path):
-    write_analysis_table("equity", equity_rows(), tmp_path)
-    with pytest.raises(AnalysisContractError, match="missing tables"):
-        validate_analysis_bundle(tmp_path)
-
-def test_performance_and_two_benchmark_attribution_match_golden_values(golden_bundle):
-    bundle = validate_analysis_bundle(golden_bundle)
-    metrics = calculate_performance(bundle)
-    assert metrics["cumulative_return"] == pytest.approx(0.21)
-    assert metrics["max_drawdown"] == pytest.approx(-0.10)
-    assert metrics["calmar"] == pytest.approx(metrics["cagr"] / 0.10)
-```
-
-补充主键冲突、单位错误、跨表现金/持仓/权益不勾稽、完整往返交易、基准日期错位、Alpha（超额收益）、Beta（市场暴露）、信息比率、上下行捕获率和归因求和容差测试。
-
-- [x] **Step 2：验证 RED**
-
-Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_analysis_contracts.py tests\local_quant_research\test_quant_metrics.py tests\local_quant_research\test_quant_attribution.py -q`
-
-Expected: FAIL，原因是 `quant_analysis` 尚不存在。
-
-- [x] **Step 3：实现最小确定性分析层并接入项目输出**
-
-所有表以 PyArrow 显式结构写入，保存 `schema_version`、货币、单位、主键和摘要。指标只消费校验后的八表；交易统计只消费闭合往返 `trades.parquet`；归因按 ETF、资产组、时期、交易原因、仓位、现金、趋势过滤和风险约束输出，并检查贡献总和回到组合事实。
-
-- [x] **Step 4：验证 GREEN 和既有输出回归**
-
-Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_analysis_contracts.py tests\local_quant_research\test_quant_metrics.py tests\local_quant_research\test_quant_attribution.py tests\local_quant_research\test_turtle_e2e.py tests\local_quant_research\test_runner.py -q`
-
-Expected: PASS；输出格式校验允许 `parquet`，缺任一标准表不得 `complete`。
-
-- [x] **Step 5：勾选 OpenSpec 9.1–9.4 并提交**
-
-Commit: `实现：增加完整绩效基准与归因分析`
-
----
-
-### Task 3：实现完整本地稳健性、压力和尾部风险
-
-**对应 OpenSpec：** 10.1
-
-**Files：**
-- Create: `scripts/research/quant_analysis/robustness.py`
-- Create: `scripts/research/quant_analysis/stress.py`
-- Create: `scripts/research/quant_analysis/cvar.py`
-- Create: `scripts/research/quant_analysis/evidence.py`
-- Create: `tests/local_quant_research/test_quant_robustness.py`
-- Create: `tests/local_quant_research/test_quant_stress.py`
-- Modify: `joinquant/strategies/strategy-003/research/turtle_etf/cli.py`
-
-**Interfaces：**
-
-```python
-@dataclass(frozen=True)
-class ScenarioResult:
-    scenario_id: str
-    dimension: str
-    status: Literal["pass", "fail", "evidence_insufficient"]
-    metrics: Mapping[str, float | int | None]
-    input_sha256: str
-
-def run_path_scenarios(base_config, scenario_configs, run_turtle) -> tuple[ScenarioResult, ...]: ...
-def block_bootstrap(returns: np.ndarray, block_size: int, paths: int, horizon: int, seed: int) -> np.ndarray: ...
-def calculate_historical_stress(bundle, windows) -> tuple[ScenarioResult, ...]: ...
-def calculate_position_shocks(positions, shocks) -> tuple[ScenarioResult, ...]: ...
-def calculate_cvar(returns: np.ndarray, confidence: float) -> float: ...
-def build_evidence_matrix(results: Iterable[ScenarioResult], output: Path) -> Path: ...
-```
-
-路径变化场景必须通过注入的现有海龟运行函数重新执行，不允许静态缩放收益。完整维度固定为：6 个参数变体、3 个固定时期、季度三年窗口、11 个逐 ETF 删除、6 个逐资产组删除、5 个成本/执行场景、5/20/60 日区块各 10,000 条 756 日路径、5 个历史压力窗口、4 个持仓冲击和 3 项 CVaR。
-
-- [x] **Step 1：写固定场景数量、确定性和路径重跑失败测试**
-
-```python
-def test_path_changing_scenarios_invoke_turtle_runner_once_each(configs):
-    calls = []
-    results = run_path_scenarios(BASE, configs, lambda cfg: calls.append(cfg) or bundle(cfg))
-    assert len(calls) == len(configs)
-    assert {row.scenario_id for row in results} == {cfg["scenario_id"] for cfg in configs}
-
-def test_bootstrap_is_seeded_and_has_exact_shape(sample_returns):
-    first = block_bootstrap(sample_returns, 20, 10_000, 756, 20260714)
-    second = block_bootstrap(sample_returns, 20, 10_000, 756, 20260714)
-    assert first.shape == (10_000, 756)
-    np.testing.assert_array_equal(first, second)
-```
-
-- [x] **Step 2：验证 RED**
-
-Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_quant_robustness.py tests\local_quant_research\test_quant_stress.py -q`
-
-Expected: FAIL，原因是稳健性模块尚不存在。
-
-- [x] **Step 3：实现向量化稳健性和证据矩阵**
-
-区块抽样按固定种子分批计算，避免同时保存三组完整三维中间对象；证据矩阵逐场景保存维度、输入身份、公式版本、指标、状态和理由。输入不足必须写 `evidence_insufficient`，不得用零值补齐。
-
-- [x] **Step 4：验证 GREEN 与性能边界**
-
-Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_quant_robustness.py tests\local_quant_research\test_quant_stress.py -q`
-
-Expected: PASS；三组 10,000 路径测试使用缩小黄金夹具验证算法，完整 10,000×756 仅在集成研究运行执行。
-
-- [x] **Step 5：勾选 OpenSpec 10.1 并提交**
-
-Commit: `实现：增加完整本地稳健性分析`
-
----
-
-### Task 4：运行七方案并生成完整报告、推荐和人工确认门禁
-
-**对应 OpenSpec：** 10.2、10.3、10.4、10.5
-
-**Files：**
-- Modify: `joinquant/strategies/strategy-003/research/turtle_etf/cli.py`
-- Modify: `joinquant/strategies/strategy-003/research/turtle_etf/reporting.py`
-- Modify: `joinquant/strategies/strategy-003/research/candidates.json`
-- Modify: `joinquant/strategies/strategy-003/research/project-run.json`
-- Create: `scripts/research/local_quant_research/decision.py`
-- Create: `tests/local_quant_research/test_turtle_complete_report.py`
-- Create: `tests/local_quant_research/test_human_decision.py`
-- Modify: `tests/local_quant_research/test_turtle_e2e.py`
-
-**Interfaces：**
-
-```python
-def run_candidate_set(snapshot, baseline, candidates) -> tuple[CandidateResult, ...]: ...
-def write_complete_reports(candidate_results, evidence_matrix, attribution, output_dir) -> None: ...
-def record_human_decision(run_dir: Path, decision_root: Path, decision: Mapping[str, object]) -> Path: ...
-def validate_human_decision(run_dir: Path, decision_path: Path) -> Mapping[str, object]: ...
-```
-
-必须输出 `candidate-comparison.parquet`、`candidate-screening.parquet`、`local-evidence-matrix.parquet`、`attribution.parquet`、`local-research-report.md`、`challenge-report.md`、`recommendation.json` 和七项 `candidate-strategies.json`。`recommendation.json` 只能使用 `proceed_to_joinquant`、`revise_and_reassess`、`stop_evidence_insufficient`。Vibe-Trading 仅使用仓库当前可用材料；若当前没有可调用能力，报告如实记录不可用，不安装、不新增适配器，也不阻塞确定性数字和报告主体。
-
-- [x] **Step 1：写七次真实运行、输出门禁和人工决定失败测试**
-
-```python
-def test_all_seven_candidates_are_run_and_retained(fake_runner, candidate_config):
-    results = run_candidate_set(SNAPSHOT, BASELINE, candidate_config)
-    assert len(fake_runner.calls) == 7
-    assert [row.candidate_id for row in results] == [row["candidate_id"] for row in candidate_config]
-
-def test_complete_requires_reports_recommendation_and_human_next_action(output_dir):
-    write_complete_reports(results(), evidence(), attribution(), output_dir)
-    recommendation = json.loads((output_dir / "recommendation.json").read_text("utf-8"))
-    assert recommendation["next_action"] == "human_confirmation_required"
-```
-
-补充：不得自动删候选、不得替换基线、Vibe 不可用留痕、决定文件必须位于 `.local/quant-research-decisions/strategy-003/<run_id>/<decision_id>/`、决定摘要不匹配拒绝、确认前禁止外部动作。
-
-- [x] **Step 2：验证 RED**
-
-Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_turtle_complete_report.py tests\local_quant_research\test_human_decision.py tests\local_quant_research\test_turtle_e2e.py -q`
-
-Expected: FAIL，原因是当前项目只运行基线并输出旧三类结果。
-
-- [x] **Step 3：实现七方案、报告和追加式人工决定**
-
-候选按 `candidates.json` 固定顺序运行，共用代码摘要和快照。推荐基于确定性指标、稳健性证据和反对证据形成，但不得修改候选清单。人工决定引用 `run_id`、报告摘要和推荐摘要，使用原子目录写入且永不覆盖。
-
-- [x] **Step 4：验证 GREEN 和项目回归**
-
-Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_turtle_complete_report.py tests\local_quant_research\test_human_decision.py tests\local_quant_research\test_turtle_e2e.py tests\local_quant_research\test_runner.py -q`
-
-Expected: PASS；缺任何完整输出时项目和通用运行器都不得返回 `complete`。
-
-- [x] **Step 5：勾选 OpenSpec 10.2–10.5 并提交**
-
-Commit: `实现：生成七方案完整研究报告`
-
----
-
-### Task 5：更新 Skill、配置并完成非海龟与海龟完整 E2E
-
-**对应 OpenSpec：** 11.1、11.2、11.3
-
-**Files：**
-- Modify: `.agents/skills/run-local-quant-research/SKILL.md`
-- Modify: `.agents/skills/run-local-quant-research/references/operations.md`
-- Modify: `.build-and-verify/config.json`
-- Modify: `tests/local_quant_research/test_skill_contract.py`
-- Modify: `tests/local_quant_research/test_generic_e2e.py`
-- Modify: `tests/local_quant_research/test_turtle_e2e.py`
-- Modify: `joinquant/strategies/strategy-003/research/project-run.json`
-
-**Interfaces：** Skill 公开入口仍为现有单一 CLI；只更新阶段、必需输出和停止状态，不把海龟字段写入 Skill。非海龟夹具必须使用同一 Parquet 行情、八表分析、报告和人工确认门禁，证明共用层未反向依赖海龟。
-
-- [x] **Step 1：写失败的公开入口与完整 E2E 断言**
-
-```python
-def test_skill_documents_parquet_complete_analysis_and_human_gate(skill_text):
-    assert "market-data.parquet" in skill_text
-    assert "human_confirmation_required" in skill_text
-    assert "55 日" not in skill_text
-```
-
-两个 E2E 都必须从 Skill 文档公开命令启动，检查 CSV 暂存清理、Parquet、内存 DuckDB、八表、分析、稳健性、报告、推荐、七候选和停止门禁；不得以单元测试拼接替代。
-
-- [x] **Step 2：验证 RED**
-
-Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_skill_contract.py tests\local_quant_research\test_generic_e2e.py tests\local_quant_research\test_turtle_e2e.py -q`
-
-Expected: FAIL，原因是 Skill 和 E2E 仍声明 CSV 与旧三类输出。
-
-- [x] **Step 3：更新编排说明、项目配置和验证映射**
-
-保持 `.claude/skills/run-local-quant-research` 符号链接不变；Build and Verify（构建与验证）影响映射加入 `quant_analysis`、新测试和报告配置，继续排除 `.local` 数据。
-
-- [x] **Step 4：验证 GREEN**
-
-Run: `.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_skill_contract.py tests\local_quant_research\test_generic_e2e.py tests\local_quant_research\test_turtle_e2e.py -q`
-
-Expected: PASS；两个 E2E 均从公开入口独立完成并清理临时产物。
-
-- [x] **Step 5：勾选 OpenSpec 11.1–11.3 并提交**
-
-Commit: `验证：覆盖完整本地研究端到端流程`
-
----
-
-### Task 6：迁移真实行情、运行完整研究并完成全部门禁
-
-**对应 OpenSpec：** 11.4、11.5
-
-**Files：**
-- Modify: `docs/research/2026-07-13-turtle-etf-system-final-plan.md`
-- Modify: `docs/superpowers/reports/2026-07-14-build-turtle-etf-local-research-workflow-verify.md`
-- Modify: `openspec/changes/build-turtle-etf-local-research-workflow/tasks.md`
-- Modify only if required by verified impact mapping: `.build-and-verify/config.json`
-- Runtime only, ignored: `.local/market-data/`
-- Runtime only, ignored: `.local/quant-research/strategy-003/`
-
-**执行要求：** 优先迁移 `.local` 中已经验证的真实 11 ETF CSV 批次；只有现有数据不完整时才使用已确认的聚宽研究导出流程补充。不得启动正式回测。真实研究必须使用明确的 `snapshot_end_date`，完整运行七方案和全部稳健性维度，产生完整报告与推荐，并停在人工确认门禁。任何临时 CSV 在验证后删除。
-
-- [ ] **Step 1：运行迁移前只读审计**
-
-Run: `.\.venv\Scripts\python.exe -m scripts.research.market_data.cli audit --root .local/market-data`
-
-Expected: 列出旧 CSV 批次、11 ETF 覆盖、日期范围和迁移资格；不修改原批次。
-
-- [ ] **Step 2：迁移或补充真实行情并验证清理**
-
-Run: 使用 Skill 文档公开的行情导入命令创建新的 Parquet 批次和快照。
-
-Expected: 新快照只引用 `schema_version=2` 批次；`.local` 暂存和聚宽远端均无传输 CSV；旧 CSV 批次保持历史不变。
-
-- [ ] **Step 3：从 Skill 公开入口运行真实完整研究**
-
-Run: 使用 `.agents/skills/run-local-quant-research/SKILL.md` 声明的命令和 `strategy-003/research/project-run.json`。
-
-Expected: 七方案全部运行；完整报告、推荐、八表、归因和证据矩阵通过摘要校验；状态为 `complete` 且 `next_action=human_confirmation_required`。
-
-- [ ] **Step 4：运行全量验证**
-
-Run:
+- Modify: `tests/local_quant_research/test_turtle_vectorbt_inputs.py`
+- Modify: `tests/local_quant_research/test_turtle_result_adapter.py`
+- Modify: `tests/local_quant_research/test_turtle_single_scenario.py`
+- Modify: `tests/local_quant_research/test_analysis_manifest_schemas.py`
+- Runtime only: `.local/market-data/`、`.local/quant-research/strategy-003/`、`.local/strategy-analysis-preparations/`、`.local/strategy-analysis/`
+
+**固定接口与口径：**
+
+- `normalize_corporate_action_rows(rows) -> list[dict[str, object]]` 固定事件字段、类型、主键、状态与日期语义；`corporate_action_digest(rows) -> str` 生成规范化内容摘要。
+- `import_batch(csv_path, corporate_actions_csv_path, manifest, root) -> BatchRecord` 原子固化 `market-data.parquet` 与 `corporate-actions.parquet`；两类规范化内容摘要共同决定 `batch_id`，两类批次摘要共同决定 `snapshot_id`。
+- `SnapshotView.corporate_actions` 与 `SnapshotView.corporate_actions_digest` 返回与行情同一快照身份的只读事件和摘要。
+- `corporate-actions.parquet` 至少保存来源事件主键、证券、事件类型、公告日、登记日、除权日、生效日、支付日、状态、知识截止日、拆分比例、每份现金、来源身份和来源摘要；空事件集也必须以固定 Schema（结构约束）落盘。
+- 导出器必须以取消日期相对 `snapshot_end_date` 重建事件状态；截止日后的取消在该快照中仍为有效，当前状态显示已取消但缺少取消日期时以 `evidence_insufficient` 停止，不得用当前 `process_id` 回写历史状态。
+- `prepare_simulation_inputs(frames, config, corporate_actions) -> SimulationInputs` 只应用公告日在生效日之前或当日、状态有效且知识截止日完整的事件；以 `上一交易日原始 close / 当日原始 pre_close` 决定连续因子。公告日晚于应用日、事件取消或数值不能勾稽时停止为 `evidence_insufficient`。连续因子从应用日向未来累乘，绝不回写过去。
+- 当公司行动能解释价格基准变化时，连续因子使用 `上一交易日原始 close / 当日原始 pre_close`；同一因子应用于当日及以后原始 OHLC（开高低收）与 `pre_close`。
+- vectorbt（向量化回测框架）的信号、突破、N 值、协方差、风险、成交、估值全部使用连续经济价格与经济单位。现金分红按除权日隐含再投资，不在支付日另加现金。
+- 本地结果只能声明时点可知的总回报近似，不得宣称真实拆分后份额、支付日现金、税费、真实再投资份额、零碎份额现金或聚宽订单路径精确一致。
+
+### Step 1：8.2 RED——双事实批次与快照
+
+先在 `test_market_data_storage.py` 添加失败测试，覆盖：
+
+1. 有事件与空事件两种导入都生成固定 Schema 的 `corporate-actions.parquet`；
+2. 事件行主键、日期先后、状态、知识截止日、拆分比例和每份现金校验；
+3. 行情相同而公司行动不同会得到不同 `batch_id` 和 `snapshot_id`；
+4. 两类 Parquet（列式文件）任一被篡改均拒绝读取；
+5. DuckDB（嵌入式分析数据库）只用 `:memory:` 回读两类事实；
+6. 没有对应有效事件授权的价格基准变化返回 `evidence_insufficient`，不使用价格阈值猜测；
+7. 成功与失败路径都不遗留 CSV（逗号分隔文件）暂存或持久数据库。
+
+Run：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-openspec validate build-turtle-etf-local-research-workflow --strict
-.\.venv\Scripts\python.exe "$env:USERPROFILE\.codex\skills\.system\skill-creator\scripts\quick_validate.py" .agents\skills\run-local-quant-research
+.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_market_data_storage.py -q
 ```
 
-再运行仓库 `build-and-verify`（构建与验证）完整门禁、敏感数据扫描和独立前向验证。
+Expected：RED，原因是当前批次只认识 `market-data.parquet`，批次与快照身份没有公司行动证据。
 
-Expected: 全部 PASS；Git（版本管理）跟踪文件中无行情、凭证或 `.local` 产物。
+### Step 2：8.2 GREEN——实现双事实原子存储
 
-- [ ] **Step 5：人工复核报告并更新验证证据**
+在 `storage.py` 增加最小公司行动规范化、Arrow（列式内存格式）Schema、内容摘要、原子写入、完整性校验和快照引用。保留现有行情接口语义；需要兼容无公司行动的通用夹具时，调用方必须显式提供合法空事件集，不能静默假设“没有事件”。实现后重新运行 Step 1，并运行市场数据相关回归：
 
-验证报告必须记录：实际命令、测试数量、真实 `snapshot_id`、`run_id`、七方案、收益、回撤、风险、Alpha/Beta（超额收益/市场暴露）、完整稳健性、推荐、无法验证项和临时产物清理证据。不能把本地结论写成聚宽正式结论。
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_market_data_storage.py tests\local_quant_research\test_market_data_query.py tests\local_quant_research\test_joinquant_export.py -q
+```
 
-- [ ] **Step 6：勾选 OpenSpec 11.4–11.5 并提交**
+### Step 3：8.3 RED——行情时点可知的连续经济价格
 
-Commit: `完成：交付海龟ETF完整本地研究`
+在输入、结果清单和统一读取测试中先加入失败用例：
+
+- 512480 原始 `close=2.700`、次日原始 `pre_close=1.350` 的 1:2 拆分样例，连续因子从应用日开始为 2，过去行保持不变；
+- 公告日晚于应用日时保留并标记为事后核对；取消事件不能授权价格基准变化，未知状态、关键字段缺失、重复冲突、知识截止日无效或没有有效事件解释的价格基准变化一律 `evidence_insufficient`；
+- 当前已取消但取消日期晚于快照截止日时仍按截止日有效处理；已取消但缺少取消日期时关闭导出，防止把未来状态带回历史快照；
+- 有效事件未发生价格基准变化时只记审计，不强制改变连续因子；官方拆分比例或每份现金必须在声明容差内与价格基准变化勾稽；
+- 连续 OHLC、连续 `pre_close`、经济单位、突破、N 值和 `continuous_close / continuous_pre_close - 1` 协方差收益保持同一价格基准；
+- 现金分红只通过除权日连续总回报隐含再投资，不在支付日增加现金或生成虚假订单；
+- 公司行动前后权益连续，原始机械跳变不产生虚假突破、止损或风险放大；
+- 本地清单缺少或篡改 `source.accounting` 时拒绝，统一读取器原样暴露精度限制。
+
+Run：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_turtle_vectorbt_inputs.py tests\local_quant_research\test_turtle_result_adapter.py tests\local_quant_research\test_turtle_single_scenario.py tests\local_quant_research\test_analysis_manifest_schemas.py -q
+```
+
+Expected：RED，原因是当前输入直接使用原始未复权价格，清单没有核算口径。
+
+### Step 4：8.3 GREEN——接入 vectorbt 与结果精度元数据
+
+最小实现只修改输入准备和结果契约：
+
+1. 从快照公司行动事实派生逐证券前向累计连续因子；
+2. 用连续经济 OHLC、`pre_close` 和经济单位构造 `SimulationInputs`（模拟输入）；
+3. 协方差日收益改为 `continuous_close / continuous_pre_close - 1`；
+4. 不新增公司行动订单、支付日现金或私有回测引擎；
+5. `manifest.json` 的 `source.accounting` 固定写入：
+   - `corporate_action_mode=point_in_time_total_return_approximation`
+   - `continuity_factor_basis=raw_previous_close_over_current_pre_close`
+   - `corporate_action_metadata_timing=point_in_time_known`
+   - `price_basis=continuous_economic_price`
+   - `quantity_basis=economic_units`
+   - `cash_dividend_mode=implicit_reinvestment_on_ex_date`
+   - `pay_date_cash_supported=false`
+   - `exact_joinquant_reconciliation=false`
+   - 公司行动来源摘要与核算版本；
+6. 归因日志记录事件身份、应用日、`evidence_timing=point_in_time`、连续因子与限制，不改变订单事实。
+
+完成后重跑 Step 3，并加跑引擎与统一读取回归：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_turtle_vectorbt_inputs.py tests\local_quant_research\test_turtle_vectorbt_engine.py tests\local_quant_research\test_turtle_result_adapter.py tests\local_quant_research\test_turtle_single_scenario.py tests\local_quant_research\test_analysis_manifest_schemas.py tests\local_quant_research\test_analysis_data_views.py -q
+```
+
+### Step 5：8.6——重建七个场景与完整报告
+
+先解析并打印将要清理的绝对路径，确认都位于本仓库 `.local` 且只属于本变更，再删除旧公司行动口径污染的共享快照、七份单场景结果和派生分析；不得触碰 `strategy-001/002` 聚宽归档。随后：
+
+1. 用真实 11 只 ETF 行情和权威公司行动事实生成新不可变快照；
+2. 主 agent 从 `analysis-plan.json` 生成七份配置，并复数调用单场景 Skill 七次；Skill 本身不包含七方案数量、循环或聚合；
+3. 每个场景冷启动和预热都小于等于 180 秒，规范化结果摘要一致；
+4. 显式登记七组 `scenario_id -> run_id`，重新生成收益、回撤、Alpha/Beta（超额收益/市场暴露）、归因、仓位、风险、六个挑战、全部稳健性、压力、CVaR（条件风险价值）、报告和推荐；
+5. 检查报告明确披露近似核算限制，不保留兼容副本，不运行新旧方案对照。
+
+### Step 6：8.7——完整用户入口与仓库门禁
+
+依次运行：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_market_data_storage.py tests\local_quant_research\test_turtle_vectorbt_inputs.py tests\local_quant_research\test_turtle_vectorbt_engine.py tests\local_quant_research\test_turtle_result_adapter.py tests\local_quant_research\test_turtle_single_scenario.py tests\local_quant_research\test_analysis_manifest_schemas.py -q
+.\.venv\Scripts\python.exe -m pytest -q
+openspec validate build-turtle-etf-local-research-workflow --strict
+```
+
+再从公开 `run-local-quant-research` Skill 用户入口完成一次公司行动单场景 E2E（端到端），由主 agent 完成七次复数调用和独立分析 E2E，运行 Build and Verify（构建与验证）完整门禁、全仓旧精确记账/流动性规则扫描与全面代码审查。确认 `.local` 下没有 CSV 暂存、预热副本、测试临时产物或持久 DuckDB 文件；阻断项为零后才能进入 Comet verify（验证）阶段。

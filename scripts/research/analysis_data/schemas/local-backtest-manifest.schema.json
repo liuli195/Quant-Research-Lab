@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.vibe-trading/local-backtest-manifest.schema.json",
+  "title": "Local vectorbt backtest manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "object",
+    "source",
+    "authority",
+    "run",
+    "code",
+    "params",
+    "performance",
+    "datasets",
+    "source_benchmark_returns",
+    "gate"
+  ],
+  "properties": {
+    "schema_version": {"const": "local-backtest/1"},
+    "object": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "local_id", "status"],
+      "properties": {
+        "kind": {"const": "local_backtest"},
+        "local_id": {"type": "string", "minLength": 1},
+        "status": {"const": "complete"}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "engine", "accounting"],
+      "properties": {
+        "kind": {"const": "local_vectorbt"},
+        "engine": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["backend", "adapter_version", "vectorbt", "numba", "numpy", "pandas"],
+          "properties": {
+            "backend": {"const": "vectorbt.Portfolio.from_order_func"},
+            "adapter_version": {"type": "string", "minLength": 1},
+            "vectorbt": {"type": "string", "minLength": 1},
+            "numba": {"type": "string", "minLength": 1},
+            "numpy": {"type": "string", "minLength": 1},
+            "pandas": {"type": "string", "minLength": 1}
+          }
+        },
+        "accounting": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "corporate_action_mode",
+            "continuity_factor_basis",
+            "corporate_action_metadata_timing",
+            "price_basis",
+            "quantity_basis",
+            "cash_dividend_mode",
+            "pay_date_cash_supported",
+            "exact_joinquant_reconciliation",
+            "corporate_actions_sha256"
+          ],
+          "properties": {
+            "version": {"const": "turtle-etf-corporate-actions/1"},
+            "corporate_action_mode": {"const": "point_in_time_total_return_approximation"},
+            "continuity_factor_basis": {"const": "raw_previous_close_over_current_pre_close"},
+            "corporate_action_metadata_timing": {"const": "audit_only_may_be_retrospective"},
+            "price_basis": {"const": "continuous_economic_price"},
+            "quantity_basis": {"const": "economic_units"},
+            "cash_dividend_mode": {"const": "implicit_reinvestment_on_ex_date"},
+            "pay_date_cash_supported": {"const": false},
+            "exact_joinquant_reconciliation": {"const": false},
+            "corporate_actions_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        }
+      }
+    },
+    "authority": {"const": "local_research"},
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "scenario_id", "snapshot_id"],
+      "properties": {
+        "run_id": {"type": "string", "minLength": 1},
+        "scenario_id": {"type": "string", "minLength": 1},
+        "snapshot_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "code": {"$ref": "#/$defs/file"},
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current", "version"],
+      "properties": {
+        "current": {"$ref": "#/$defs/file"},
+        "version": {"$ref": "#/$defs/file"}
+      }
+    },
+    "performance": {"$ref": "#/$defs/file"},
+    "datasets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["results", "balances", "positions", "orders", "risk", "period_risks"],
+      "properties": {
+        "results": {"$ref": "#/$defs/completeDataset"},
+        "balances": {"$ref": "#/$defs/completeDataset"},
+        "positions": {"$ref": "#/$defs/completeDataset"},
+        "orders": {"$ref": "#/$defs/completeDataset"},
+        "risk": {"$ref": "#/$defs/missingDataset"},
+        "period_risks": {"$ref": "#/$defs/missingDataset"}
+      }
+    },
+    "source_benchmark_returns": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason", "null_rows"],
+      "properties": {
+        "status": {"const": "missing_at_source"},
+        "reason": {"const": "independent_benchmark_set"},
+        "null_rows": {"type": "integer", "minimum": 0}
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "exceptions", "checks"],
+      "properties": {
+        "status": {"enum": ["pass", "fail"]},
+        "exceptions": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "checks": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "extensions": {"type": "object"}
+  },
+  "$defs": {
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "bytes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "parquetFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes", "rows", "format", "compression"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "bytes": {"type": "integer", "minimum": 0},
+        "rows": {"type": "integer", "minimum": 0},
+        "format": {"const": "parquet"},
+        "compression": {"const": "zstd"}
+      }
+    },
+    "completeDataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "status", "rows", "verified_empty", "time_range", "files", "evidence"],
+      "properties": {
+        "required": {"const": true},
+        "status": {"const": "complete"},
+        "rows": {"type": "integer", "minimum": 0},
+        "verified_empty": {"type": "boolean"},
+        "time_range": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["start", "end"],
+          "properties": {
+            "start": {"type": ["string", "null"], "format": "date"},
+            "end": {"type": ["string", "null"], "format": "date"}
+          }
+        },
+        "files": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"$ref": "#/$defs/parquetFile"}},
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["fields", "unique_key"],
+          "properties": {
+            "fields": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+            "unique_key": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+          }
+        }
+      }
+    },
+    "missingDataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "status", "reason", "rows", "verified_empty", "files"],
+      "properties": {
+        "required": {"const": false},
+        "status": {"const": "missing_at_source"},
+        "reason": {"const": "computed_by_strategy_analysis"},
+        "rows": {"const": 0},
+        "verified_empty": {"const": true},
+        "files": {"const": []}
+      }
+    }
+  }
+}

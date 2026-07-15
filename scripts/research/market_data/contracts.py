@@ -25,6 +25,22 @@ MARKET_DATA_FIELDS = (
     "high_limit",
     "low_limit",
 )
+CORPORATE_ACTION_FIELDS = (
+    "source_event_id",
+    "security",
+    "event_type",
+    "announcement_date",
+    "record_date",
+    "ex_date",
+    "effective_date",
+    "pay_date",
+    "status",
+    "knowledge_cutoff_date",
+    "split_ratio",
+    "cash_per_share",
+    "source",
+    "source_record_sha256",
+)
 _NUMERIC_FIELDS = frozenset(MARKET_DATA_FIELDS) - {"date", "security", "paused"}
 
 
@@ -95,6 +111,19 @@ def normalize_market_rows(
 def normalized_digest(rows: Iterable[Mapping[str, object]]) -> str:
     canonical_rows = [dict(row) for row in rows]
     canonical_rows.sort(key=lambda row: (str(row["date"]), str(row["security"])))
+    payload = json.dumps(
+        canonical_rows,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def corporate_actions_digest(rows: Iterable[Mapping[str, object]]) -> str:
+    canonical_rows = [dict(row) for row in rows]
+    canonical_rows.sort(key=lambda row: str(row["source_event_id"]))
     payload = json.dumps(
         canonical_rows,
         ensure_ascii=False,

@@ -48,6 +48,7 @@ _PROJECT_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _REASON_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _SENSITIVE_KEYS = ("password", "token", "cookie", "secret", "credential", "api_key")
+_PROJECT_EXECUTION_TIMEOUT_SECONDS = 3_600
 _RESERVED_ARGUMENTS = {
     "--snapshot-manifest",
     "--market-data-root",
@@ -266,7 +267,14 @@ def load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
         if not isinstance(item, dict) or set(item) != {"path", "format"}:
             raise ConfigurationError("invalid_output", "required output structure is invalid")
         output_format = item["format"]
-        if output_format not in {"json", "csv", "markdown", "text", "parquet"}:
+        if output_format not in {
+            "json",
+            "csv",
+            "markdown",
+            "text",
+            "parquet",
+            "directory",
+        }:
             raise ConfigurationError("invalid_output", "required output format is invalid")
         output_specs.append(OutputSpec(path=_output_path(item["path"]), format=output_format))
     if len({spec.path for spec in output_specs}) != len(output_specs):
@@ -360,8 +368,19 @@ def _code_identity(config: RunConfig, *, repo_root: Path) -> tuple[str, dict[str
         document = json.loads(config.code_identity.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise InputIntegrityError("invalid_code_identity", "code identity is invalid") from exc
-    if not isinstance(document, dict) or set(document) != {"schema_version", "files"}:
+    if (
+        not isinstance(document, dict)
+        or not {"schema_version", "files"}.issubset(document)
+        or set(document) - {"schema_version", "files", "execution"}
+    ):
         raise InputIntegrityError("invalid_code_identity", "code identity structure is invalid")
+    execution = document.get("execution")
+    if execution is not None and (
+        not isinstance(execution, Mapping)
+        or not execution
+        or _contains_sensitive_key(execution)
+    ):
+        raise InputIntegrityError("invalid_code_identity", "execution identity is invalid")
     files = document["files"]
     if document["schema_version"] != 1 or not isinstance(files, list) or not files:
         raise InputIntegrityError("invalid_code_identity", "code identity files are invalid")
@@ -388,7 +407,9 @@ def _code_identity(config: RunConfig, *, repo_root: Path) -> tuple[str, dict[str
     entry_path = config.project_entry.relative_to(repo_root).as_posix()
     if entry_path not in {item["path"] for item in normalized}:
         raise InputIntegrityError("missing_entry_identity", "project entry is absent from code identity")
-    normalized_document = {"schema_version": 1, "files": normalized}
+    normalized_document: dict[str, object] = {"schema_version": 1, "files": normalized}
+    if execution is not None:
+        normalized_document["execution"] = dict(execution)
     return canonical_digest(normalized_document), normalized_document
 
 
@@ -513,6 +534,7 @@ def _freeze_execution_inputs(
             for name, digest_field in (
                 ("manifest.json", "manifest_sha256"),
                 ("market-data.parquet", "parquet_sha256"),
+                ("corporate-actions.parquet", "corporate_actions_sha256"),
                 ("validation.json", "validation_sha256"),
             ):
                 _copy_verified_file(
@@ -662,10 +684,18 @@ def _project_status(staging: Path) -> tuple[str, tuple[str, ...]]:
         raise EvidenceError("complete project status must not contain reasons")
     next_action = document.get("next_action")
     if next_action is not None and (
-        status != "complete" or next_action != "human_confirmation_required"
+        status != "complete"
+        or next_action
+        not in {"human_confirmation_required", "return_to_caller"}
     ):
         raise EvidenceError("project status next_action is invalid")
     return status, tuple(reasons)
+
+
+def _project_next_action(staging: Path) -> str | None:
+    document = json.loads((Path(staging) / "project-status.json").read_text(encoding="utf-8"))
+    value = document.get("next_action")
+    return value if isinstance(value, str) else None
 
 
 def _actual_staging_files(staging: Path) -> set[str]:
@@ -812,6 +842,7 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
             reused=True,
             reasons=(),
             stages=complete_stages,
+            next_action=_project_next_action(run_dir),
         )
 
     project_root.mkdir(parents=True, exist_ok=True)
@@ -896,7 +927,7 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
             env=_sanitized_environment(frozen.repository),
             capture_output=True,
             text=True,
-            timeout=600,
+            timeout=_PROJECT_EXECUTION_TIMEOUT_SECONDS,
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
@@ -982,6 +1013,7 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
 
     try:
         project_status, reason_codes = _project_status(staging)
+        next_action = _project_next_action(staging)
     except EvidenceError:
         return _attempt_result(
             repo_root=repo_root,
@@ -1010,8 +1042,21 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
         )
     try:
         output_evidence = collect_output_evidence(staging, config.required_outputs)
-        expected_files = {"project-status.json", *(spec.path for spec in config.required_outputs)}
-        if _actual_staging_files(staging) != expected_files:
+        actual_files = _actual_staging_files(staging)
+        fixed_files = {
+            "project-status.json",
+            *(spec.path for spec in config.required_outputs if spec.format != "directory"),
+        }
+        directory_prefixes = tuple(
+            f"{spec.path}/"
+            for spec in config.required_outputs
+            if spec.format == "directory"
+        )
+        if not fixed_files.issubset(actual_files) or any(
+            path not in fixed_files
+            and not any(path.startswith(prefix) for prefix in directory_prefixes)
+            for path in actual_files
+        ):
             raise EvidenceError("project output file set differs from its declaration")
     except EvidenceError:
         return _attempt_result(
@@ -1103,4 +1148,5 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
         reused=False,
         reasons=(),
         stages=tuple(StageRecord(name, "complete") for name in _COMPLETE_STAGE_NAMES),
+        next_action=next_action,
     )

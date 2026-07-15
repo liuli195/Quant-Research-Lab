@@ -31,9 +31,9 @@ def test_local_research_skill_is_thin_and_strategy_agnostic(
         "snapshot_id",
         "market-data.parquet",
         "DuckDB（嵌入式分析数据库）",
-        "标准分析",
+        "单场景",
         "完整报告",
-        "human_confirmation_required",
+        "return_to_caller",
         "必需输出",
         "正式回测",
         "JoinQuant（聚宽）",
@@ -51,21 +51,20 @@ def test_local_research_skill_has_one_fixed_orchestration_order(
     text = _skill_text(repo_root)
     stages = [
         "校验行情快照",
-        "校验项目配置",
+        "校验单场景配置",
         "运行项目入口",
-        "校验必需输出",
+        "校验单场景结果",
         "固化运行证据",
-        "停止并等待人工确认",
+        "返回调用者",
     ]
 
     positions = [text.index(stage) for stage in stages]
     assert positions == sorted(positions)
     assert "执行前缺少身份、快照、范围或声明输入" in text
     assert "既有证据被篡改或摘要不一致" in text
-    assert "运行目录之外" in text
-    assert "不修改不可变运行" in text
+    assert "复数场景由主 agent（代理）多次调用" in text
+    assert "不在 Skill 内聚合" in text
     assert "Vibe-Trading（AI 研究助理）" in text
-    assert "不可用" in text
 
 
 def test_local_research_skill_ui_metadata_matches_public_entry(

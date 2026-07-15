@@ -69,7 +69,6 @@ def test_baseline_freezes_universe_rules_and_price_semantics(repo_root: Path) ->
             "close",
             "pre_close",
             "volume",
-            "money",
             "factor",
             "paused",
             "high_limit",
@@ -77,8 +76,14 @@ def test_baseline_freezes_universe_rules_and_price_semantics(repo_root: Path) ->
         ],
     }
     assert baseline["joinquant_export"] == {
-        "api_source": "research_runtime_injected",
-        "apis": ["get_price", "write_file", "read_file"],
+        "api_source": "research_runtime_and_jqdata",
+        "apis": [
+            "get_price",
+            "query",
+            "finance.FUND_DIVIDEND",
+            "write_file",
+            "read_file",
+        ],
         "pandas_version": "0.23.4",
         "csv_line_terminator_argument": "line_terminator",
         "paused_source_dtype": "float64",
@@ -106,33 +111,41 @@ def test_baseline_freezes_universe_rules_and_price_semantics(repo_root: Path) ->
     }
 
 
-def test_candidates_are_baseline_plus_six_single_factor_challenges(
+def test_analysis_plan_is_baseline_plus_six_single_factor_challenges(
     repo_root: Path,
 ) -> None:
     document = json.loads(
-        (_research_dir(repo_root) / "candidates.json").read_text(encoding="utf-8")
+        (_research_dir(repo_root) / "analysis-plan.json").read_text(encoding="utf-8")
     )
-    candidates = document["candidates"]
+    scenarios = document["scenarios"]
 
-    assert document["schema_version"] == 1
-    assert document["baseline_config"] == "baseline.json"
-    assert [item["id"] for item in candidates] == [
+    assert document["schema_version"] == "strategy-analysis-plan/1"
+    assert document["baseline_config"].endswith("/baseline.json")
+    assert [item["scenario_id"] for item in scenarios] == [
         "baseline",
         "entry-40",
         "entry-60",
-        "stop-1.5n",
-        "stop-2.5n",
+        "stop-1-5n",
+        "stop-2-5n",
         "covariance-120d",
         "covariance-ewma-30d",
     ]
-    assert [item["overrides"] for item in candidates] == [
+    assert [item["overrides"] for item in scenarios] == [
         {},
-        {"signal.entry_days": 40},
-        {"signal.entry_days": 60},
-        {"signal.stop_n": 1.5},
-        {"signal.stop_n": 2.5},
-        {"risk.covariance": {"method": "sample", "window_days": 120}},
-        {"risk.covariance": {"method": "ewma", "half_life_days": 30}},
+        {"signal": {"entry_days": 40}},
+        {"signal": {"entry_days": 60}},
+        {"signal": {"stop_n": 1.5}},
+        {"signal": {"stop_n": 2.5}},
+        {"risk": {"covariance": {"method": "sample", "window_days": 120}}},
+        {
+            "risk": {
+                "covariance": {
+                    "method": "ewma",
+                    "window_days": 120,
+                    "half_life_days": 30,
+                }
+            }
+        },
     ]
-    assert all(len(item["overrides"]) <= 1 for item in candidates)
-    assert all("rank" not in item and "score" not in item for item in candidates)
+    assert all(len(item["overrides"]) <= 1 for item in scenarios)
+    assert all("rank" not in item and "score" not in item for item in scenarios)

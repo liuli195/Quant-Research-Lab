@@ -1,1 +1,5 @@
 -r .agents/skills/joinquant-archive-sync/requirements.txt
+
+numba==0.66.0
+vectorbt==1.1.0
+jsonschema==4.26.0

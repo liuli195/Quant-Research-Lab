@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import runpy
+import shutil
 import sys
 from pathlib import Path
 from typing import Sequence
@@ -66,6 +67,17 @@ def _open_is_write(args: Sequence[object]) -> bool:
     return mode_writes or flag_writes
 
 
+def _is_devnull(value: object) -> bool:
+    if isinstance(value, int):
+        return False
+    try:
+        return os.path.normcase(os.fsdecode(os.fspath(value))) == os.path.normcase(
+            os.devnull
+        )
+    except (TypeError, ValueError, OSError):
+        return False
+
+
 def install_access_guard(
     output_dir: Path,
     *,
@@ -79,7 +91,12 @@ def install_access_guard(
     venv_root = Path(venv_root).resolve()
 
     def audit(event: str, args: tuple[object, ...]) -> None:
-        if event == "open" and args and _open_is_write(args):
+        if (
+            event == "open"
+            and args
+            and _open_is_write(args)
+            and not _is_devnull(args[0])
+        ):
             _require_staging_path(args[0], output_root)
         elif event == "open" and args:
             path = _path_from_event(args[0])
@@ -127,6 +144,14 @@ def main(argv: list[str] | None = None) -> int:
         or not _inside(entry, execution_root)
     ):
         return 2
+    runtime_cache = output_dir / ".runtime-cache"
+    numba_cache = runtime_cache / "numba"
+    matplotlib_cache = runtime_cache / "matplotlib"
+    numba_cache.mkdir(parents=True)
+    matplotlib_cache.mkdir()
+    os.environ["NUMBA_CACHE_DIR"] = str(numba_cache)
+    os.environ["MPLCONFIGDIR"] = str(matplotlib_cache)
+    os.environ["XDG_CACHE_HOME"] = str(runtime_cache)
     install_access_guard(
         output_dir,
         execution_root=execution_root,
@@ -136,7 +161,12 @@ def main(argv: list[str] | None = None) -> int:
     sys.path.insert(0, str(execution_root / "repository"))
     sys.path.insert(0, str(entry.parent))
     sys.argv = [str(entry), *adapter_args]
-    runpy.run_path(str(entry), run_name="__main__")
+    try:
+        runpy.run_path(str(entry), run_name="__main__")
+    finally:
+        shutil.rmtree(runtime_cache)
+        if runtime_cache.exists():
+            raise RuntimeError("adapter runtime cache cleanup failed")
     return 0
 
 

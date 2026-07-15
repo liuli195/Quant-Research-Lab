@@ -1,36 +1,17 @@
-"""Deterministic, strategy-agnostic quantitative analysis."""
+"""Strategy-agnostic analysis over standard JoinQuant-compatible results."""
 
-from .attribution import calculate_attribution
-from .benchmarks import calculate_benchmark_statistics
-from .contracts import (
-    STANDARD_TABLES,
-    AnalysisBundle,
-    AnalysisContractError,
-    read_analysis_table,
-    validate_analysis_bundle,
-    write_analysis_table,
-)
-from .metrics import calculate_performance
-from .cvar import calculate_cvar
+from .benchmarks import BenchmarkAlignmentError, calculate_benchmark_statistics
+from .cvar import calculate_cvar, rolling_compound_returns
 from .evidence import ScenarioResult, build_evidence_matrix
-from .robustness import block_bootstrap, run_path_scenarios
-from .stress import calculate_historical_stress, calculate_position_shocks
+from .robustness import block_bootstrap, summarize_bootstrap
 
 __all__ = [
-    "STANDARD_TABLES",
-    "AnalysisBundle",
-    "AnalysisContractError",
+    "BenchmarkAlignmentError",
     "ScenarioResult",
     "block_bootstrap",
     "build_evidence_matrix",
-    "calculate_attribution",
     "calculate_benchmark_statistics",
     "calculate_cvar",
-    "calculate_historical_stress",
-    "calculate_performance",
-    "calculate_position_shocks",
-    "read_analysis_table",
-    "run_path_scenarios",
-    "validate_analysis_bundle",
-    "write_analysis_table",
+    "rolling_compound_returns",
+    "summarize_bootstrap",
 ]

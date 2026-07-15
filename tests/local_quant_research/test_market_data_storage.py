@@ -6,6 +6,7 @@ import multiprocessing
 import queue
 from pathlib import Path
 
+import pyarrow.parquet as pq
 import pytest
 
 from scripts.research.market_data.contracts import SnapshotSelection
@@ -33,6 +34,23 @@ FIELDS = (
     "paused",
     "high_limit",
     "low_limit",
+)
+
+CORPORATE_ACTION_FIELDS = (
+    "source_event_id",
+    "security",
+    "event_type",
+    "announcement_date",
+    "record_date",
+    "ex_date",
+    "effective_date",
+    "pay_date",
+    "status",
+    "knowledge_cutoff_date",
+    "split_ratio",
+    "cash_per_share",
+    "source",
+    "source_record_sha256",
 )
 
 
@@ -71,7 +89,7 @@ def _canonical_digest(value: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _manifest() -> dict[str, object]:
+def _manifest(*, corporate_action_status: str = "verified_empty") -> dict[str, object]:
     return {
         "schema_version": 1,
         "source": {"name": "joinquant", "environment": "research"},
@@ -80,7 +98,55 @@ def _manifest() -> dict[str, object]:
         "fields": list(FIELDS),
         "price_semantics": {"fq": None, "skip_paused": False},
         "export_code_sha256": "a" * 64,
+        "corporate_actions": {
+            "source": {
+                "name": "joinquant",
+                "dataset": "finance.FUND_DIVIDEND",
+            },
+            "knowledge_cutoff_date": "2026-07-15",
+            "status": corporate_action_status,
+        },
     }
+
+
+def _write_corporate_actions(
+    path: Path,
+    *,
+    split_ratio: str = "2",
+    status: str = "active",
+    announcement_date: str = "2026-06-30",
+) -> Path:
+    row = (
+        "jq-000001-20260703-split",
+        "000001.XSHG",
+        "split",
+        announcement_date,
+        "2026-07-02",
+        "2026-07-03",
+        "2026-07-03",
+        "",
+        status,
+        "2026-07-15",
+        split_ratio,
+        "",
+        "joinquant.finance.FUND_DIVIDEND",
+        "b" * 64,
+    )
+    path.write_text(
+        ",".join(CORPORATE_ACTION_FIELDS) + "\n" + ",".join(row) + "\n",
+        encoding="utf-8",
+        newline="",
+    )
+    return path
+
+
+def _write_empty_corporate_actions(path: Path) -> Path:
+    path.write_text(
+        ",".join(CORPORATE_ACTION_FIELDS) + "\n",
+        encoding="utf-8",
+        newline="",
+    )
+    return path
 
 
 def _selection(*securities: str) -> SnapshotSelection:
@@ -99,8 +165,10 @@ def _selection(*securities: str) -> SnapshotSelection:
 def _write_legacy_batch(root: Path, source: Path) -> Path:
     csv_bytes = source.read_bytes()
     csv_sha256 = hashlib.sha256(csv_bytes).hexdigest()
+    legacy_base = _manifest()
+    legacy_base.pop("corporate_actions")
     legacy_manifest = {
-        **_manifest(),
+        **legacy_base,
         "csv": {"sha256": csv_sha256, "bytes": len(csv_bytes), "rows": 4},
         "securities": [
             {
@@ -159,6 +227,41 @@ def _write_legacy_batch(root: Path, source: Path) -> Path:
     return batch_dir
 
 
+def _write_legacy_snapshot(root: Path, batch_dir: Path) -> Path:
+    manifest_path = batch_dir / "manifest.json"
+    validation_path = batch_dir / "validation.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload = {
+        "schema_version": 1,
+        "batch_ids": [batch_dir.name],
+        "batches": [
+            {
+                "batch_id": batch_dir.name,
+                "manifest_sha256": _sha256(manifest_path),
+                "csv_sha256": _sha256(batch_dir / "market-data.csv"),
+                "validation_sha256": _sha256(validation_path),
+                "export_code_sha256": manifest["export_code_sha256"],
+            }
+        ],
+        "selection": _selection("000001.XSHG", "000002.XSHE").to_document(),
+        "coverage": manifest["securities"],
+    }
+    snapshot_id = _canonical_digest(payload)
+    snapshot_path = root / "snapshots" / f"{snapshot_id}.json"
+    snapshot_path.parent.mkdir(parents=True)
+    snapshot_path.write_text(
+        json.dumps(
+            {**payload, "snapshot_id": snapshot_id},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return snapshot_path
+
+
 def test_import_batch_is_immutable_complete_and_deduplicated(
     repo_root: Path,
     tmp_path: Path,
@@ -174,6 +277,7 @@ def test_import_batch_is_immutable_complete_and_deduplicated(
     assert {path.name for path in batch_dir.iterdir()} == {
         "manifest.json",
         "market-data.parquet",
+        "corporate-actions.parquet",
         "validation.json",
     }
     assert (batch_dir / "market-data.parquet").stat().st_size > 0
@@ -181,7 +285,7 @@ def test_import_batch_is_immutable_complete_and_deduplicated(
     assert [path.name for path in (tmp_path / "batches").iterdir()] == [first.batch_id]
 
     stored_manifest = json.loads((batch_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert stored_manifest["schema_version"] == 2
+    assert stored_manifest["schema_version"] == 3
     assert stored_manifest["transport_csv"]["sha256"] == _sha256(source)
     assert stored_manifest["transport_csv"]["rows"] == 4
     assert stored_manifest["parquet"]["sha256"] == _sha256(
@@ -189,6 +293,11 @@ def test_import_batch_is_immutable_complete_and_deduplicated(
     )
     assert stored_manifest["parquet"]["rows"] == 4
     assert len(stored_manifest["content_sha256"]) == 64
+    assert stored_manifest["corporate_actions"]["status"] == "verified_empty"
+    assert stored_manifest["corporate_actions"]["rows"] == 0
+    assert stored_manifest["corporate_actions"]["parquet"]["sha256"] == _sha256(
+        batch_dir / "corporate-actions.parquet"
+    )
     assert stored_manifest["securities"] == [
         {
             "security": "000001.XSHG",
@@ -205,7 +314,7 @@ def test_import_batch_is_immutable_complete_and_deduplicated(
     ]
     validation = json.loads((batch_dir / "validation.json").read_text(encoding="utf-8"))
     assert validation == {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "complete",
         "checks": {
             "field_order": True,
@@ -213,8 +322,179 @@ def test_import_batch_is_immutable_complete_and_deduplicated(
             "unique_date_security": True,
             "parquet_roundtrip": True,
             "normalized_digest": True,
+            "corporate_actions_field_order": True,
+            "corporate_actions_primary_key": True,
+            "corporate_actions_point_in_time": True,
+            "corporate_actions_parquet_roundtrip": True,
+            "corporate_actions_normalized_digest": True,
         },
     }
+
+
+def test_import_batch_publishes_market_data_and_versioned_corporate_actions(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
+    actions = _write_corporate_actions(tmp_path / "corporate-actions.csv")
+
+    record = import_batch(
+        csv_path=source,
+        corporate_actions_csv_path=actions,
+        manifest=_manifest(corporate_action_status="complete"),
+        root=tmp_path / "store",
+    )
+
+    assert {path.name for path in record.path.iterdir()} == {
+        "manifest.json",
+        "market-data.parquet",
+        "corporate-actions.parquet",
+        "validation.json",
+    }
+    stored = json.loads((record.path / "manifest.json").read_text("utf-8"))
+    assert stored["schema_version"] == 3
+    assert stored["content_sha256"]
+    assert stored["corporate_actions"]["content_sha256"]
+    assert stored["corporate_actions"]["rows"] == 1
+    assert stored["corporate_actions"]["knowledge_cutoff_date"] == "2026-07-15"
+    assert stored["corporate_actions"]["parquet"]["sha256"] == _sha256(
+        record.path / "corporate-actions.parquet"
+    )
+
+
+def test_import_batch_requires_an_explicit_valid_empty_corporate_action_set(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
+    actions = _write_empty_corporate_actions(tmp_path / "corporate-actions.csv")
+
+    record = import_batch(
+        csv_path=source,
+        corporate_actions_csv_path=actions,
+        manifest=_manifest(corporate_action_status="verified_empty"),
+        root=tmp_path / "store",
+    )
+
+    stored = json.loads((record.path / "manifest.json").read_text("utf-8"))
+    assert stored["corporate_actions"]["rows"] == 0
+    assert (record.path / "corporate-actions.parquet").is_file()
+
+
+def test_corporate_actions_participate_in_batch_and_snapshot_identity(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
+    first_actions = _write_corporate_actions(tmp_path / "first-actions.csv")
+    second_actions = _write_corporate_actions(
+        tmp_path / "second-actions.csv",
+        split_ratio="3",
+    )
+
+    first = import_batch(
+        csv_path=source,
+        corporate_actions_csv_path=first_actions,
+        manifest=_manifest(corporate_action_status="complete"),
+        root=tmp_path / "first-store",
+    )
+    second = import_batch(
+        csv_path=source,
+        corporate_actions_csv_path=second_actions,
+        manifest=_manifest(corporate_action_status="complete"),
+        root=tmp_path / "second-store",
+    )
+    first_snapshot = create_snapshot(
+        batch_ids=[first.batch_id],
+        selection=_selection("000001.XSHG", "000002.XSHE"),
+        root=tmp_path / "first-store",
+    )
+    second_snapshot = create_snapshot(
+        batch_ids=[second.batch_id],
+        selection=_selection("000001.XSHG", "000002.XSHE"),
+        root=tmp_path / "second-store",
+    )
+
+    assert first.batch_id != second.batch_id
+    assert first_snapshot.snapshot_id != second_snapshot.snapshot_id
+    assert first_snapshot.document["batches"][0]["corporate_actions_sha256"]
+    assert first_snapshot.document["batches"][0][
+        "corporate_actions_content_sha256"
+    ]
+
+
+def test_snapshot_validation_rejects_tampered_corporate_actions(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
+    actions = _write_corporate_actions(tmp_path / "corporate-actions.csv")
+    batch = import_batch(
+        csv_path=source,
+        corporate_actions_csv_path=actions,
+        manifest=_manifest(corporate_action_status="complete"),
+        root=tmp_path,
+    )
+    snapshot = create_snapshot(
+        batch_ids=[batch.batch_id],
+        selection=_selection("000001.XSHG", "000002.XSHE"),
+        root=tmp_path,
+    )
+    path = batch.path / "corporate-actions.parquet"
+    path.write_bytes(path.read_bytes() + b"tampered")
+
+    with pytest.raises(MarketDataIntegrityError, match="corporate-actions.*SHA256"):
+        validate_snapshot(snapshot.snapshot_id, root=tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"status": "unknown"}, "status"),
+        ({"split_ratio": "0"}, "split_ratio"),
+    ],
+)
+def test_import_rejects_invalid_corporate_action_evidence(
+    repo_root: Path,
+    tmp_path: Path,
+    overrides: dict[str, str],
+    message: str,
+) -> None:
+    source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
+    actions = _write_corporate_actions(
+        tmp_path / "corporate-actions.csv",
+        **overrides,
+    )
+
+    with pytest.raises(MarketDataIntegrityError, match=message):
+        import_batch(
+            csv_path=source,
+            corporate_actions_csv_path=actions,
+            manifest=_manifest(corporate_action_status="complete"),
+            root=tmp_path / "store",
+        )
+
+
+def test_import_retains_action_metadata_published_after_effective_date(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
+    actions = _write_corporate_actions(
+        tmp_path / "corporate-actions.csv",
+        announcement_date="2026-07-04",
+    )
+
+    record = import_batch(
+        csv_path=source,
+        corporate_actions_csv_path=actions,
+        manifest=_manifest(corporate_action_status="complete"),
+        root=tmp_path / "store",
+    )
+
+    stored = pq.read_table(record.path / "corporate-actions.parquet").to_pylist()
+    assert stored[0]["effective_date"] == "2026-07-03"
+    assert stored[0]["announcement_date"] == "2026-07-04"
 
 
 def test_batch_identity_uses_logical_content_not_csv_line_endings(
@@ -301,6 +581,7 @@ def test_audit_store_reports_legacy_and_parquet_batches_without_mutation(
 
     source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
     legacy_dir = _write_legacy_batch(tmp_path, source)
+    legacy_snapshot = _write_legacy_snapshot(tmp_path, legacy_dir)
     added = tmp_path / "added.csv"
     added.write_text(
         ",".join(FIELDS)
@@ -320,6 +601,8 @@ def test_audit_store_reports_legacy_and_parquet_batches_without_mutation(
     assert document["status"] == "complete"
     assert document["legacy_batch_ids"] == [legacy_dir.name]
     assert document["parquet_batch_ids"] == [parquet.batch_id]
+    assert document["legacy_snapshot_ids"] == [legacy_snapshot.stem]
+    assert document["snapshot_ids"] == []
     after = {
         path.relative_to(tmp_path).as_posix(): _sha256(path)
         for path in tmp_path.rglob("*")

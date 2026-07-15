@@ -52,6 +52,22 @@ def test_complete_project_status_can_declare_human_confirmation_next_action(
     assert _project_status(tmp_path) == ("complete", ())
 
 
+def test_complete_project_status_can_return_single_scenario_to_caller(
+    tmp_path: Path,
+) -> None:
+    _write_json(
+        tmp_path / "project-status.json",
+        {
+            "schema_version": 1,
+            "status": "complete",
+            "reason_codes": [],
+            "next_action": "return_to_caller",
+        },
+    )
+
+    assert _project_status(tmp_path) == ("complete", ())
+
+
 def _write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -108,6 +124,14 @@ def _build_repo(tmp_path: Path, source_repo: Path) -> tuple[Path, Path, dict[str
         "fields": list(FIELDS),
         "price_semantics": {"fq": None, "skip_paused": False},
         "export_code_sha256": "a" * 64,
+        "corporate_actions": {
+            "source": {
+                "name": "joinquant",
+                "dataset": "finance.FUND_DIVIDEND",
+            },
+            "knowledge_cutoff_date": "2026-01-06",
+            "status": "verified_empty",
+        },
     }
     market_root = root / ".local" / "market-data"
     batch = import_batch(csv_path=fixture, manifest=manifest, root=market_root)
@@ -201,6 +225,23 @@ def test_optional_benchmark_input_is_frozen_and_passed_to_project(
         assert argument.is_file()
         assert ".inputs" in argument.as_posix()
         assert argument.read_bytes() == benchmark.read_bytes()
+
+    monkeypatch.setattr(subprocess, "run", _successful_process(assert_invocation))
+
+    result = run_project(config_path, repo_root=fake_root)
+
+    assert result.status == "complete"
+
+
+def test_project_execution_timeout_covers_complete_research_workflow(
+    repo_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_root, config_path, _ = _build_repo(tmp_path, repo_root)
+
+    def assert_invocation(_: list[str], kwargs: dict[str, object]) -> None:
+        assert kwargs["timeout"] >= 3_600
 
     monkeypatch.setattr(subprocess, "run", _successful_process(assert_invocation))
 
@@ -680,8 +721,14 @@ def test_adapter_guard_allows_staging_writes_and_blocks_external_writes(
     adapter.parent.mkdir(parents=True)
     adapter.write_text(
         "from pathlib import Path\n"
+        "import os\n"
         "import sys\n"
+        "with open(os.devnull, 'r+b'):\n"
+        "    pass\n"
         "output = Path(sys.argv[1])\n"
+        "cache = Path(os.environ['NUMBA_CACHE_DIR'])\n"
+        "cache.mkdir(parents=True, exist_ok=True)\n"
+        "(cache / 'compiled.bin').write_bytes(b'cache')\n"
         "(output / 'inside.txt').write_text('inside', encoding='utf-8')\n"
         "if len(sys.argv) > 3 and sys.argv[2] == 'write':\n"
         "    Path(sys.argv[3]).write_text('escaped', encoding='utf-8')\n"
@@ -735,6 +782,7 @@ def test_adapter_guard_allows_staging_writes_and_blocks_external_writes(
 
     assert allowed.returncode == 0, allowed.stderr
     assert (output_dir / "inside.txt").read_text(encoding="utf-8") == "inside"
+    assert not (output_dir / ".runtime-cache").exists()
     assert blocked.returncode != 0
     assert not escaped.exists()
 

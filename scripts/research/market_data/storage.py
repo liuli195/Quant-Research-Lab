@@ -19,19 +19,26 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from .contracts import (
+    CORPORATE_ACTION_FIELDS,
     MARKET_DATA_FIELDS,
     BatchRecord,
     MarketDataContractError,
     SnapshotRecord,
     SnapshotSelection,
+    corporate_actions_digest,
     normalize_market_rows,
     normalized_digest,
 )
 
 
-_BATCH_FILES = {"manifest.json", "market-data.parquet", "validation.json"}
+_BATCH_FILES = {
+    "manifest.json",
+    "market-data.parquet",
+    "corporate-actions.parquet",
+    "validation.json",
+}
 _LEGACY_BATCH_FILES = {"manifest.json", "market-data.csv", "validation.json"}
-_REQUIRED_MANIFEST_FIELDS = {
+_BASE_MANIFEST_FIELDS = {
     "schema_version",
     "source",
     "asset_type",
@@ -40,6 +47,7 @@ _REQUIRED_MANIFEST_FIELDS = {
     "price_semantics",
     "export_code_sha256",
 }
+_REQUIRED_MANIFEST_FIELDS = _BASE_MANIFEST_FIELDS | {"corporate_actions"}
 _STORED_MANIFEST_FIELDS = _REQUIRED_MANIFEST_FIELDS | {
     "content_sha256",
     "transport_csv",
@@ -47,7 +55,7 @@ _STORED_MANIFEST_FIELDS = _REQUIRED_MANIFEST_FIELDS | {
     "securities",
     "writer",
 }
-_LEGACY_STORED_MANIFEST_FIELDS = _REQUIRED_MANIFEST_FIELDS | {
+_LEGACY_STORED_MANIFEST_FIELDS = _BASE_MANIFEST_FIELDS | {
     "csv",
     "securities",
 }
@@ -63,6 +71,24 @@ _PARQUET_SCHEMA = pa.schema(
         pa.field("paused", pa.bool_(), nullable=True),
         pa.field("high_limit", pa.float64(), nullable=True),
         pa.field("low_limit", pa.float64(), nullable=True),
+    ]
+)
+_CORPORATE_ACTION_SCHEMA = pa.schema(
+    [
+        pa.field("source_event_id", pa.string(), nullable=False),
+        pa.field("security", pa.string(), nullable=False),
+        pa.field("event_type", pa.string(), nullable=False),
+        pa.field("announcement_date", pa.string(), nullable=False),
+        pa.field("record_date", pa.string(), nullable=True),
+        pa.field("ex_date", pa.string(), nullable=True),
+        pa.field("effective_date", pa.string(), nullable=False),
+        pa.field("pay_date", pa.string(), nullable=True),
+        pa.field("status", pa.string(), nullable=False),
+        pa.field("knowledge_cutoff_date", pa.string(), nullable=False),
+        pa.field("split_ratio", pa.float64(), nullable=True),
+        pa.field("cash_per_share", pa.float64(), nullable=True),
+        pa.field("source", pa.string(), nullable=False),
+        pa.field("source_record_sha256", pa.string(), nullable=False),
     ]
 )
 
@@ -170,14 +196,23 @@ def _require_mapping(value: object, field: str) -> dict[str, object]:
     return dict(value)
 
 
-def _validate_manifest_input(manifest: Mapping[str, object]) -> dict[str, object]:
-    missing = sorted(_REQUIRED_MANIFEST_FIELDS - set(manifest))
+def _validate_manifest_input(
+    manifest: Mapping[str, object],
+    *,
+    require_corporate_actions: bool = True,
+) -> dict[str, object]:
+    required = (
+        _REQUIRED_MANIFEST_FIELDS
+        if require_corporate_actions
+        else _BASE_MANIFEST_FIELDS
+    )
+    missing = sorted(required - set(manifest))
     if missing:
         raise MarketDataIntegrityError(
             f"manifest is missing required fields: {', '.join(missing)}"
         )
-    if manifest["schema_version"] not in {1, 2}:
-        raise MarketDataIntegrityError("manifest schema_version must be 1 or 2")
+    if manifest["schema_version"] not in {1, 2, 3}:
+        raise MarketDataIntegrityError("manifest schema_version must be 1, 2 or 3")
 
     source = _require_mapping(manifest["source"], "source")
     if source.get("name") != "joinquant":
@@ -205,8 +240,49 @@ def _validate_manifest_input(manifest: Mapping[str, object]) -> dict[str, object
     ):
         raise MarketDataIntegrityError("export_code_sha256 must be a SHA256 digest")
 
-    return {
-        "schema_version": 2,
+    corporate_actions: dict[str, object] | None = None
+    if require_corporate_actions:
+        corporate_actions = _require_mapping(
+            manifest["corporate_actions"], "corporate_actions"
+        )
+        action_keys = set(corporate_actions)
+        required_action_keys = {"source", "knowledge_cutoff_date"}
+        allowed_action_keys = required_action_keys | {
+            "status",
+            "content_sha256",
+            "transport_csv",
+            "parquet",
+            "rows",
+        }
+        if not required_action_keys.issubset(action_keys) or not action_keys.issubset(
+            allowed_action_keys
+        ):
+            raise MarketDataIntegrityError(
+                "corporate_actions manifest structure is invalid"
+            )
+        action_source = _require_mapping(
+            corporate_actions["source"], "corporate_actions.source"
+        )
+        cutoff = str(corporate_actions["knowledge_cutoff_date"] or "")
+        try:
+            date.fromisoformat(cutoff)
+        except ValueError as exc:
+            raise MarketDataIntegrityError(
+                "corporate_actions.knowledge_cutoff_date must use YYYY-MM-DD"
+            ) from exc
+        status = corporate_actions.get("status")
+        if status not in {None, "complete", "verified_empty"}:
+            raise MarketDataIntegrityError(
+                "corporate_actions.status must be complete or verified_empty"
+            )
+        corporate_actions = {
+            "source": action_source,
+            "knowledge_cutoff_date": cutoff,
+            **({"status": status} if status is not None else {}),
+        }
+
+    declared = {
+        "schema_version": 3 if require_corporate_actions else int(manifest["schema_version"]),
         "source": source,
         "asset_type": "etf",
         "frequency": "1d",
@@ -214,6 +290,9 @@ def _validate_manifest_input(manifest: Mapping[str, object]) -> dict[str, object
         "price_semantics": price_semantics,
         "export_code_sha256": export_digest.lower(),
     }
+    if corporate_actions is not None:
+        declared["corporate_actions"] = corporate_actions
+    return declared
 
 
 def _read_csv(
@@ -269,6 +348,198 @@ def _read_csv(
     return rows, securities
 
 
+def _optional_iso_date(value: object, field: str) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        date.fromisoformat(text)
+    except ValueError as exc:
+        raise MarketDataIntegrityError(f"{field} must use YYYY-MM-DD") from exc
+    return text
+
+
+def _positive_optional_number(value: object, field: str) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        number = float(text)
+    except (TypeError, ValueError) as exc:
+        raise MarketDataIntegrityError(f"{field} must be numeric") from exc
+    if not number > 0.0:
+        raise MarketDataIntegrityError(f"{field} must be positive")
+    return number
+
+
+def _normalize_corporate_action_rows(
+    rows: Iterable[Mapping[str, object]],
+    *,
+    declared: Mapping[str, object],
+) -> list[dict[str, object]]:
+    action_contract = _require_mapping(
+        declared["corporate_actions"], "corporate_actions"
+    )
+    cutoff = str(action_contract["knowledge_cutoff_date"])
+    source_identity = _require_mapping(
+        action_contract["source"], "corporate_actions.source"
+    )
+    source_name = ".".join(
+        str(source_identity[key])
+        for key in ("name", "dataset")
+        if source_identity.get(key)
+    )
+    normalized_by_id: dict[str, dict[str, object]] = {}
+    for raw in rows:
+        if set(raw) != set(CORPORATE_ACTION_FIELDS):
+            raise MarketDataIntegrityError(
+                "corporate-action row does not match the fixed field contract"
+            )
+        event_id = str(raw["source_event_id"] or "").strip()
+        security = str(raw["security"] or "").strip()
+        event_type = str(raw["event_type"] or "").strip()
+        status = str(raw["status"] or "").strip()
+        source = str(raw["source"] or "").strip()
+        source_record_sha256 = str(raw["source_record_sha256"] or "").lower()
+        if not event_id or not security:
+            raise MarketDataIntegrityError(
+                "corporate-action source_event_id and security must be non-empty"
+            )
+        if event_type not in {"split", "cash_dividend"}:
+            raise MarketDataIntegrityError(
+                "corporate-action event_type must be split or cash_dividend"
+            )
+        if status not in {"active", "cancelled"}:
+            raise MarketDataIntegrityError(
+                "corporate-action status must be active or cancelled"
+            )
+        if source != source_name:
+            raise MarketDataIntegrityError(
+                "corporate-action source does not match the manifest"
+            )
+        if _SHA256_PATTERN.fullmatch(source_record_sha256) is None:
+            raise MarketDataIntegrityError(
+                "corporate-action source_record_sha256 must be a SHA256 digest"
+            )
+
+        announcement_date = _optional_iso_date(
+            raw["announcement_date"], "announcement_date"
+        )
+        effective_date = _optional_iso_date(
+            raw["effective_date"], "effective_date"
+        )
+        if announcement_date is None or effective_date is None:
+            raise MarketDataIntegrityError(
+                "corporate-action announcement_date and effective_date are required"
+            )
+        knowledge_cutoff_date = _optional_iso_date(
+            raw["knowledge_cutoff_date"], "knowledge_cutoff_date"
+        )
+        if knowledge_cutoff_date != cutoff:
+            raise MarketDataIntegrityError(
+                "corporate-action knowledge_cutoff_date does not match the manifest"
+            )
+        if announcement_date > cutoff:
+            raise MarketDataIntegrityError(
+                "corporate-action was not known by the knowledge cutoff"
+            )
+        record_date = _optional_iso_date(raw["record_date"], "record_date")
+        ex_date = _optional_iso_date(raw["ex_date"], "ex_date")
+        pay_date = _optional_iso_date(raw["pay_date"], "pay_date")
+        if ex_date is not None and ex_date != effective_date:
+            raise MarketDataIntegrityError(
+                "corporate-action ex_date must equal effective_date when provided"
+            )
+        if pay_date is not None and pay_date < effective_date:
+            raise MarketDataIntegrityError(
+                "corporate-action pay_date must not precede effective_date"
+            )
+        split_ratio = _positive_optional_number(raw["split_ratio"], "split_ratio")
+        cash_per_share = _positive_optional_number(
+            raw["cash_per_share"], "cash_per_share"
+        )
+        if event_type == "split" and (
+            split_ratio is None or cash_per_share is not None
+        ):
+            raise MarketDataIntegrityError(
+                "split requires split_ratio and forbids cash_per_share"
+            )
+        if event_type == "cash_dividend" and (
+            cash_per_share is None or split_ratio is not None
+        ):
+            raise MarketDataIntegrityError(
+                "cash_dividend requires cash_per_share and forbids split_ratio"
+            )
+
+        normalized = {
+            "source_event_id": event_id,
+            "security": security,
+            "event_type": event_type,
+            "announcement_date": announcement_date,
+            "record_date": record_date,
+            "ex_date": ex_date,
+            "effective_date": effective_date,
+            "pay_date": pay_date,
+            "status": status,
+            "knowledge_cutoff_date": knowledge_cutoff_date,
+            "split_ratio": split_ratio,
+            "cash_per_share": cash_per_share,
+            "source": source,
+            "source_record_sha256": source_record_sha256,
+        }
+        existing = normalized_by_id.get(event_id)
+        if existing is not None and existing != normalized:
+            raise MarketDataIntegrityError(
+                f"conflicting corporate-action event: {event_id}"
+            )
+        normalized_by_id[event_id] = normalized
+    return [normalized_by_id[key] for key in sorted(normalized_by_id)]
+
+
+def _read_corporate_actions_csv(
+    path: Path | None,
+    *,
+    declared: Mapping[str, object],
+) -> tuple[bytes, list[dict[str, object]]]:
+    action_contract = _require_mapping(
+        declared["corporate_actions"], "corporate_actions"
+    )
+    if path is None:
+        if action_contract.get("status") != "verified_empty":
+            raise MarketDataIntegrityError(
+                "corporate-actions CSV is required unless verified_empty is declared"
+            )
+        return b"", []
+    try:
+        csv_bytes = Path(path).read_bytes()
+        with Path(path).open(encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames != list(CORPORATE_ACTION_FIELDS):
+                raise MarketDataIntegrityError(
+                    "corporate-actions CSV field order does not match the contract"
+                )
+            raw_rows = [dict(row) for row in reader]
+    except UnicodeDecodeError as exc:
+        raise MarketDataIntegrityError(
+            "corporate-actions CSV must use UTF-8 encoding"
+        ) from exc
+    if any(None in row or any(value is None for value in row.values()) for row in raw_rows):
+        raise MarketDataIntegrityError(
+            "corporate-actions CSV row column count does not match the contract"
+        )
+    rows = _normalize_corporate_action_rows(raw_rows, declared=declared)
+    declared_status = action_contract.get("status")
+    if declared_status == "verified_empty" and rows:
+        raise MarketDataIntegrityError(
+            "corporate-actions manifest declares verified_empty but rows exist"
+        )
+    if declared_status == "complete" and not rows:
+        raise MarketDataIntegrityError(
+            "corporate-actions manifest declares complete but no rows exist"
+        )
+    return csv_bytes, rows
+
+
 def _normalize_rows(rows: Iterable[Mapping[str, object]]) -> list[dict[str, object]]:
     try:
         return normalize_market_rows(rows)
@@ -304,6 +575,23 @@ def _parquet_bytes(rows: Sequence[Mapping[str, object]]) -> bytes:
     return sink.getvalue().to_pybytes()
 
 
+def _corporate_actions_parquet_bytes(
+    rows: Sequence[Mapping[str, object]],
+) -> bytes:
+    table = pa.Table.from_pylist(
+        [dict(row) for row in rows], schema=_CORPORATE_ACTION_SCHEMA
+    )
+    sink = pa.BufferOutputStream()
+    pq.write_table(
+        table,
+        sink,
+        compression="zstd",
+        use_dictionary=False,
+        write_statistics=True,
+    )
+    return sink.getvalue().to_pybytes()
+
+
 def _read_parquet(path: Path) -> list[dict[str, object]]:
     try:
         table = pq.read_table(path)
@@ -314,6 +602,24 @@ def _read_parquet(path: Path) -> list[dict[str, object]]:
             "Parquet field order does not match the fixed market-data contract"
         )
     return _normalize_rows(table.to_pylist())
+
+
+def _read_corporate_actions_parquet(
+    path: Path,
+    *,
+    declared: Mapping[str, object],
+) -> list[dict[str, object]]:
+    try:
+        table = pq.read_table(path)
+    except (OSError, pa.ArrowException) as exc:
+        raise MarketDataIntegrityError(
+            f"invalid corporate-actions Parquet evidence: {path}"
+        ) from exc
+    if tuple(table.column_names) != CORPORATE_ACTION_FIELDS:
+        raise MarketDataIntegrityError(
+            "corporate-actions Parquet field order does not match the contract"
+        )
+    return _normalize_corporate_action_rows(table.to_pylist(), declared=declared)
 
 
 def _duckdb_roundtrip(parquet_bytes: bytes, *, root: Path) -> list[dict[str, object]]:
@@ -342,11 +648,44 @@ def _duckdb_roundtrip(parquet_bytes: bytes, *, root: Path) -> list[dict[str, obj
         temporary.unlink(missing_ok=True)
 
 
+def _corporate_actions_duckdb_roundtrip(
+    parquet_bytes: bytes,
+    *,
+    declared: Mapping[str, object],
+    root: Path,
+) -> list[dict[str, object]]:
+    Path(root).mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".corporate-actions-import-", suffix=".parquet", dir=root
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        temporary.write_bytes(parquet_bytes)
+        connection = duckdb.connect(":memory:")
+        try:
+            relation = connection.read_parquet(str(temporary))
+            if tuple(relation.columns) != CORPORATE_ACTION_FIELDS:
+                raise MarketDataIntegrityError(
+                    "DuckDB corporate-actions field order does not match the contract"
+                )
+            rows = [
+                dict(zip(relation.columns, values)) for values in relation.fetchall()
+            ]
+        finally:
+            connection.close()
+        return _normalize_corporate_action_rows(rows, declared=declared)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _batch_identity(
-    manifest: Mapping[str, object], content_sha256: str
+    manifest: Mapping[str, object],
+    content_sha256: str,
+    corporate_actions_content_sha256: str,
 ) -> dict[str, object]:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "source": manifest["source"],
         "asset_type": manifest["asset_type"],
         "frequency": manifest["frequency"],
@@ -354,6 +693,8 @@ def _batch_identity(
         "price_semantics": manifest["price_semantics"],
         "export_code_sha256": manifest["export_code_sha256"],
         "content_sha256": content_sha256,
+        "corporate_actions": manifest["corporate_actions"],
+        "corporate_actions_content_sha256": corporate_actions_content_sha256,
     }
 
 
@@ -381,7 +722,7 @@ def _dataset_identity(manifest: Mapping[str, object]) -> tuple[bytes, object, ob
 
 def _validation_document() -> dict[str, object]:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "complete",
         "checks": {
             "field_order": True,
@@ -389,6 +730,11 @@ def _validation_document() -> dict[str, object]:
             "unique_date_security": True,
             "parquet_roundtrip": True,
             "normalized_digest": True,
+            "corporate_actions_field_order": True,
+            "corporate_actions_primary_key": True,
+            "corporate_actions_point_in_time": True,
+            "corporate_actions_parquet_roundtrip": True,
+            "corporate_actions_normalized_digest": True,
         },
     }
 
@@ -432,6 +778,8 @@ def _validate_batch_dir(batch_dir: Path) -> dict[str, Any]:
     if set(manifest) != _STORED_MANIFEST_FIELDS:
         raise MarketDataIntegrityError("batch manifest structure is invalid")
     declared = _validate_manifest_input(manifest)
+    if manifest.get("schema_version") != 3:
+        raise MarketDataIntegrityError("batch schema_version must be 3")
     transport_evidence = manifest.get("transport_csv")
     if not isinstance(transport_evidence, Mapping) or set(transport_evidence) != {
         "sha256",
@@ -460,6 +808,46 @@ def _validate_batch_dir(batch_dir: Path) -> dict[str, Any]:
         raise MarketDataIntegrityError(
             f"Parquet byte count mismatch for batch {batch_dir.name}"
         )
+    action_evidence = manifest.get("corporate_actions")
+    if not isinstance(action_evidence, Mapping) or set(action_evidence) != {
+        "source",
+        "knowledge_cutoff_date",
+        "status",
+        "content_sha256",
+        "transport_csv",
+        "parquet",
+        "rows",
+    }:
+        raise MarketDataIntegrityError(
+            "batch manifest is missing corporate-actions evidence"
+        )
+    action_transport = action_evidence.get("transport_csv")
+    if not isinstance(action_transport, Mapping) or set(action_transport) != {
+        "status",
+        "sha256",
+        "byte_count",
+        "rows",
+    }:
+        raise MarketDataIntegrityError(
+            "batch manifest is missing corporate-actions transport evidence"
+        )
+    action_parquet_evidence = action_evidence.get("parquet")
+    if not isinstance(action_parquet_evidence, Mapping) or set(
+        action_parquet_evidence
+    ) != {"sha256", "byte_count", "rows"}:
+        raise MarketDataIntegrityError(
+            "batch manifest is missing corporate-actions Parquet evidence"
+        )
+    action_parquet_path = batch_dir / "corporate-actions.parquet"
+    action_parquet_bytes = action_parquet_path.read_bytes()
+    if _sha256_bytes(action_parquet_bytes) != action_parquet_evidence.get("sha256"):
+        raise MarketDataIntegrityError(
+            f"corporate-actions Parquet SHA256 mismatch for batch {batch_dir.name}"
+        )
+    if len(action_parquet_bytes) != action_parquet_evidence.get("byte_count"):
+        raise MarketDataIntegrityError(
+            f"corporate-actions Parquet byte count mismatch for batch {batch_dir.name}"
+        )
     validation = _load_json(batch_dir / "validation.json")
     if validation != _validation_document():
         raise MarketDataIntegrityError(
@@ -475,13 +863,29 @@ def _validate_batch_dir(batch_dir: Path) -> dict[str, Any]:
         raise MarketDataIntegrityError(
             f"normalized content SHA256 mismatch for batch {batch_dir.name}"
         )
+    action_rows = _read_corporate_actions_parquet(
+        action_parquet_path, declared=declared
+    )
+    if len(action_rows) != action_parquet_evidence.get("rows") or len(
+        action_rows
+    ) != action_evidence.get("rows"):
+        raise MarketDataIntegrityError(
+            f"corporate-actions row count mismatch for batch {batch_dir.name}"
+        )
+    action_content_sha256 = corporate_actions_digest(action_rows)
+    if action_content_sha256 != action_evidence.get("content_sha256"):
+        raise MarketDataIntegrityError(
+            f"corporate-actions content SHA256 mismatch for batch {batch_dir.name}"
+        )
     securities = _security_coverage(rows)
     if securities != manifest.get("securities"):
         raise MarketDataIntegrityError(
             f"batch security coverage mismatch: {batch_dir.name}"
         )
     expected_batch_id = _sha256_bytes(
-        _canonical_bytes(_batch_identity(declared, content_sha256))
+        _canonical_bytes(
+            _batch_identity(declared, content_sha256, action_content_sha256)
+        )
     )
     if batch_dir.name != expected_batch_id:
         raise MarketDataIntegrityError(
@@ -517,7 +921,9 @@ def _legacy_batch_for_overlap(
         raise MarketDataIntegrityError("legacy batch manifest structure is invalid")
     if manifest.get("schema_version") != 1:
         raise MarketDataIntegrityError("legacy batch schema_version must be 1")
-    declared = _validate_manifest_input(manifest)
+    declared = _validate_manifest_input(
+        manifest, require_corporate_actions=False
+    )
     csv_evidence = manifest.get("csv")
     if not isinstance(csv_evidence, Mapping) or set(csv_evidence) != {
         "sha256",
@@ -660,6 +1066,7 @@ def _atomic_file_write(target: Path, content: bytes) -> None:
 def _import_batch_locked(
     *,
     csv_path: Path,
+    corporate_actions_csv_path: Path | None,
     manifest: Mapping[str, object],
     root: Path,
 ) -> BatchRecord:
@@ -676,6 +1083,27 @@ def _import_batch_locked(
         raise MarketDataIntegrityError(
             "DuckDB Parquet roundtrip normalized digest mismatch"
         )
+    actions_csv_bytes, action_rows = _read_corporate_actions_csv(
+        corporate_actions_csv_path,
+        declared=declared,
+    )
+    actions_content_sha256 = corporate_actions_digest(action_rows)
+    actions_parquet_bytes = _corporate_actions_parquet_bytes(action_rows)
+    actions_roundtrip_rows = _corporate_actions_duckdb_roundtrip(
+        actions_parquet_bytes,
+        declared=declared,
+        root=Path(root),
+    )
+    if corporate_actions_digest(actions_roundtrip_rows) != actions_content_sha256:
+        raise MarketDataIntegrityError(
+            "DuckDB corporate-actions Parquet roundtrip normalized digest mismatch"
+        )
+    declared_actions = _require_mapping(
+        declared["corporate_actions"], "corporate_actions"
+    )
+    transport_status = (
+        "verified_empty" if not action_rows else "complete"
+    )
     stored_manifest = {
         **declared,
         "content_sha256": content_sha256,
@@ -690,6 +1118,28 @@ def _import_batch_locked(
             "rows": len(rows),
         },
         "securities": securities,
+        "corporate_actions": {
+            "source": declared_actions["source"],
+            "knowledge_cutoff_date": declared_actions["knowledge_cutoff_date"],
+            "status": transport_status,
+            "content_sha256": actions_content_sha256,
+            "transport_csv": {
+                "status": transport_status,
+                "sha256": (
+                    _sha256_bytes(actions_csv_bytes)
+                    if corporate_actions_csv_path is not None
+                    else None
+                ),
+                "byte_count": len(actions_csv_bytes),
+                "rows": len(action_rows),
+            },
+            "parquet": {
+                "sha256": _sha256_bytes(actions_parquet_bytes),
+                "byte_count": len(actions_parquet_bytes),
+                "rows": len(action_rows),
+            },
+            "rows": len(action_rows),
+        },
         "writer": {
             "pyarrow": pa.__version__,
             "duckdb": duckdb.__version__,
@@ -698,12 +1148,15 @@ def _import_batch_locked(
     }
     validation = _validation_document()
     batch_id = _sha256_bytes(
-        _canonical_bytes(_batch_identity(declared, content_sha256))
+        _canonical_bytes(
+            _batch_identity(declared, content_sha256, actions_content_sha256)
+        )
     )
     batch_dir = Path(root) / "batches" / batch_id
     files = {
         "manifest.json": _json_file_bytes(stored_manifest),
         "market-data.parquet": parquet_bytes,
+        "corporate-actions.parquet": actions_parquet_bytes,
         "validation.json": _json_file_bytes(validation),
     }
 
@@ -731,12 +1184,14 @@ def _import_batch_locked(
 def import_batch(
     *,
     csv_path: Path,
+    corporate_actions_csv_path: Path | None = None,
     manifest: Mapping[str, object],
     root: Path,
 ) -> BatchRecord:
     with _exclusive_storage_lock(root):
         return _import_batch_locked(
             csv_path=csv_path,
+            corporate_actions_csv_path=corporate_actions_csv_path,
             manifest=manifest,
             root=root,
         )
@@ -849,6 +1304,12 @@ def _create_snapshot_locked(
                     batch_dir / "market-data.parquet"
                 ),
                 "content_sha256": manifest["content_sha256"],
+                "corporate_actions_sha256": _sha256_path(
+                    batch_dir / "corporate-actions.parquet"
+                ),
+                "corporate_actions_content_sha256": manifest[
+                    "corporate_actions"
+                ]["content_sha256"],
                 "validation_sha256": _sha256_path(
                     batch_dir / "validation.json"
                 ),
@@ -861,7 +1322,7 @@ def _create_snapshot_locked(
         root=Path(root),
     )
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "batch_ids": unique_batch_ids,
         "batches": batch_evidence,
         "selection": selection.to_document(),
@@ -943,9 +1404,22 @@ def validate_snapshot(snapshot_id: str, *, root: Path) -> SnapshotRecord:
             raise MarketDataIntegrityError(
                 f"Parquet SHA256 mismatch for batch {batch_id}"
             )
+        if _sha256_path(
+            batch_dir / "corporate-actions.parquet"
+        ) != evidence.get("corporate_actions_sha256"):
+            raise MarketDataIntegrityError(
+                f"corporate-actions Parquet SHA256 mismatch for batch {batch_id}"
+            )
         if manifest.get("content_sha256") != evidence.get("content_sha256"):
             raise MarketDataIntegrityError(
                 f"content SHA256 mismatch for batch {batch_id}"
+            )
+        action_manifest = manifest.get("corporate_actions")
+        if not isinstance(action_manifest, Mapping) or action_manifest.get(
+            "content_sha256"
+        ) != evidence.get("corporate_actions_content_sha256"):
+            raise MarketDataIntegrityError(
+                f"corporate-actions content SHA256 mismatch for batch {batch_id}"
             )
         if _sha256_path(batch_dir / "validation.json") != evidence.get(
             "validation_sha256"
@@ -994,6 +1468,124 @@ def validate_snapshot(snapshot_id: str, *, root: Path) -> SnapshotRecord:
     )
 
 
+def _validate_legacy_snapshot_for_audit(
+    snapshot_id: str,
+    *,
+    root: Path,
+    legacy_batch_ids: set[str],
+) -> None:
+    """Validate an immutable schema-v1 snapshot without making it runnable."""
+
+    _require_identifier(snapshot_id, "snapshot")
+    snapshot_path = Path(root) / "snapshots" / f"{snapshot_id}.json"
+    document = _load_json(snapshot_path)
+    if document.get("snapshot_id") != snapshot_id:
+        raise MarketDataIntegrityError("snapshot identity does not match its path")
+    payload = {key: value for key, value in document.items() if key != "snapshot_id"}
+    if _sha256_bytes(_canonical_bytes(payload)) != snapshot_id:
+        raise MarketDataIntegrityError("snapshot identity digest mismatch")
+    if document.get("schema_version") != 1:
+        raise MarketDataIntegrityError("legacy snapshot schema_version must be 1")
+
+    batch_ids = document.get("batch_ids")
+    evidence_rows = document.get("batches")
+    if not isinstance(batch_ids, list) or not isinstance(evidence_rows, list):
+        raise MarketDataIntegrityError("snapshot batch evidence is missing")
+    if (
+        batch_ids != sorted(set(batch_ids))
+        or not batch_ids
+        or not set(batch_ids).issubset(legacy_batch_ids)
+    ):
+        raise MarketDataIntegrityError("legacy snapshot batch ids are invalid")
+    evidence_by_id = {
+        item.get("batch_id"): item
+        for item in evidence_rows
+        if isinstance(item, Mapping)
+    }
+    if list(evidence_by_id) != batch_ids or len(evidence_rows) != len(batch_ids):
+        raise MarketDataIntegrityError("snapshot canonical batch evidence is invalid")
+
+    manifests: list[Mapping[str, object]] = []
+    rows_by_security: dict[str, dict[str, dict[str, object]]] = {}
+    for batch_id in batch_ids:
+        batch_dir = Path(root) / "batches" / batch_id
+        manifest, rows = _legacy_batch_for_overlap(batch_dir)
+        evidence = evidence_by_id[batch_id]
+        expected = {
+            "batch_id": batch_id,
+            "manifest_sha256": _sha256_path(batch_dir / "manifest.json"),
+            "csv_sha256": _sha256_path(batch_dir / "market-data.csv"),
+            "validation_sha256": _sha256_path(batch_dir / "validation.json"),
+            "export_code_sha256": manifest["export_code_sha256"],
+        }
+        if evidence != expected:
+            raise MarketDataIntegrityError(
+                f"legacy snapshot batch evidence mismatch: {batch_id}"
+            )
+        manifests.append(manifest)
+        for (security, current_date), row in rows.items():
+            existing = rows_by_security.setdefault(security, {}).get(current_date)
+            if existing is not None and existing != row:
+                raise MarketDataConflict(
+                    f"snapshot batches conflict at {security} {current_date}"
+                )
+            rows_by_security[security][current_date] = row
+
+    selection_document = document.get("selection")
+    if not isinstance(selection_document, Mapping):
+        raise MarketDataIntegrityError("snapshot selection is missing")
+    try:
+        source_identity = selection_document["source"]
+        if not isinstance(source_identity, Mapping):
+            raise TypeError("source must be a mapping")
+        selection = SnapshotSelection(
+            source=source_identity,
+            asset_type=str(selection_document["asset_type"]),
+            frequency=str(selection_document["frequency"]),
+            securities=selection_document["securities"],
+            start_date=str(selection_document["start_date"]),
+            end_date=str(selection_document["end_date"]),
+            fields=selection_document["fields"],
+            price_semantics=selection_document["price_semantics"],
+        )
+    except (KeyError, TypeError) as exc:
+        raise MarketDataIntegrityError("snapshot selection is incomplete") from exc
+
+    for manifest in manifests:
+        if (
+            manifest["source"] != dict(selection.source)
+            or manifest["asset_type"] != selection.asset_type
+            or manifest["frequency"] != selection.frequency
+            or manifest["price_semantics"] != dict(selection.price_semantics)
+            or not set(selection.fields).issubset(manifest["fields"])
+        ):
+            raise MarketDataIntegrityError(
+                "legacy snapshot selection does not match its batch"
+            )
+
+    coverage: list[dict[str, object]] = []
+    for security in sorted(selection.securities):
+        dates = sorted(
+            current_date
+            for current_date in rows_by_security.get(security, {})
+            if selection.start_date <= current_date <= selection.end_date
+        )
+        if not dates or dates[-1] != selection.end_date:
+            raise MarketDataIntegrityError(
+                f"legacy snapshot coverage is incomplete for {security}"
+            )
+        coverage.append(
+            {
+                "security": security,
+                "start_date": dates[0],
+                "end_date": dates[-1],
+                "rows": len(dates),
+            }
+        )
+    if document.get("coverage") != coverage:
+        raise MarketDataIntegrityError("legacy snapshot coverage evidence is invalid")
+
+
 def audit_store(*, root: Path) -> dict[str, object]:
     """Read and validate every stored batch and snapshot without mutating the store."""
 
@@ -1018,6 +1610,7 @@ def audit_store(*, root: Path) -> dict[str, object]:
                 parquet_batch_ids.append(batch_dir.name)
 
     snapshot_ids: list[str] = []
+    legacy_snapshot_ids: list[str] = []
     snapshots_dir = storage_root / "snapshots"
     if snapshots_dir.exists():
         for snapshot_path in sorted(snapshots_dir.iterdir()):
@@ -1028,13 +1621,29 @@ def audit_store(*, root: Path) -> dict[str, object]:
                     f"unexpected snapshot-store entry: {snapshot_path.name}"
                 )
             snapshot_id = snapshot_path.stem
-            validate_snapshot(snapshot_id, root=storage_root)
-            snapshot_ids.append(snapshot_id)
+            document = _load_json(snapshot_path)
+            referenced = document.get("batch_ids")
+            if (
+                document.get("schema_version") == 1
+                and isinstance(referenced, list)
+                and referenced
+                and set(referenced).issubset(set(legacy_batch_ids))
+            ):
+                _validate_legacy_snapshot_for_audit(
+                    snapshot_id,
+                    root=storage_root,
+                    legacy_batch_ids=set(legacy_batch_ids),
+                )
+                legacy_snapshot_ids.append(snapshot_id)
+            else:
+                validate_snapshot(snapshot_id, root=storage_root)
+                snapshot_ids.append(snapshot_id)
 
     return {
         "schema_version": 1,
         "status": "complete",
         "legacy_batch_ids": legacy_batch_ids,
         "parquet_batch_ids": parquet_batch_ids,
+        "legacy_snapshot_ids": legacy_snapshot_ids,
         "snapshot_ids": snapshot_ids,
     }

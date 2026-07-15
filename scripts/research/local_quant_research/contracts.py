@@ -12,7 +12,7 @@ RunStatus = Literal["complete", "evidence_insufficient", "failed"]
 @dataclass(frozen=True)
 class OutputSpec:
     path: str
-    format: Literal["json", "csv", "markdown", "text", "parquet"]
+    format: Literal["json", "csv", "markdown", "text", "parquet", "directory"]
 
 
 @dataclass(frozen=True)
@@ -59,6 +59,7 @@ class RunResult:
     reused: bool
     reasons: tuple[str, ...]
     stages: tuple[StageRecord, ...]
+    next_action: str | None = None
 
     def to_document(self) -> dict[str, object]:
         return {
@@ -70,4 +71,5 @@ class RunResult:
             "reused": self.reused,
             "reasons": list(self.reasons),
             "stages": [stage.to_document() for stage in self.stages],
+            "next_action": self.next_action,
         }

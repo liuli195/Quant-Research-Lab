@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "project_id": "strategy-003",
+  "scenario_id": "baseline",
   "universe": [
     {
       "security": "510300.XSHG",
@@ -86,7 +87,6 @@
       "close",
       "pre_close",
       "volume",
-      "money",
       "factor",
       "paused",
       "high_limit",
@@ -94,9 +94,11 @@
     ]
   },
   "joinquant_export": {
-    "api_source": "research_runtime_injected",
+    "api_source": "research_runtime_and_jqdata",
     "apis": [
       "get_price",
+      "query",
+      "finance.FUND_DIVIDEND",
       "write_file",
       "read_file"
     ],

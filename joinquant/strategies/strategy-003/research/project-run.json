@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "project_id": "strategy-003",
-  "snapshot_id": "64785f1607d90cf58f3db4545c2a718796659df818e283a4ec0614b0dfd12d8a",
+  "snapshot_id": "e88238cca420a8ae66b90adb6cda4dd6c38a07390a13b8ac2f471e534742e33e",
   "snapshot_requirements": {
     "source": {
       "name": "joinquant",
@@ -44,105 +44,20 @@
       "skip_paused": false
     }
   },
-  "project_entry": "joinquant/strategies/strategy-003/research/turtle_etf/cli.py",
+  "project_entry": "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_cli.py",
   "command": [
     ".venv/Scripts/python.exe",
-    "joinquant/strategies/strategy-003/research/turtle_etf/cli.py"
+    "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_cli.py"
   ],
   "project_config": "joinquant/strategies/strategy-003/research/baseline.json",
   "code_identity": "joinquant/strategies/strategy-003/research/code-identity.json",
   "declared_inputs": [
-    "joinquant/strategies/strategy-003/manifest.json",
-    "joinquant/strategies/strategy-003/research/candidates.json"
+    "joinquant/strategies/strategy-003/manifest.json"
   ],
   "required_outputs": [
     {
-      "path": "benchmarks.parquet",
-      "format": "parquet"
-    },
-    {
-      "path": "attribution.parquet",
-      "format": "parquet"
-    },
-    {
-      "path": "candidate-comparison.parquet",
-      "format": "parquet"
-    },
-    {
-      "path": "candidate-screening.parquet",
-      "format": "parquet"
-    },
-    {
-      "path": "candidate-strategies.json",
-      "format": "json"
-    },
-    {
-      "path": "challenge-report.md",
-      "format": "markdown"
-    },
-    {
-      "path": "conclusion.json",
-      "format": "json"
-    },
-    {
-      "path": "daily-audit.csv",
-      "format": "csv"
-    },
-    {
-      "path": "equity.parquet",
-      "format": "parquet"
-    },
-    {
-      "path": "events.parquet",
-      "format": "parquet"
-    },
-    {
-      "path": "local-evidence-matrix.parquet",
-      "format": "parquet"
-    },
-    {
-      "path": "local-research-report.md",
-      "format": "markdown"
-    },
-    {
-      "path": "orders.parquet",
-      "format": "parquet"
-    },
-    {
-      "path": "positions.parquet",
-      "format": "parquet"
-    },
-    {
-      "path": "positions.csv",
-      "format": "csv"
-    },
-    {
-      "path": "recommendation.json",
-      "format": "json"
-    },
-    {
-      "path": "research-report.md",
-      "format": "markdown"
-    },
-    {
-      "path": "risk.csv",
-      "format": "csv"
-    },
-    {
-      "path": "risk.parquet",
-      "format": "parquet"
-    },
-    {
-      "path": "trades.csv",
-      "format": "csv"
-    },
-    {
-      "path": "returns.parquet",
-      "format": "parquet"
-    },
-    {
-      "path": "trades.parquet",
-      "format": "parquet"
+      "path": "backtests/local-baseline",
+      "format": "directory"
     }
   ],
   "output_root": ".local/quant-research",

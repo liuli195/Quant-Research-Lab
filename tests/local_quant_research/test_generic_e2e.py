@@ -11,11 +11,6 @@ from pathlib import Path
 from scripts.research.market_data.contracts import SnapshotSelection
 from scripts.research.market_data.query import MARKET_DATA_FIELDS
 from scripts.research.market_data.storage import create_snapshot, import_batch
-from scripts.research.quant_analysis.contracts import (
-    STANDARD_TABLES,
-    validate_analysis_bundle,
-)
-from scripts.research.quant_analysis.evidence import validate_evidence_matrix
 
 
 def _sha256(path: Path) -> str:
@@ -96,6 +91,14 @@ def test_non_strategy_project_completes_through_shared_market_and_runner(
                 "fields": list(MARKET_DATA_FIELDS),
                 "price_semantics": {"fq": None, "skip_paused": False},
                 "export_code_sha256": export_digest,
+                "corporate_actions": {
+                    "source": {
+                        "name": "joinquant",
+                        "dataset": "finance.FUND_DIVIDEND",
+                    },
+                    "knowledge_cutoff_date": "2026-01-06",
+                    "status": "verified_empty",
+                },
             },
             root=market_root,
         )
@@ -134,7 +137,6 @@ def test_non_strategy_project_completes_through_shared_market_and_runner(
             repo_root / "scripts/__init__.py",
             repo_root / "scripts/research/__init__.py",
             *sorted((repo_root / "scripts/research/market_data").glob("*.py")),
-            *sorted((repo_root / "scripts/research/quant_analysis").glob("*.py")),
         ]
         identity_sources = sorted(
             {adapter, *shared_sources},
@@ -159,16 +161,6 @@ def test_non_strategy_project_completes_through_shared_market_and_runner(
         )
         required_outputs = [
             {"path": "result.json", "format": "json"},
-            *[
-                {"path": f"{table}.parquet", "format": "parquet"}
-                for table in STANDARD_TABLES
-            ],
-            {
-                "path": "local-evidence-matrix.parquet",
-                "format": "parquet",
-            },
-            {"path": "local-research-report.md", "format": "markdown"},
-            {"path": "recommendation.json", "format": "json"},
         ]
         run_config = {
             "schema_version": 1,
@@ -215,22 +207,13 @@ def test_non_strategy_project_completes_through_shared_market_and_runner(
         document = json.loads((run_output / "result.json").read_text(encoding="utf-8"))
         assert document["snapshot_id"] == snapshot.snapshot_id
         assert document["run_id"] == result["run_id"]
-        validate_analysis_bundle(run_output)
-        evidence = validate_evidence_matrix(
-            run_output / "local-evidence-matrix.parquet"
-        )
-        assert [row.scenario_id for row in evidence] == ["plain-project-evidence"]
         status = json.loads(
             (run_output / "project-status.json").read_text(encoding="utf-8")
         )
-        recommendation = json.loads(
-            (run_output / "recommendation.json").read_text(encoding="utf-8")
-        )
-        assert status["next_action"] == "human_confirmation_required"
-        assert recommendation["next_action"] == "human_confirmation_required"
-        report = (run_output / "local-research-report.md").read_text(encoding="utf-8")
-        assert "Vibe-Trading" in report
-        assert "不可用" in report
+        assert status["next_action"] == "return_to_caller"
+        assert not (run_output / "recommendation.json").exists()
+        assert not (run_output / "local-research-report.md").exists()
+        assert not tuple(run_output.glob("*.parquet"))
         assert not tuple(market_root.rglob("*.duckdb"))
     finally:
         shutil.rmtree(output_project, ignore_errors=True)

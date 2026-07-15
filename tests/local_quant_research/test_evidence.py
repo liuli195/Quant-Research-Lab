@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -46,3 +47,33 @@ def test_csv_evidence_rejects_malformed_data_rows(
             tmp_path,
             (OutputSpec(path="result.csv", format="csv"),),
         )
+
+
+def test_directory_evidence_binds_dynamic_result_files(tmp_path: Path) -> None:
+    package = tmp_path / "backtests" / "local-baseline"
+    (package / "data").mkdir(parents=True)
+    manifest = package / "manifest.json"
+    attribution = package / "data" / f"attribution_log-{'a' * 64}.parquet"
+    manifest.write_text('{"status":"complete"}\n', encoding="utf-8")
+    attribution.write_bytes(b"dynamic")
+
+    evidence = collect_output_evidence(
+        tmp_path,
+        (OutputSpec(path="backtests/local-baseline", format="directory"),),
+    )
+
+    assert evidence[0]["path"] == "backtests/local-baseline"
+    assert evidence[0]["format"] == "directory"
+    assert evidence[0]["files"] == [
+        {
+            "path": "data/attribution_log-" + "a" * 64 + ".parquet",
+            "bytes": attribution.stat().st_size,
+            "sha256": hashlib.sha256(attribution.read_bytes()).hexdigest(),
+        },
+        {
+            "path": "manifest.json",
+            "bytes": manifest.stat().st_size,
+            "sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        },
+    ]
+    assert len(evidence[0]["sha256"]) == 64
