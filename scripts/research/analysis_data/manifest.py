@@ -24,6 +24,7 @@ CORE_DATASETS = (
 )
 LOCAL_PHYSICAL_DATASETS = CORE_DATASETS[:4]
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_EXTENSION_NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 _LOCAL_TOP_LEVEL = {
     "schema_version",
     "object",
@@ -91,6 +92,9 @@ class AnalysisSource:
     kind: str
     schema_version: int | str
     manifest: Mapping[str, object]
+    authority: str | None = None
+    backend: str | None = None
+    formula_version: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "root", Path(self.root).resolve())
@@ -529,6 +533,223 @@ def _validate_joinquant_files(root: Path, document: Mapping[str, object]) -> Non
             raise AnalysisManifestError(f"joinquant datasets.{name} row count mismatch")
 
 
+def _validate_research_file_reference(
+    value: object,
+    field: str,
+    *,
+    parquet: bool,
+) -> Mapping[str, object]:
+    reference = _object(value, field)
+    required = {"path", "sha256", "bytes"}
+    if parquet:
+        required |= {"rows", "format", "compression"}
+    _exact_keys(reference, required=required, field=field)
+    path = _non_empty_string(reference["path"], f"{field}.path")
+    candidate = Path(path)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        raise AnalysisManifestError(f"{field}.path is unsafe")
+    _sha(reference["sha256"], f"{field}.sha256")
+    _non_negative_int(reference["bytes"], f"{field}.bytes")
+    if parquet:
+        _non_negative_int(reference["rows"], f"{field}.rows")
+        if reference["format"] != "parquet" or reference["compression"] != "snappy":
+            raise AnalysisManifestError(f"{field} must declare snappy Parquet")
+    return reference
+
+
+def _validate_research_table_entry(
+    name: str,
+    value: object,
+    *,
+    extension: bool,
+) -> Mapping[str, object]:
+    field = f"extensions.{name}" if extension else f"datasets.{name}"
+    entry = _object(value, field)
+    required = {
+        "required",
+        "status",
+        "rows",
+        "verified_empty",
+        "time_range",
+        "schema",
+        "files",
+        "evidence",
+    }
+    if extension:
+        required |= {"schema_version", "strategy_evidence"}
+    _exact_keys(entry, required=required, field=field)
+    rows = _non_negative_int(entry["rows"], f"{field}.rows")
+    if (
+        entry["required"] is not True
+        or entry["status"] != "complete"
+        or entry["verified_empty"] is not (rows == 0)
+    ):
+        raise AnalysisManifestError(f"{field} completion evidence is invalid")
+    schema = entry["schema"]
+    if not isinstance(schema, list) or not schema:
+        raise AnalysisManifestError(f"{field}.schema is invalid")
+    schema_names: list[str] = []
+    for index, item in enumerate(schema):
+        definition = _object(item, f"{field}.schema[{index}]")
+        _exact_keys(
+            definition,
+            required={"name", "type", "nullable"},
+            field=f"{field}.schema[{index}]",
+        )
+        schema_names.append(
+            _non_empty_string(definition["name"], f"{field}.schema[{index}].name")
+        )
+        _non_empty_string(definition["type"], f"{field}.schema[{index}].type")
+        if not isinstance(definition["nullable"], bool):
+            raise AnalysisManifestError(f"{field}.schema[{index}].nullable is invalid")
+    if len(schema_names) != len(set(schema_names)):
+        raise AnalysisManifestError(f"{field}.schema fields are duplicated")
+    evidence = _object(entry["evidence"], f"{field}.evidence")
+    _exact_keys(
+        evidence,
+        required={"fields", "unique_key"},
+        field=f"{field}.evidence",
+    )
+    if evidence["fields"] != schema_names:
+        raise AnalysisManifestError(f"{field}.evidence.fields is invalid")
+    unique_key = evidence["unique_key"]
+    if (
+        not isinstance(unique_key, list)
+        or not unique_key
+        or any(item not in schema_names for item in unique_key)
+        or len(unique_key) != len(set(unique_key))
+    ):
+        raise AnalysisManifestError(f"{field}.evidence.unique_key is invalid")
+    time_range = _object(entry["time_range"], f"{field}.time_range")
+    _exact_keys(time_range, required={"start", "end"}, field=f"{field}.time_range")
+    start = _date_or_none(time_range["start"], f"{field}.time_range.start")
+    end = _date_or_none(time_range["end"], f"{field}.time_range.end")
+    if (start is None) != (end is None) or (start is not None and start > end):
+        raise AnalysisManifestError(f"{field}.time_range is invalid")
+    files = entry["files"]
+    if not isinstance(files, list) or len(files) != 1:
+        raise AnalysisManifestError(f"{field} must declare one Parquet file")
+    reference = _validate_research_file_reference(
+        files[0], f"{field}.files[0]", parquet=True
+    )
+    expected_path = (
+        f"extensions/{name}/data.parquet"
+        if extension
+        else f"data/{name}.parquet"
+    )
+    if reference["path"] != expected_path or reference["rows"] != rows:
+        raise AnalysisManifestError(f"{field} file identity is invalid")
+    if extension:
+        _non_empty_string(entry["schema_version"], f"{field}.schema_version")
+        _object(entry["strategy_evidence"], f"{field}.strategy_evidence")
+    return entry
+
+
+def validate_local_research_manifest_document(document: Mapping[str, object]) -> None:
+    required = {
+        "schema_version",
+        "object",
+        "authority",
+        "backend",
+        "formula_version",
+        "package_sha256",
+        "code",
+        "config",
+        "evidence",
+        "datasets",
+        "extensions",
+        "reports",
+        "gate",
+    }
+    _exact_keys(document, required=required, field="local research manifest")
+    if document["schema_version"] != "local-research-package/2":
+        raise AnalysisManifestError("unsupported local research package schema")
+    identity = _object(document["object"], "object")
+    _exact_keys(
+        identity,
+        required={"kind", "status", "strategy_id", "scenario_id", "run_id"},
+        field="object",
+    )
+    if identity["kind"] != "local_research" or identity["status"] != "complete":
+        raise AnalysisManifestError("local research object identity is invalid")
+    for name in ("strategy_id", "scenario_id", "run_id"):
+        _non_empty_string(identity[name], f"object.{name}")
+    if document["authority"] != "local_research" or document["backend"] != "vectorbt":
+        raise AnalysisManifestError("local research execution identity is invalid")
+    _non_empty_string(document["formula_version"], "formula_version")
+    _sha(document["package_sha256"], "package_sha256")
+
+    datasets = _object(document["datasets"], "datasets")
+    if set(datasets) != set(LOCAL_PHYSICAL_DATASETS):
+        raise AnalysisManifestError("local research package must declare four datasets")
+    for name in LOCAL_PHYSICAL_DATASETS:
+        _validate_research_table_entry(name, datasets[name], extension=False)
+    extensions = _object(document["extensions"], "extensions")
+    for name, entry in extensions.items():
+        if not isinstance(name, str) or _EXTENSION_NAME.fullmatch(name) is None:
+            raise AnalysisManifestError("local research extension name is invalid")
+        _validate_research_table_entry(name, entry, extension=True)
+    for section in ("code", "config", "evidence", "reports"):
+        values = _object(document[section], section)
+        for name, reference in values.items():
+            _non_empty_string(name, f"{section} name")
+            _validate_research_file_reference(
+                reference, f"{section}.{name}", parquet=False
+            )
+    reports = _object(document["reports"], "reports")
+    if set(reports) != {"execution-summary", "metrics"}:
+        raise AnalysisManifestError("local research reports are incomplete")
+    gate = _object(document["gate"], "gate")
+    _exact_keys(gate, required={"status", "exceptions", "checks"}, field="gate")
+    if (
+        gate["status"] != "pass"
+        or gate["exceptions"] != []
+        or not isinstance(gate["checks"], list)
+        or not gate["checks"]
+    ):
+        raise AnalysisManifestError("local research package gate did not pass")
+
+
+def _validate_local_research_files(
+    root: Path, document: Mapping[str, object]
+) -> None:
+    for section in ("code", "config", "evidence", "reports"):
+        values = _object(document[section], section)
+        for name, reference in values.items():
+            _verify_declared_file(
+                root,
+                _object(reference, f"{section}.{name}"),
+                f"{section}.{name}",
+            )
+    datasets = _object(document["datasets"], "datasets")
+    entries = [
+        (f"datasets.{name}", _object(datasets[name], f"datasets.{name}"))
+        for name in LOCAL_PHYSICAL_DATASETS
+    ]
+    extensions = _object(document["extensions"], "extensions")
+    entries.extend(
+        (f"extensions.{name}", _object(entry, f"extensions.{name}"))
+        for name, entry in extensions.items()
+    )
+    for field, entry in entries:
+        reference = _object(entry["files"][0], f"{field}.files[0]")
+        path = _verify_declared_file(root, reference, f"{field}.files[0]")
+        try:
+            parquet = pq.ParquetFile(path)
+            rows = parquet.metadata.num_rows
+            compression = {
+                parquet.metadata.row_group(group).column(column).compression
+                for group in range(parquet.metadata.num_row_groups)
+                for column in range(parquet.metadata.num_columns)
+            }
+        except Exception as exc:
+            raise AnalysisManifestError(f"{field} is invalid Parquet") from exc
+        if rows != entry["rows"] or rows != reference["rows"]:
+            raise AnalysisManifestError(f"{field} row count mismatch")
+        if compression and compression != {"SNAPPY"}:
+            raise AnalysisManifestError(f"{field} physical compression is invalid")
+
+
 def open_analysis_source(result_dir: Path) -> AnalysisSource:
     root = Path(result_dir).resolve()
     manifest_path = root / "manifest.json"
@@ -549,6 +770,10 @@ def open_analysis_source(result_dir: Path) -> AnalysisSource:
             raise AnalysisManifestError("local archive gate did not pass")
         _validate_local_files(root, document)
         kind = "local_backtest"
+    elif version == "local-research-package/2":
+        validate_local_research_manifest_document(document)
+        _validate_local_research_files(root, document)
+        kind = "local_research"
     else:
         raise AnalysisManifestError("unsupported analysis manifest schema")
     return AnalysisSource(
@@ -556,6 +781,21 @@ def open_analysis_source(result_dir: Path) -> AnalysisSource:
         kind=kind,
         schema_version=version,
         manifest=document,
+        authority=(
+            str(document["authority"])
+            if isinstance(document.get("authority"), str)
+            else None
+        ),
+        backend=(
+            str(document["backend"])
+            if isinstance(document.get("backend"), str)
+            else None
+        ),
+        formula_version=(
+            str(document["formula_version"])
+            if isinstance(document.get("formula_version"), str)
+            else None
+        ),
     )
 
 
@@ -566,10 +806,14 @@ def validate_analysis_source(source: AnalysisSource) -> ValidationResult:
     elif source.kind == "local_backtest":
         validate_local_manifest_document(source.manifest)
         _validate_local_files(source.root, source.manifest)
+    elif source.kind == "local_research":
+        validate_local_research_manifest_document(source.manifest)
+        _validate_local_research_files(source.root, source.manifest)
     else:
         raise AnalysisManifestError("unsupported analysis source kind")
     datasets = _object(source.manifest["datasets"], "datasets")
+    names = LOCAL_PHYSICAL_DATASETS if source.kind == "local_research" else CORE_DATASETS
     return ValidationResult(
         status="pass",
-        datasets={name: str(_object(datasets[name], name)["status"]) for name in CORE_DATASETS},
+        datasets={name: str(_object(datasets[name], name)["status"]) for name in names},
     )

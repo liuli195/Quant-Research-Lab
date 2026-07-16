@@ -4,12 +4,25 @@ import hashlib
 import json
 from pathlib import Path
 
+import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from scripts.research.analysis_data.manifest import AnalysisManifestError
+from scripts.research.analysis_data.manifest import (
+    AnalysisManifestError,
+    open_analysis_source,
+)
 from scripts.research.analysis_data.views import open_analysis_database
+from scripts.research.local_quant_research.contracts import (
+    ExecutionBundle,
+    ExecutionRun,
+    ResultExtension,
+)
+from scripts.research.local_quant_research.result_package import (
+    ResultPackageRequest,
+    write_result_package,
+)
 
 
 SHA_FIELDS = ("path", "sha256", "bytes")
@@ -205,6 +218,144 @@ def _tree_sha(root: Path) -> str:
         digest.update(path.relative_to(root).as_posix().encode())
         digest.update(hashlib.sha256(path.read_bytes()).digest())
     return digest.hexdigest()
+
+
+class _AnalysisLedger:
+    @property
+    def orders(self) -> np.ndarray:
+        return np.array(
+            [],
+            dtype=[
+                ("match_time", "O"),
+                ("pindex", "i8"),
+                ("cancel_time", "O"),
+                ("action", "U8"),
+                ("limit_price", "f8"),
+                ("comment", "U8"),
+                ("entrust_time", "U19"),
+                ("finish_time", "O"),
+                ("side", "U8"),
+                ("price", "f8"),
+                ("commission", "f8"),
+                ("gains", "f8"),
+                ("type", "U8"),
+                ("time", "U19"),
+                ("security_name", "U16"),
+                ("security", "U16"),
+                ("filled", "i8"),
+                ("amount", "i8"),
+                ("status", "U8"),
+            ],
+        )
+
+    @property
+    def assets(self) -> np.ndarray:
+        return np.array(
+            [],
+            dtype=[
+                ("pindex", "i8"),
+                ("avg_cost", "f8"),
+                ("margin", "f8"),
+                ("amount", "f8"),
+                ("today_amount", "i8"),
+                ("hold_cost", "f8"),
+                ("side", "U8"),
+                ("price", "f8"),
+                ("gains", "f8"),
+                ("daily_gains", "f8"),
+                ("closeable_amount", "i8"),
+                ("time", "U19"),
+                ("security_name", "U16"),
+                ("security", "U16"),
+            ],
+        )
+
+    @property
+    def cash(self) -> np.ndarray:
+        return np.array(
+            [("2024-01-02 16:00:00", 100.0), ("2024-01-03 16:00:00", 110.0)],
+            dtype=[("time", "U19"), ("cash", "f8")],
+        )
+
+    @property
+    def value(self) -> np.ndarray:
+        return np.array(
+            [
+                ("2024-01-02 16:00:00", 100.0, 0.0, np.nan),
+                ("2024-01-03 16:00:00", 110.0, 0.1, np.nan),
+            ],
+            dtype=[
+                ("time", "U19"),
+                ("total_value", "f8"),
+                ("returns", "f8"),
+                ("benchmark_returns", "f8"),
+            ],
+        )
+
+
+def _write_result_package(root: Path) -> Path:
+    code = root.parent / "strategy.py"
+    code.write_text("VALUE = 1\n", encoding="utf-8")
+    ledger = _AnalysisLedger()
+    run = ExecutionRun(ledger=ledger, trace={})
+    package = write_result_package(
+        ResultPackageRequest(
+            strategy_id="minimal",
+            scenario_id="baseline",
+            run_id="run-analysis",
+            output_dir=root,
+            execution=ExecutionBundle(primary=run, final=run, stages=("primary",)),
+            extensions=(
+                ResultExtension(
+                    name="signals",
+                    schema_version="signals/1",
+                    table=pa.table({"event_id": ["signal-1"], "score": [0.5]}),
+                    unique_key=("event_id",),
+                    evidence={"status": "complete"},
+                ),
+            ),
+            code_files={"strategy.py": code},
+            config_documents={"scenario": {"scenario_id": "baseline"}},
+            evidence_documents={"market-snapshot": {"snapshot_id": "a" * 64}},
+        )
+    )
+    return package.path
+
+
+def test_local_research_package_exposes_identity_core_and_named_extension(
+    tmp_path: Path,
+) -> None:
+    root = _write_result_package(tmp_path / "result")
+    source = open_analysis_source(root)
+
+    assert source.kind == "local_research"
+    assert source.authority == "local_research"
+    assert source.backend == "vectorbt"
+    assert source.formula_version == "unified-strategy-analysis/1"
+    assert set(source.manifest["datasets"]) == {
+        "results",
+        "balances",
+        "positions",
+        "orders",
+    }
+
+    with open_analysis_database(root) as database:
+        assert database.table_names == ("results", "balances", "positions", "orders")
+        assert database.connection.sql("select count(*) from results").fetchone() == (2,)
+        assert database.extension("signals").fetchall() == [("signal-1", 0.5)]
+        with pytest.raises(KeyError, match="unknown"):
+            database.extension("unknown")
+
+
+def test_local_research_extension_digest_is_validated_before_query(
+    tmp_path: Path,
+) -> None:
+    root = _write_result_package(tmp_path / "result")
+    extension = root / "extensions/signals/data.parquet"
+    extension.write_bytes(extension.read_bytes() + b"tampered")
+
+    with pytest.raises(AnalysisManifestError, match="digest"):
+        open_analysis_database(root)
 
 
 def test_joinquant_source_builds_six_read_only_logical_views(repo_root: Path) -> None:
