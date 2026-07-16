@@ -30,6 +30,15 @@ class SnapshotView:
     corporate_actions_digest: str
 
 
+@dataclass(frozen=True)
+class SnapshotOverlapEvidence:
+    left_snapshot_id: str
+    right_snapshot_id: str
+    securities: tuple[str, ...]
+    market_digest: str
+    corporate_actions_digest: str
+
+
 def _read_query_rows(connection, parquet_paths: Sequence[Path]) -> list[dict[str, object]]:
     relation = connection.read_parquet([str(path) for path in parquet_paths])
     columns = tuple(relation.columns)
@@ -194,4 +203,58 @@ def open_snapshot(snapshot_id: str, *, root: Path) -> SnapshotView:
         corporate_action_fields=CORPORATE_ACTION_FIELDS,
         corporate_actions=immutable_actions,
         corporate_actions_digest=action_digest,
+    )
+
+
+def validate_snapshot_overlap(
+    left_snapshot_id: str,
+    right_snapshot_id: str,
+    *,
+    root: Path,
+) -> SnapshotOverlapEvidence:
+    left_record = validate_snapshot(left_snapshot_id, root=root)
+    right_record = validate_snapshot(right_snapshot_id, root=root)
+    if tuple(left_record.document["batch_ids"]) != tuple(
+        right_record.document["batch_ids"]
+    ):
+        raise MarketDataIntegrityError("snapshot overlap batch identities differ")
+    left_selection = dict(left_record.document["selection"])
+    right_selection = dict(right_record.document["selection"])
+    left_selection.pop("securities", None)
+    right_selection.pop("securities", None)
+    if left_selection != right_selection:
+        raise MarketDataIntegrityError("snapshot overlap semantics differ")
+
+    left = open_snapshot(left_snapshot_id, root=root)
+    right = open_snapshot(right_snapshot_id, root=root)
+    left_securities = {str(row["security"]) for row in left.rows}
+    right_securities = {str(row["security"]) for row in right.rows}
+    overlap = tuple(sorted(left_securities & right_securities))
+    if not overlap:
+        raise MarketDataIntegrityError("snapshot overlap has no common securities")
+
+    left_market = normalized_digest(
+        row for row in left.rows if row["security"] in overlap
+    )
+    right_market = normalized_digest(
+        row for row in right.rows if row["security"] in overlap
+    )
+    if left_market != right_market:
+        raise MarketDataIntegrityError("snapshot overlap market digest differs")
+    left_actions = corporate_actions_digest(
+        row for row in left.corporate_actions if row["security"] in overlap
+    )
+    right_actions = corporate_actions_digest(
+        row for row in right.corporate_actions if row["security"] in overlap
+    )
+    if left_actions != right_actions:
+        raise MarketDataIntegrityError(
+            "snapshot overlap corporate-actions digest differs"
+        )
+    return SnapshotOverlapEvidence(
+        left_snapshot_id=left_snapshot_id,
+        right_snapshot_id=right_snapshot_id,
+        securities=overlap,
+        market_digest=left_market,
+        corporate_actions_digest=left_actions,
     )

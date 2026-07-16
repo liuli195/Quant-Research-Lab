@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
@@ -290,3 +292,90 @@ def test_open_snapshot_rejects_query_and_parquet_content_drift(
 
     with pytest.raises(MarketDataIntegrityError, match="normalized digest"):
         query.open_snapshot(snapshot.snapshot_id, root=tmp_path)
+
+
+def test_snapshot_overlap_accepts_exact_subset_with_shared_batch(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    from scripts.research.market_data.query import validate_snapshot_overlap
+
+    source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
+    batch = import_batch(csv_path=source, manifest=_manifest(), root=tmp_path)
+    baseline = create_snapshot(
+        batch_ids=[batch.batch_id],
+        selection=_selection("000001.XSHG"),
+        root=tmp_path,
+    )
+    expanded = create_snapshot(
+        batch_ids=[batch.batch_id],
+        selection=_selection("000001.XSHG", "000002.XSHE"),
+        root=tmp_path,
+    )
+
+    evidence = validate_snapshot_overlap(
+        baseline.snapshot_id,
+        expanded.snapshot_id,
+        root=tmp_path,
+    )
+
+    assert evidence.securities == ("000001.XSHG",)
+    assert evidence.market_digest
+    assert evidence.corporate_actions_digest
+
+
+def test_snapshot_overlap_rejects_corporate_action_drift(
+    repo_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.market_data import query
+
+    source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
+    batch = import_batch(csv_path=source, manifest=_manifest(), root=tmp_path)
+    baseline = create_snapshot(
+        batch_ids=[batch.batch_id],
+        selection=_selection("000001.XSHG"),
+        root=tmp_path,
+    )
+    expanded = create_snapshot(
+        batch_ids=[batch.batch_id],
+        selection=_selection("000001.XSHG", "000002.XSHE"),
+        root=tmp_path,
+    )
+    left_view = query.open_snapshot(baseline.snapshot_id, root=tmp_path)
+    right_view = query.open_snapshot(expanded.snapshot_id, root=tmp_path)
+    changed_action = MappingProxyType(
+        {
+            field: value
+            for field, value in zip(
+                CORPORATE_ACTION_FIELDS,
+                (
+                    "drift",
+                    "000001.XSHG",
+                    "cash_dividend",
+                    "2026-01-05",
+                    "2026-01-05",
+                    "2026-01-06",
+                    "2026-01-06",
+                    "2026-01-08",
+                    "active",
+                    "2026-07-15",
+                    None,
+                    0.1,
+                    "fixture",
+                    "b" * 64,
+                ),
+            )
+        }
+    )
+    changed_right = replace(right_view, corporate_actions=(changed_action,))
+    views = iter((left_view, changed_right))
+    monkeypatch.setattr(query, "open_snapshot", lambda *_args, **_kwargs: next(views))
+
+    with pytest.raises(MarketDataIntegrityError, match="corporate-actions"):
+        query.validate_snapshot_overlap(
+            baseline.snapshot_id,
+            expanded.snapshot_id,
+            root=tmp_path,
+        )
