@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 
@@ -243,14 +245,17 @@ def package_request(
         extensions=(extension,),
         code_files={"strategy.py": code},
         config_documents={
-            "scenario": {"scenario_id": "baseline"},
+            "scenario": {
+                "scenario_id": "baseline",
+                "parameters": {"lookback": 20},
+            },
             "project-run": {"schema_version": 2},
             "code-identity": {"digest": "a" * 64},
         },
         evidence_documents={
             "market-snapshot": {"snapshot_id": "b" * 64},
             "runtime-lock": {"python": "3.12"},
-            "performance": {"status": "pass"},
+            "performance": {"status": "pass", "elapsed_seconds": 0.25},
             "environment": {"platform": "windows"},
         },
     )
@@ -316,6 +321,90 @@ def test_writer_materializes_one_package_without_recomputing_ledger(
     assert not any(phrase in report for phrase in FORBIDDEN_REPORT_PHRASES)
 
 
+def test_writer_reads_each_materialized_parquet_table_only_once(
+    package_request: ResultPackageRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import result_package
+
+    reads: Counter[Path] = Counter()
+    real_read = result_package.pq.read_table
+
+    def recording_read(path: Path, *args: object, **kwargs: object) -> pa.Table:
+        reads[Path(path).resolve()] += 1
+        return real_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(result_package.pq, "read_table", recording_read)
+    write_result_package(package_request)
+
+    read_ids = Counter(
+        (
+            "extensions/decision_log/data.parquet"
+            if path.name == "data.parquet"
+            else f"data/{path.name}"
+        )
+        for path, count in reads.items()
+        for _ in range(count)
+    )
+    assert read_ids == Counter(
+        {
+            "data/results.parquet": 1,
+            "data/balances.parquet": 1,
+            "data/positions.parquet": 1,
+            "data/orders.parquet": 1,
+            "extensions/decision_log/data.parquet": 1,
+        }
+    )
+
+
+def test_execution_report_contains_only_reproducible_package_facts(
+    package_request: ResultPackageRequest,
+) -> None:
+    package = write_result_package(package_request)
+    report = (package.path / "report/execution-summary.md").read_text(
+        encoding="utf-8"
+    )
+    for heading in (
+        "## 参数与配置",
+        "## 时间范围",
+        "## 成交摘要",
+        "## 持仓摘要",
+        "## 净值摘要",
+        "## 性能",
+        "## 完整性门禁",
+    ):
+        assert heading in report
+    assert '"lookback": 20' in report
+    assert "2026-01-05" in report and "2026-01-06" in report
+    assert "订单记录：1" in report
+    assert "成交数量：1" in report
+    assert "最新持仓数量：1" in report
+    assert "最新持仓市值：660.000000" in report
+    assert "起始总资产：1000.000000" in report
+    assert "结束总资产：1050.000000" in report
+    assert '"elapsed_seconds": 0.25' in report
+    assert "状态：`pass`" in report
+    assert not any(phrase in report for phrase in FORBIDDEN_REPORT_PHRASES)
+
+    metrics = json.loads(
+        (package.path / "report/metrics.json").read_text(encoding="utf-8")
+    )
+    assert metrics["parameters"] == {"lookback": 20}
+    assert metrics["time_range"] == {"start": "2026-01-05", "end": "2026-01-06"}
+    assert metrics["orders"] == {
+        "records": 1,
+        "requested_amount": 1,
+        "filled_amount": 1,
+        "commission": 1.0,
+    }
+    assert metrics["positions"]["latest_records"] == 1
+    assert metrics["positions"]["latest_market_value"] == 660.0
+    assert metrics["net_value"]["start_total_value"] == 1000.0
+    assert metrics["net_value"]["end_total_value"] == 1050.0
+    assert metrics["performance"] == {"status": "pass", "elapsed_seconds": 0.25}
+    assert metrics["integrity_gate"]["status"] == "pass"
+
+
 def test_writer_cleans_only_its_staging_directory_when_readback_fails(
     package_request: ResultPackageRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -362,6 +451,38 @@ def test_writer_reuses_equal_package_and_rejects_digest_conflict(
     assert _tree_digest(first.path) == before
 
 
+def test_writer_refuses_reuse_when_report_and_manifest_reference_are_tampered(
+    package_request: ResultPackageRequest,
+) -> None:
+    package = write_result_package(package_request)
+    manifest_path = package.path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    summary = package.path / "report/execution-summary.md"
+    metrics = package.path / "report/metrics.json"
+    summary.write_text(
+        summary.read_text(encoding="utf-8") + "\n外部替换内容\n",
+        encoding="utf-8",
+    )
+    metrics_document = json.loads(metrics.read_text(encoding="utf-8"))
+    metrics_document["external"] = True
+    metrics.write_text(
+        json.dumps(metrics_document, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    for name, path in (("execution-summary", summary), ("metrics", metrics)):
+        reference = manifest["reports"][name]
+        reference["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        reference["bytes"] = path.stat().st_size
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+    )
+
+    with pytest.raises(ResultContractError, match="report"):
+        write_result_package(
+            replace(package_request, execution=_execution(CountingLedger()))
+        )
+
+
 def test_writer_atomically_publishes_only_after_staging_is_complete(
     package_request: ResultPackageRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -404,6 +525,128 @@ def test_writer_rejects_invalid_extension_name_before_reading_ledger(
     with pytest.raises(ResultContractError, match="extension name"):
         write_result_package(replace(package_request, extensions=(invalid,)))
     assert counting_ledger.calls == {"orders": 0, "assets": 0, "cash": 0, "value": 0}
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    [
+        "C:foo",
+        "/absolute",
+        "\\anchored",
+        "../escape",
+        "nested/run",
+        "nested\\run",
+        "run:ads",
+        "CON",
+        "trailing.",
+        "trailing ",
+    ],
+)
+def test_writer_rejects_unsafe_run_id_before_reading_or_writing(
+    package_request: ResultPackageRequest,
+    counting_ledger: CountingLedger,
+    tmp_path: Path,
+    run_id: str,
+) -> None:
+    marker = tmp_path / "outside-marker.txt"
+    marker.write_text("unchanged", encoding="utf-8")
+    output_dir = tmp_path / "publish" / "result"
+
+    with pytest.raises(ResultContractError, match="run_id"):
+        write_result_package(
+            replace(package_request, run_id=run_id, output_dir=output_dir)
+        )
+
+    assert counting_ledger.calls == {"orders": 0, "assets": 0, "cash": 0, "value": 0}
+    assert marker.read_text(encoding="utf-8") == "unchanged"
+    assert not output_dir.parent.exists()
+
+
+@pytest.mark.parametrize(
+    ("field", "unsafe_name"),
+    [
+        ("code_files", "C:escape.py"),
+        ("code_files", "/escape.py"),
+        ("code_files", "../escape.py"),
+        ("code_files", "strategy.py:ads"),
+        ("code_files", "CON"),
+        ("config_documents", "C:scenario"),
+        ("config_documents", "scenario:ads"),
+        ("config_documents", "AUX"),
+        ("evidence_documents", "C:environment"),
+        ("evidence_documents", "environment:ads"),
+        ("evidence_documents", "NUL"),
+    ],
+)
+def test_writer_rejects_unsafe_package_paths_before_reading_or_writing(
+    package_request: ResultPackageRequest,
+    counting_ledger: CountingLedger,
+    tmp_path: Path,
+    field: str,
+    unsafe_name: str,
+) -> None:
+    marker = tmp_path / "outside-marker.txt"
+    marker.write_text("unchanged", encoding="utf-8")
+    output_dir = tmp_path / "publish" / "result"
+    replacement: dict[str, object]
+    if field == "code_files":
+        replacement = {
+            **package_request.code_files,
+            unsafe_name: next(iter(package_request.code_files.values())),
+        }
+    elif field == "config_documents":
+        replacement = {**package_request.config_documents, unsafe_name: {}}
+    else:
+        replacement = {**package_request.evidence_documents, unsafe_name: {}}
+
+    with pytest.raises(ResultContractError, match="unsafe"):
+        write_result_package(
+            replace(package_request, output_dir=output_dir, **{field: replacement})
+        )
+
+    assert counting_ledger.calls == {"orders": 0, "assets": 0, "cash": 0, "value": 0}
+    assert marker.read_text(encoding="utf-8") == "unchanged"
+    assert not output_dir.parent.exists()
+
+
+@pytest.mark.parametrize(
+    ("field", "missing_name"),
+    [
+        ("code_files", None),
+        ("config_documents", "scenario"),
+        ("config_documents", "project-run"),
+        ("config_documents", "code-identity"),
+        ("evidence_documents", "market-snapshot"),
+        ("evidence_documents", "runtime-lock"),
+        ("evidence_documents", "performance"),
+        ("evidence_documents", "environment"),
+    ],
+)
+def test_writer_requires_archive_ready_inputs_before_reading_or_writing(
+    package_request: ResultPackageRequest,
+    counting_ledger: CountingLedger,
+    tmp_path: Path,
+    field: str,
+    missing_name: str | None,
+) -> None:
+    output_dir = tmp_path / "publish" / "result"
+    replacement = (
+        {}
+        if field == "code_files"
+        else {
+            name: value
+            for name, value in getattr(package_request, field).items()
+            if name != missing_name
+        }
+    )
+
+    with pytest.raises(ResultContractError, match="archive-ready"):
+        write_result_package(
+            replace(package_request, output_dir=output_dir, **{field: replacement})
+        )
+
+    assert counting_ledger.calls == {"orders": 0, "assets": 0, "cash": 0, "value": 0}
+    assert not output_dir.parent.exists()
 
 
 def test_writer_rejects_duplicate_extension_names_and_keys(
@@ -461,4 +704,24 @@ def test_validator_rejects_tampered_materialized_table(
     results.write_bytes(results.read_bytes() + b"tampered")
 
     with pytest.raises(ResultContractError, match="digest"):
+        validate_result_package(package.path)
+
+
+def test_validator_rejects_non_snappy_physical_compression_with_synced_digest(
+    package_request: ResultPackageRequest,
+) -> None:
+    package = write_result_package(package_request)
+    results = package.path / "data/results.parquet"
+    table = pq.read_table(results)
+    pq.write_table(table, results, compression="zstd")
+    manifest_path = package.path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    reference = manifest["datasets"]["results"]["files"][0]
+    reference["sha256"] = hashlib.sha256(results.read_bytes()).hexdigest()
+    reference["bytes"] = results.stat().st_size
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+    )
+
+    with pytest.raises(ResultContractError, match="physical compression"):
         validate_result_package(package.path)

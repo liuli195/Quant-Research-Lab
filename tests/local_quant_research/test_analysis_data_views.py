@@ -315,11 +315,29 @@ def _write_result_package(root: Path) -> Path:
                 ),
             ),
             code_files={"strategy.py": code},
-            config_documents={"scenario": {"scenario_id": "baseline"}},
-            evidence_documents={"market-snapshot": {"snapshot_id": "a" * 64}},
+            config_documents={
+                "scenario": {"scenario_id": "baseline"},
+                "project-run": {"schema_version": 2},
+                "code-identity": {"digest": "b" * 64},
+            },
+            evidence_documents={
+                "market-snapshot": {"snapshot_id": "a" * 64},
+                "runtime-lock": {"python": "3.12"},
+                "performance": {"status": "pass"},
+                "environment": {"platform": "windows"},
+            },
         )
     )
     return package.path
+
+
+def _sync_package_reference(
+    root: Path, manifest: dict[str, object], dataset: str
+) -> None:
+    path = root / f"data/{dataset}.parquet"
+    reference = manifest["datasets"][dataset]["files"][0]
+    reference["sha256"] = _sha(path)
+    reference["bytes"] = path.stat().st_size
 
 
 def test_local_research_package_exposes_identity_core_and_named_extension(
@@ -356,6 +374,74 @@ def test_local_research_extension_digest_is_validated_before_query(
 
     with pytest.raises(AnalysisManifestError, match="digest"):
         open_analysis_database(root)
+
+
+@pytest.mark.parametrize(
+    "tampering",
+    ["schema", "unique_key", "time_range", "reconciliation", "package_sha"],
+)
+def test_local_research_source_rejects_untruthful_complete_contract(
+    tmp_path: Path,
+    tampering: str,
+) -> None:
+    root = _write_result_package(tmp_path / "result")
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    if tampering == "schema":
+        path = root / "data/results.parquet"
+        table = pq.read_table(path)
+        replacement = table.set_column(
+            table.schema.get_field_index("returns"),
+            pa.field("returns", pa.float32(), nullable=False),
+            pa.array(table["returns"].to_pylist(), type=pa.float32()),
+        )
+        pq.write_table(replacement, path, compression="snappy")
+        manifest["datasets"]["results"]["schema"] = [
+            {"name": field.name, "type": str(field.type), "nullable": field.nullable}
+            for field in replacement.schema
+        ]
+        _sync_package_reference(root, manifest, "results")
+    elif tampering == "unique_key":
+        path = root / "data/results.parquet"
+        table = pq.read_table(path)
+        repeated_time = table["time"][0].as_py()
+        replacement = table.set_column(
+            table.schema.get_field_index("time"),
+            table.schema.field("time"),
+            pa.array([repeated_time] * table.num_rows, type=pa.string()),
+        )
+        pq.write_table(replacement, path, compression="snappy")
+        repeated_date = str(repeated_time)[:10]
+        manifest["datasets"]["results"]["time_range"] = {
+            "start": repeated_date,
+            "end": repeated_date,
+        }
+        _sync_package_reference(root, manifest, "results")
+    elif tampering == "time_range":
+        manifest["datasets"]["results"]["time_range"] = {
+            "start": "2020-01-01",
+            "end": "2020-01-02",
+        }
+    elif tampering == "reconciliation":
+        path = root / "data/balances.parquet"
+        table = pq.read_table(path)
+        replacement = table.set_column(
+            table.schema.get_field_index("total_value"),
+            table.schema.field("total_value"),
+            pa.array([100.0, 999.0], type=pa.float64()),
+        )
+        pq.write_table(replacement, path, compression="snappy")
+        _sync_package_reference(root, manifest, "balances")
+    else:
+        manifest["package_sha256"] = "f" * 64
+
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+    )
+
+    with pytest.raises(AnalysisManifestError):
+        open_analysis_source(root)
 
 
 def test_joinquant_source_builds_six_read_only_logical_views(repo_root: Path) -> None:

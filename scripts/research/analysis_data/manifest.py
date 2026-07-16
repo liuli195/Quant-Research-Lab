@@ -13,6 +13,11 @@ import pyarrow.parquet as pq
 from jsonschema import Draft202012Validator, FormatChecker
 from jsonschema.exceptions import SchemaError, ValidationError
 
+from scripts.research.local_quant_research.result_package import (
+    ResultContractError,
+    validate_result_package,
+)
+
 
 CORE_DATASETS = (
     "results",
@@ -771,8 +776,10 @@ def open_analysis_source(result_dir: Path) -> AnalysisSource:
         _validate_local_files(root, document)
         kind = "local_backtest"
     elif version == "local-research-package/2":
-        validate_local_research_manifest_document(document)
-        _validate_local_research_files(root, document)
+        try:
+            document = dict(validate_result_package(root))
+        except ResultContractError as exc:
+            raise AnalysisManifestError(str(exc)) from exc
         kind = "local_research"
     else:
         raise AnalysisManifestError("unsupported analysis manifest schema")
@@ -807,8 +814,10 @@ def validate_analysis_source(source: AnalysisSource) -> ValidationResult:
         validate_local_manifest_document(source.manifest)
         _validate_local_files(source.root, source.manifest)
     elif source.kind == "local_research":
-        validate_local_research_manifest_document(source.manifest)
-        _validate_local_research_files(source.root, source.manifest)
+        try:
+            validate_result_package(source.root)
+        except ResultContractError as exc:
+            raise AnalysisManifestError(str(exc)) from exc
     else:
         raise AnalysisManifestError("unsupported analysis source kind")
     datasets = _object(source.manifest["datasets"], "datasets")

@@ -8,11 +8,12 @@ import shutil
 import uuid
 from dataclasses import dataclass
 from datetime import date
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Mapping
 
 import numpy as np
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from scripts.research.local_quant_research.contracts import (
@@ -25,9 +26,31 @@ PACKAGE_SCHEMA_VERSION = "local-research-package/2"
 FORMULA_VERSION = "unified-strategy-analysis/1"
 CORE_DATASETS = ("results", "balances", "positions", "orders")
 FORBIDDEN_REPORT_PHRASES = ("推荐", "稳健性通过", "适合实盘", "实盘准入")
+_INTEGRITY_CHECKS = (
+    "schema",
+    "digests",
+    "unique_keys",
+    "cross_table_reconciliation",
+    "readback",
+)
 
 _EXTENSION_NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+_CONFIG_FILES = {"scenario.json", "project-run.json", "code-identity.json"}
+_EVIDENCE_FILES = {
+    "market-snapshot.json",
+    "runtime-lock.json",
+    "performance.json",
+    "environment.json",
+}
 _RESULTS_SCHEMA = pa.schema(
     [
         pa.field("benchmark_returns", pa.float64()),
@@ -189,16 +212,78 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _validate_physical_snappy(path: Path, field: str) -> None:
+    try:
+        parquet = pq.ParquetFile(path)
+        compression = {
+            parquet.metadata.row_group(group).column(column).compression
+            for group in range(parquet.metadata.num_row_groups)
+            for column in range(parquet.metadata.num_columns)
+        }
+    except Exception as exc:
+        raise ResultContractError(f"{field} Parquet metadata is invalid") from exc
+    if compression and compression != {"SNAPPY"}:
+        raise ResultContractError(f"{field} physical compression is invalid")
+
+
+def _safe_segment(value: str, *, field: str) -> str:
+    if (
+        not value
+        or value in {".", ".."}
+        or value.endswith((" ", "."))
+        or any(ord(character) < 32 or character in '<>:"/\\|?*' for character in value)
+        or value.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES
+    ):
+        raise ResultContractError(f"{field} is unsafe")
+    return value
+
+
 def _safe_relative(value: str, *, suffix: str | None = None) -> Path:
     if not isinstance(value, str) or not value:
         raise ResultContractError("package file name is required")
     normalized = value.replace("\\", "/")
-    candidate = Path(normalized)
-    if candidate.is_absolute() or ".." in candidate.parts or candidate.name in {"", "."}:
+    windows = PureWindowsPath(value)
+    posix = PurePosixPath(normalized)
+    if windows.anchor or windows.drive or posix.is_absolute():
         raise ResultContractError("package file name is unsafe")
+    raw_parts = normalized.split("/")
+    if any(not part for part in raw_parts):
+        raise ResultContractError("package file name is unsafe")
+    parts = [
+        _safe_segment(part, field="package file name")
+        for part in raw_parts
+    ]
+    candidate = Path(*parts)
     if suffix is not None and candidate.suffix != suffix:
         candidate = candidate.with_name(candidate.name + suffix)
     return candidate
+
+
+def _validate_request_inputs(request: ResultPackageRequest) -> None:
+    _safe_segment(request.run_id, field="run_id")
+    if not request.code_files:
+        raise ResultContractError("archive-ready package requires strategy source code")
+
+    for field, values, suffix in (
+        ("code", request.code_files, None),
+        ("config", request.config_documents, ".json"),
+        ("evidence", request.evidence_documents, ".json"),
+    ):
+        destinations: set[str] = set()
+        for name, value in values.items():
+            relative = _safe_relative(name, suffix=suffix)
+            identity = relative.as_posix().casefold()
+            if identity in destinations:
+                raise ResultContractError(f"{field} package destinations must be unique")
+            destinations.add(identity)
+            if field == "code":
+                if not Path(value).is_file():
+                    raise ResultContractError(f"code file is missing: {name}")
+            else:
+                _jsonable(value)
+        required = _CONFIG_FILES if field == "config" else _EVIDENCE_FILES
+        if field != "code" and not required.issubset(destinations):
+            raise ResultContractError(f"archive-ready package is missing {field} evidence")
 
 
 def _python_scalar(value: object) -> object:
@@ -305,33 +390,60 @@ def _materialize_core(execution: ExecutionBundle) -> _CoreFacts:
         positions=_table(_record_rows(assets, _POSITIONS_SCHEMA), _POSITIONS_SCHEMA),
         orders=_table(_record_rows(orders, _ORDERS_SCHEMA), _ORDERS_SCHEMA),
     )
-    _validate_common_facts(facts)
     return facts
 
 
-def _validate_unique_key(table: pa.Table, key: tuple[str, ...], field: str) -> None:
+def _validate_unique_key(
+    table: pa.Table,
+    key: tuple[str, ...],
+    field: str,
+    *,
+    rows: list[dict[str, object]] | None = None,
+) -> None:
     if not key or any(name not in table.schema.names for name in key):
         raise ResultContractError(f"{field} unique key is invalid")
-    values = list(zip(*(table[name].to_pylist() for name in key), strict=True))
+    values = (
+        [tuple(row[name] for name in key) for row in rows]
+        if rows is not None
+        else list(zip(*(table[name].to_pylist() for name in key), strict=True))
+    )
     if any(any(item is None for item in row) for row in values):
         raise ResultContractError(f"{field} unique key contains null")
     if len(values) != len(set(values)):
         raise ResultContractError(f"{field} unique key is not unique")
 
 
-def _validate_common_facts(facts: _CoreFacts) -> None:
+def _validate_common_facts(
+    facts: _CoreFacts,
+    summaries: Mapping[str, Mapping[str, object]] | None = None,
+) -> dict[str, dict[str, object]]:
     tables = facts.tables()
+    materialized_summaries = (
+        {name: _table_summary(table) for name, table in tables.items()}
+        if summaries is None
+        else {name: dict(summary) for name, summary in summaries.items()}
+    )
     for name, schema in _SCHEMAS.items():
         if tables[name].schema != schema:
             raise ResultContractError(f"{name} fields do not match the contract")
-        _validate_unique_key(tables[name], _UNIQUE_KEYS[name], name)
+        rows = materialized_summaries[name]["rows"]
+        if not isinstance(rows, list):
+            raise ResultContractError(f"{name} logical rows are invalid")
+        _validate_unique_key(tables[name], _UNIQUE_KEYS[name], name, rows=rows)
     if facts.results.num_rows != facts.balances.num_rows:
         raise ResultContractError("results and balances do not reconcile")
     if facts.results["benchmark_returns"].null_count != facts.results.num_rows:
         raise ResultContractError("source benchmark returns must remain null")
 
-    result_rows = facts.results.to_pylist()
-    balance_rows = facts.balances.to_pylist()
+    result_rows = materialized_summaries["results"]["rows"]
+    balance_rows = materialized_summaries["balances"]["rows"]
+    position_rows = materialized_summaries["positions"]["rows"]
+    order_rows = materialized_summaries["orders"]["rows"]
+    if not all(
+        isinstance(rows, list)
+        for rows in (result_rows, balance_rows, position_rows, order_rows)
+    ):
+        raise ResultContractError("core logical rows are invalid")
     result_times = [str(item["time"]) for item in result_rows]
     if result_times != [str(item["time"]) for item in balance_rows]:
         raise ResultContractError("results and balances times do not reconcile")
@@ -349,7 +461,7 @@ def _validate_common_facts(facts: _CoreFacts) -> None:
 
     result_time_set = set(result_times)
     position_value_by_time: dict[str, float] = {}
-    for item in facts.positions.to_pylist():
+    for item in position_rows:
         time_text = str(item["time"])
         if time_text not in result_time_set:
             raise ResultContractError("position time is absent from results")
@@ -363,17 +475,19 @@ def _validate_common_facts(facts: _CoreFacts) -> None:
             raise ResultContractError("balance does not reconcile with cash and positions")
 
     result_dates = {time_text[:10] for time_text in result_times}
-    for item in facts.orders.to_pylist():
+    for item in order_rows:
         if str(item["time"])[:10] not in result_dates:
             raise ResultContractError("order date is absent from results")
         if not 0 <= int(item["filled"]) <= int(item["amount"]):
             raise ResultContractError("order filled amount is invalid")
+    return materialized_summaries
 
 
 def _validate_extensions(
     extensions: tuple[ResultExtension, ...],
-) -> dict[str, ResultExtension]:
+) -> tuple[dict[str, ResultExtension], dict[str, dict[str, object]]]:
     result: dict[str, ResultExtension] = {}
+    summaries: dict[str, dict[str, object]] = {}
     for extension in extensions:
         if _EXTENSION_NAME.fullmatch(extension.name) is None:
             raise ResultContractError("extension name is invalid")
@@ -383,10 +497,20 @@ def _validate_extensions(
             raise ResultContractError("extension schema_version is required")
         if not isinstance(extension.table, pa.Table):
             raise ResultContractError("extension table must be an Arrow table")
-        _validate_unique_key(extension.table, extension.unique_key, extension.name)
+        summary = _table_summary(extension.table)
+        rows = summary["rows"]
+        if not isinstance(rows, list):
+            raise ResultContractError("extension logical rows are invalid")
+        _validate_unique_key(
+            extension.table,
+            extension.unique_key,
+            extension.name,
+            rows=rows,
+        )
         _jsonable(extension.evidence)
         result[extension.name] = extension
-    return result
+        summaries[extension.name] = summary
+    return result, summaries
 
 
 def _schema_document(schema: pa.Schema) -> list[dict[str, object]]:
@@ -402,8 +526,9 @@ def _table_summary(table: pa.Table) -> dict[str, object]:
 
 def _content_document(
     request: ResultPackageRequest,
-    facts: _CoreFacts,
     extensions: Mapping[str, ResultExtension],
+    core_summaries: Mapping[str, Mapping[str, object]],
+    extension_summaries: Mapping[str, Mapping[str, object]],
 ) -> dict[str, object]:
     code = {
         name: hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -425,14 +550,14 @@ def _content_document(
         "config": dict(request.config_documents),
         "evidence": dict(request.evidence_documents),
         "datasets": {
-            name: _table_summary(table) for name, table in facts.tables().items()
+            name: dict(summary) for name, summary in core_summaries.items()
         },
         "extensions": {
             name: {
                 "schema_version": extension.schema_version,
                 "unique_key": list(extension.unique_key),
                 "evidence": dict(extension.evidence),
-                "table": _table_summary(extension.table),
+                "table": dict(extension_summaries[name]),
             }
             for name, extension in sorted(extensions.items())
         },
@@ -522,38 +647,125 @@ def _write_documents(
     return references
 
 
-def _write_report(
-    root: Path,
-    request: ResultPackageRequest,
+def _column_sum(table: pa.Table, name: str) -> int | float:
+    if table.num_rows == 0:
+        return 0
+    value = pc.sum(table[name]).as_py()
+    return 0 if value is None else value
+
+
+def _report_payloads(
+    *,
+    identity: Mapping[str, object],
+    config: Mapping[str, object],
+    evidence: Mapping[str, object],
     facts: _CoreFacts,
-    extensions: Mapping[str, ResultExtension],
+    extension_tables: Mapping[str, pa.Table],
     package_sha256: str,
-) -> dict[str, dict[str, object]]:
-    report_dir = root / "report"
-    report_dir.mkdir(parents=True, exist_ok=True)
-    metrics = report_dir / "metrics.json"
-    metrics.write_bytes(
-        _json_bytes(
-            {
-                "package_sha256": package_sha256,
-                "datasets": {
-                    name: table.num_rows for name, table in facts.tables().items()
-                },
-                "extensions": {
-                    name: extension.table.num_rows
-                    for name, extension in sorted(extensions.items())
-                },
-            }
+) -> tuple[bytes, bytes]:
+    scenario = config.get("scenario")
+    parameters = (
+        scenario.get("parameters", {})
+        if isinstance(scenario, Mapping)
+        else {}
+    )
+    parameters = _jsonable(parameters)
+    performance = _jsonable(evidence.get("performance"))
+    time_range = _time_range(facts.results)
+
+    position_times = [str(value) for value in facts.positions["time"].to_pylist()]
+    latest_position_time = max(position_times) if position_times else None
+    if latest_position_time is None:
+        latest_positions = facts.positions.slice(0, 0)
+    else:
+        latest_positions = facts.positions.filter(
+            pc.equal(facts.positions["time"], latest_position_time)
+        )
+    latest_market_value = float(
+        _column_sum(
+            pa.table(
+                {
+                    "market_value": pc.multiply(
+                        latest_positions["amount"], latest_positions["price"]
+                    )
+                }
+            ),
+            "market_value",
         )
     )
-    summary = report_dir / "execution-summary.md"
+
+    balance_times = [str(value) for value in facts.balances["time"].to_pylist()]
+    if balance_times:
+        start_index = min(range(len(balance_times)), key=balance_times.__getitem__)
+        end_index = max(range(len(balance_times)), key=balance_times.__getitem__)
+        start_total_value = float(facts.balances["total_value"][start_index].as_py())
+        end_total_value = float(facts.balances["total_value"][end_index].as_py())
+        start_net_value = float(facts.balances["net_value"][start_index].as_py())
+        end_net_value = float(facts.balances["net_value"][end_index].as_py())
+        cumulative_return = float(facts.results["returns"][end_index].as_py())
+    else:
+        start_total_value = end_total_value = 0.0
+        start_net_value = end_net_value = 0.0
+        cumulative_return = 0.0
+
+    integrity_gate = {
+        "status": "pass",
+        "exceptions": [],
+        "checks": list(_INTEGRITY_CHECKS),
+    }
+    metrics: dict[str, object] = {
+        "identity": dict(identity),
+        "package_sha256": package_sha256,
+        "parameters": parameters,
+        "time_range": time_range,
+        "datasets": {
+            name: table.num_rows for name, table in facts.tables().items()
+        },
+        "extensions": {
+            name: table.num_rows for name, table in sorted(extension_tables.items())
+        },
+        "orders": {
+            "records": facts.orders.num_rows,
+            "requested_amount": int(_column_sum(facts.orders, "amount")),
+            "filled_amount": int(_column_sum(facts.orders, "filled")),
+            "commission": float(_column_sum(facts.orders, "commission")),
+        },
+        "positions": {
+            "records": facts.positions.num_rows,
+            "latest_time": latest_position_time,
+            "latest_records": latest_positions.num_rows,
+            "latest_market_value": latest_market_value,
+        },
+        "net_value": {
+            "start_total_value": start_total_value,
+            "end_total_value": end_total_value,
+            "start_net_value": start_net_value,
+            "end_net_value": end_net_value,
+            "cumulative_return": cumulative_return,
+        },
+        "performance": performance,
+        "integrity_gate": integrity_gate,
+    }
+    parameters_text = _json_bytes(parameters).decode("utf-8").rstrip()
+    performance_text = _json_bytes(performance).decode("utf-8").rstrip()
     lines = [
         "# 本地研究执行摘要",
         "",
-        f"- 策略：`{request.strategy_id}`",
-        f"- 场景：`{request.scenario_id}`",
-        f"- 运行：`{request.run_id}`",
+        f"- 策略：`{identity['strategy_id']}`",
+        f"- 场景：`{identity['scenario_id']}`",
+        f"- 运行：`{identity['run_id']}`",
         f"- 内容摘要：`{package_sha256}`",
+        "",
+        "## 参数与配置",
+        "",
+        "```json",
+        parameters_text,
+        "```",
+        "",
+        "## 时间范围",
+        "",
+        f"- 开始：`{time_range['start']}`",
+        f"- 结束：`{time_range['end']}`",
         "",
         "## 核心事实行数",
         "",
@@ -561,15 +773,83 @@ def _write_report(
     lines.extend(
         f"- `{name}`：{table.num_rows}" for name, table in facts.tables().items()
     )
+    lines.extend(
+        [
+            "",
+            "## 成交摘要",
+            "",
+            f"- 订单记录：{facts.orders.num_rows}",
+            f"- 委托数量：{int(_column_sum(facts.orders, 'amount'))}",
+            f"- 成交数量：{int(_column_sum(facts.orders, 'filled'))}",
+            f"- 佣金：{float(_column_sum(facts.orders, 'commission')):.6f}",
+            "",
+            "## 持仓摘要",
+            "",
+            f"- 持仓记录：{facts.positions.num_rows}",
+            f"- 最新时点：`{latest_position_time}`",
+            f"- 最新持仓数量：{latest_positions.num_rows}",
+            f"- 最新持仓市值：{latest_market_value:.6f}",
+            "",
+            "## 净值摘要",
+            "",
+            f"- 起始总资产：{start_total_value:.6f}",
+            f"- 结束总资产：{end_total_value:.6f}",
+            f"- 起始净值：{start_net_value:.6f}",
+            f"- 结束净值：{end_net_value:.6f}",
+            f"- 累计收益：{cumulative_return:.12f}",
+            "",
+            "## 性能",
+            "",
+            "```json",
+            performance_text,
+            "```",
+            "",
+            "## 完整性门禁",
+            "",
+            "- 状态：`pass`",
+            "- 例外：无",
+        ]
+    )
+    lines.extend(f"- 检查：`{check}`" for check in _INTEGRITY_CHECKS)
     lines.extend(["", "## 扩展行数", ""])
-    if extensions:
+    if extension_tables:
         lines.extend(
-            f"- `{name}`：{extension.table.num_rows}"
-            for name, extension in sorted(extensions.items())
+            f"- `{name}`：{table.num_rows}"
+            for name, table in sorted(extension_tables.items())
         )
     else:
         lines.append("- 无")
-    summary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    summary_bytes = ("\n".join(lines) + "\n").encode("utf-8")
+    return summary_bytes, _json_bytes(metrics)
+
+
+def _write_report(
+    root: Path,
+    request: ResultPackageRequest,
+    facts: _CoreFacts,
+    extension_tables: Mapping[str, pa.Table],
+    package_sha256: str,
+) -> dict[str, dict[str, object]]:
+    report_dir = root / "report"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    metrics = report_dir / "metrics.json"
+    summary_bytes, metrics_bytes = _report_payloads(
+        identity={
+            "kind": "local_research",
+            "status": "complete",
+            "strategy_id": request.strategy_id,
+            "scenario_id": request.scenario_id,
+            "run_id": request.run_id,
+        },
+        config=request.config_documents,
+        evidence=request.evidence_documents,
+        facts=facts,
+        extension_tables=extension_tables,
+        package_sha256=package_sha256,
+    )
+    metrics.write_bytes(metrics_bytes)
+    summary = report_dir / "execution-summary.md"
+    summary.write_bytes(summary_bytes)
     return {
         "execution-summary": _file_ref(root, summary),
         "metrics": _file_ref(root, metrics),
@@ -582,6 +862,14 @@ def _readback_tables(
     extensions: Mapping[str, ResultExtension],
 ) -> tuple[_CoreFacts, dict[str, pa.Table]]:
     try:
+        for name in CORE_DATASETS:
+            _validate_physical_snappy(
+                root / "data" / f"{name}.parquet", name
+            )
+        for name in extensions:
+            _validate_physical_snappy(
+                root / "extensions" / name / "data.parquet", name
+            )
         core = _CoreFacts(
             **{
                 name: pq.read_table(root / "data" / f"{name}.parquet")
@@ -594,15 +882,13 @@ def _readback_tables(
         }
     except Exception as exc:
         raise ResultContractError("result package readback failed") from exc
-    _validate_common_facts(core)
     for name, expected in facts.tables().items():
         observed = core.tables()[name]
-        if _table_summary(observed) != _table_summary(expected):
+        if not observed.equals(expected, check_metadata=True):
             raise ResultContractError(f"{name} readback changed logical facts")
     for name, extension in extensions.items():
         observed = extension_tables[name]
-        _validate_unique_key(observed, extension.unique_key, name)
-        if _table_summary(observed) != _table_summary(extension.table):
+        if not observed.equals(extension.table, check_metadata=True):
             raise ResultContractError(f"extension {name} readback changed logical facts")
     return core, extension_tables
 
@@ -612,6 +898,7 @@ def _manifest(
     request: ResultPackageRequest,
     facts: _CoreFacts,
     extensions: Mapping[str, ResultExtension],
+    extension_tables: Mapping[str, pa.Table],
     package_sha256: str,
     code: Mapping[str, Mapping[str, object]],
     config: Mapping[str, Mapping[str, object]],
@@ -632,7 +919,7 @@ def _manifest(
             **_table_entry(
                 root,
                 root / "extensions" / name / "data.parquet",
-                extension.table,
+                extension_tables[name],
                 extension.unique_key,
             ),
             "schema_version": extension.schema_version,
@@ -662,13 +949,7 @@ def _manifest(
         "gate": {
             "status": "pass",
             "exceptions": [],
-            "checks": [
-                "schema",
-                "digests",
-                "unique_keys",
-                "cross_table_reconciliation",
-                "readback",
-            ],
+            "checks": list(_INTEGRITY_CHECKS),
         },
     }
 
@@ -747,6 +1028,7 @@ def _validate_table_entry(
         or reference.get("compression") != "snappy"
     ):
         raise ResultContractError(f"{name} Parquet declaration is invalid")
+    _validate_physical_snappy(path, name)
     try:
         table = pq.read_table(path)
     except Exception as exc:
@@ -833,6 +1115,7 @@ def validate_result_package(path: Path) -> Mapping[str, object]:
     if not isinstance(extensions_value, Mapping):
         raise ResultContractError("extensions declaration is invalid")
     extension_content: dict[str, object] = {}
+    extension_tables: dict[str, pa.Table] = {}
     for name, entry_value in extensions_value.items():
         if not isinstance(name, str) or _EXTENSION_NAME.fullmatch(name) is None:
             raise ResultContractError("extension name is invalid")
@@ -848,6 +1131,7 @@ def validate_result_package(path: Path) -> Mapping[str, object]:
             "evidence": entry_value.get("strategy_evidence"),
             "table": _table_summary(table),
         }
+        extension_tables[name] = table
 
     content: dict[str, object] = {
         "schema_version": PACKAGE_SCHEMA_VERSION,
@@ -860,6 +1144,7 @@ def validate_result_package(path: Path) -> Mapping[str, object]:
         },
         "extensions": extension_content,
     }
+    resolved_sections: dict[str, dict[str, Path]] = {}
     for section in ("code", "config", "evidence", "reports"):
         values = document[section]
         if not isinstance(values, Mapping) or any(not isinstance(name, str) for name in values):
@@ -868,6 +1153,7 @@ def validate_result_package(path: Path) -> Mapping[str, object]:
             name: _resolve_declared(root, reference, f"{section}.{name}")
             for name, reference in values.items()
         }
+        resolved_sections[section] = resolved
         if section == "code":
             content[section] = {
                 name: hashlib.sha256(file.read_bytes()).hexdigest()
@@ -887,6 +1173,20 @@ def validate_result_package(path: Path) -> Mapping[str, object]:
                 raise ResultContractError("execution report contains forbidden judgment")
     if _canonical_digest(content) != document["package_sha256"]:
         raise ResultContractError("result package logical digest mismatch")
+    summary_bytes, metrics_bytes = _report_payloads(
+        identity=identity,
+        config=content["config"],
+        evidence=content["evidence"],
+        facts=facts,
+        extension_tables=extension_tables,
+        package_sha256=document["package_sha256"],
+    )
+    report_files = resolved_sections["reports"]
+    if (
+        report_files["execution-summary"].read_bytes() != summary_bytes
+        or report_files["metrics"].read_bytes() != metrics_bytes
+    ):
+        raise ResultContractError("result package report does not match package facts")
     return document
 
 
@@ -896,18 +1196,19 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
         for value in (request.strategy_id, request.scenario_id, request.run_id)
     ):
         raise ResultContractError("result package identity is incomplete")
-    extensions = _validate_extensions(request.extensions)
-    for name, path in request.code_files.items():
-        _safe_relative(name)
-        if not Path(path).is_file():
-            raise ResultContractError(f"code file is missing: {name}")
-    for values in (request.config_documents, request.evidence_documents):
-        for name, document in values.items():
-            _safe_relative(name, suffix=".json")
-            _jsonable(document)
+    _validate_request_inputs(request)
+    extensions, extension_summaries = _validate_extensions(request.extensions)
 
     facts = _materialize_core(request.execution)
-    package_sha256 = _canonical_digest(_content_document(request, facts, extensions))
+    core_summaries = _validate_common_facts(facts)
+    package_sha256 = _canonical_digest(
+        _content_document(
+            request,
+            extensions,
+            core_summaries,
+            extension_summaries,
+        )
+    )
     target = Path(request.output_dir).resolve()
     if target.exists():
         existing = validate_result_package(target)
@@ -930,13 +1231,22 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
             directory = staging / "extensions" / name
             directory.mkdir()
             pq.write_table(extension.table, directory / "data.parquet", compression="snappy")
-        _readback_tables(staging, facts, extensions)
-        reports = _write_report(staging, request, facts, extensions, package_sha256)
+        readback_facts, readback_extensions = _readback_tables(
+            staging, facts, extensions
+        )
+        reports = _write_report(
+            staging,
+            request,
+            readback_facts,
+            readback_extensions,
+            package_sha256,
+        )
         manifest = _manifest(
             staging,
             request,
-            facts,
+            readback_facts,
             extensions,
+            readback_extensions,
             package_sha256,
             code,
             config,
@@ -944,9 +1254,8 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
             reports,
         )
         (staging / "manifest.json").write_bytes(_json_bytes(manifest))
-        validated = validate_result_package(staging)
         os.replace(staging, target)
-        return ResultPackage(target, validated, package_sha256)
+        return ResultPackage(target, manifest, package_sha256)
     except Exception as exc:
         if staging.exists():
             shutil.rmtree(staging)
