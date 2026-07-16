@@ -164,3 +164,11 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
     assert e2e["checkParallel"] is False
     assert all(not item.startswith(".local/") for item in unit["inputs"])
     assert all(not item.startswith(".local/") for item in e2e["inputs"])
+
+
+def test_full_verify_checkout_downloads_git_lfs_objects(repo_root: Path) -> None:
+    workflow = (
+        repo_root / ".github" / "workflows" / "full-verify.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "uses: actions/checkout@v4\n        with:\n          lfs: true" in workflow
