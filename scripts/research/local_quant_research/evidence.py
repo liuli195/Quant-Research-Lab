@@ -11,8 +11,9 @@ from typing import Iterable, Mapping, Sequence
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import numpy as np
 
-from .contracts import OutputSpec
+from .contracts import ExecutionBundle, OutputSpec, ResultExtension
 
 
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -42,6 +43,55 @@ def canonical_bytes(value: object) -> bytes:
 
 def canonical_digest(value: object) -> str:
     return hashlib.sha256(canonical_bytes(value)).hexdigest()
+
+
+def _array_digest(value: np.ndarray) -> dict[str, object]:
+    array = np.ascontiguousarray(np.asarray(value))
+    return {
+        "dtype": array.dtype.descr if array.dtype.names else array.dtype.str,
+        "shape": list(array.shape),
+        "sha256": hashlib.sha256(array.tobytes()).hexdigest(),
+    }
+
+
+def execution_digest(
+    execution: ExecutionBundle,
+    extensions: Sequence[ResultExtension] = (),
+) -> str:
+    runs = {"primary": execution.primary, "final": execution.final}
+    document: dict[str, object] = {"stages": list(execution.stages), "runs": {}}
+    run_documents: dict[str, object] = {}
+    for name, run in runs.items():
+        run_documents[name] = {
+            "ledger": {
+                field: _array_digest(np.asarray(getattr(run.ledger, field)))
+                for field in (
+                    "orders",
+                    "assets",
+                    "cash",
+                    "value",
+                    "trades",
+                    "positions",
+                    "returns",
+                )
+            },
+            "trace": {
+                key: _array_digest(np.asarray(value))
+                for key, value in sorted(run.trace.items())
+            },
+        }
+    document["runs"] = run_documents
+    document["extensions"] = [
+        {
+            "name": extension.name,
+            "schema_version": extension.schema_version,
+            "unique_key": list(extension.unique_key),
+            "evidence": dict(extension.evidence),
+            "rows": extension.table.to_pylist(),
+        }
+        for extension in extensions
+    ]
+    return canonical_digest(document)
 
 
 def file_digest(path: Path) -> str:

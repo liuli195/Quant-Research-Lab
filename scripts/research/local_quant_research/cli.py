@@ -26,8 +26,71 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _private_execute(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--frozen-inputs", type=Path, required=True)
+    parser.add_argument("--staging", type=Path, required=True)
+    args = parser.parse_args(argv)
+    if __package__ in {None, ""}:
+        from scripts.research.local_quant_research.contracts import (
+            StrategyEvidenceError,
+        )
+        from scripts.research.local_quant_research.performance import (
+            PerformanceGateError,
+        )
+        from scripts.research.local_quant_research.result_package import (
+            ResultContractError,
+        )
+        from scripts.research.local_quant_research.runner import (
+            ConfigurationError,
+            execute_frozen_inputs,
+        )
+        from scripts.research.local_quant_research.strategy_loader import (
+            ConfigurationError as StrategyConfigurationError,
+        )
+        from scripts.research.market_data.storage import MarketDataError
+    else:
+        from .contracts import StrategyEvidenceError
+        from .performance import PerformanceGateError
+        from .result_package import ResultContractError
+        from .runner import ConfigurationError, execute_frozen_inputs
+        from .strategy_loader import ConfigurationError as StrategyConfigurationError
+        from scripts.research.market_data.storage import MarketDataError
+
+    try:
+        document = execute_frozen_inputs(args.frozen_inputs, args.staging)
+    except (ConfigurationError, StrategyConfigurationError) as exc:
+        document = {"status": "evidence_insufficient", "reasons": [exc.code]}
+    except StrategyEvidenceError as exc:
+        document = {"status": "evidence_insufficient", "reasons": [exc.code]}
+    except MarketDataError as exc:
+        message = str(exc).lower()
+        if "missing" in message or "not found" in message:
+            document = {
+                "status": "evidence_insufficient",
+                "reasons": ["market_data_missing"],
+            }
+        else:
+            document = {"status": "failed", "reasons": ["market_data_failed"]}
+    except PerformanceGateError as exc:
+        document = {"status": "failed", "reasons": [exc.code]}
+    except ResultContractError:
+        document = {"status": "failed", "reasons": ["result_contract_failed"]}
+    except Exception:
+        document = {"status": "failed", "reasons": ["execution_failed"]}
+    print(json.dumps(document, ensure_ascii=False, sort_keys=True))
+    return {
+        "complete": 0,
+        "failed": 1,
+        "evidence_insufficient": 2,
+    }[str(document["status"])]
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    values = list(sys.argv[1:] if argv is None else argv)
+    if values[:1] == ["_execute"]:
+        return _private_execute(values[1:])
+    args = _parser().parse_args(values)
     if args.action == "promote":
         result = promote_archive(
             REPO_ROOT,

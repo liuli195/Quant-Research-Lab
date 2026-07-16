@@ -42,14 +42,20 @@ def _remove_empty_test_roots(repo_root: Path, market_root: Path) -> None:
             pass
 
 
-def test_non_strategy_project_completes_through_shared_market_and_runner(
+def test_minimal_strategy_completes_reuses_and_rejects_digest_conflict(
     tmp_path: Path,
     repo_root: Path,
 ) -> None:
     token = uuid.uuid4().hex
-    project_id = f"plain-project-{token[:12]}"
+    project_id = "minimal-fixture"
     project_root = repo_root / ".local/e2e-tests" / token
     output_project = repo_root / ".local/quant-research" / project_id
+    attempts_root = output_project / ".attempts"
+    existing_attempts = (
+        {path.name for path in attempts_root.glob("*.json")}
+        if attempts_root.is_dir()
+        else set()
+    )
     market_root = repo_root / ".local/market-data"
     snapshot = None
     batch_ids: list[str] = []
@@ -125,59 +131,25 @@ def test_non_strategy_project_completes_through_shared_market_and_runner(
         batch_ids = list(snapshot_document["batch_ids"])
 
         project_root.mkdir(parents=True)
-        adapter = (
-            repo_root / "tests/local_quant_research/fixtures/plain_project_adapter.py"
-        )
-        project_config = project_root / "project.json"
-        project_config.write_text('{"schema_version":1}\n', encoding="utf-8")
-        declared = project_root / "input.txt"
-        declared.write_text("plain input\n", encoding="utf-8")
-        code_identity = project_root / "code-identity.json"
-        shared_sources = [
-            repo_root / "scripts/__init__.py",
-            repo_root / "scripts/research/__init__.py",
-            *sorted((repo_root / "scripts/research/market_data").glob("*.py")),
-        ]
-        identity_sources = sorted(
-            {adapter, *shared_sources},
-            key=lambda path: path.relative_to(repo_root).as_posix(),
-        )
-        code_identity.write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "files": [
-                        {
-                            "path": source_path.relative_to(repo_root).as_posix(),
-                            "sha256": _sha256(source_path),
-                        }
-                        for source_path in identity_sources
-                    ],
-                },
-                sort_keys=True,
-            )
-            + "\n",
+        scenario_config = project_root / "scenario.json"
+        scenario_config.write_text(
+            '{"scenario_id":"baseline","schema_version":1}\n',
             encoding="utf-8",
         )
-        required_outputs = [
-            {"path": "result.json", "format": "json"},
-        ]
+        declared = project_root / "input.txt"
+        declared.write_text("plain input\n", encoding="utf-8")
         run_config = {
-            "schema_version": 1,
+            "schema_version": 2,
             "project_id": project_id,
+            "strategy": {
+                "root": "tests/local_quant_research/fixtures/minimal_strategy",
+                "module": "strategy",
+                "symbol": "MODULE",
+            },
             "snapshot_id": snapshot.snapshot_id,
             "snapshot_requirements": snapshot_document["selection"],
-            "project_entry": adapter.relative_to(repo_root).as_posix(),
-            "command": [
-                ".venv/Scripts/python.exe",
-                adapter.relative_to(repo_root).as_posix(),
-            ],
-            "project_config": project_config.relative_to(repo_root).as_posix(),
-            "code_identity": code_identity.relative_to(repo_root).as_posix(),
+            "scenario_config": scenario_config.relative_to(repo_root).as_posix(),
             "declared_inputs": [declared.relative_to(repo_root).as_posix()],
-            "required_outputs": required_outputs,
-            "output_root": ".local/quant-research",
-            "stop_states": ["complete", "evidence_insufficient", "failed"],
         }
         run_path = project_root / "run.json"
         run_path.write_text(
@@ -204,25 +176,126 @@ def test_non_strategy_project_completes_through_shared_market_and_runner(
         result = json.loads(completed.stdout)
         assert result["status"] == "complete"
         run_output = Path(result["run_path"])
-        document = json.loads((run_output / "result.json").read_text(encoding="utf-8"))
-        assert document["snapshot_id"] == snapshot.snapshot_id
-        assert document["run_id"] == result["run_id"]
-        status = json.loads(
-            (run_output / "project-status.json").read_text(encoding="utf-8")
+        manifest = json.loads((run_output / "manifest.json").read_text(encoding="utf-8"))
+        assert manifest["object"]["strategy_id"] == project_id
+        assert manifest["object"]["run_id"] == result["run_id"]
+        assert {
+            path.stem for path in (run_output / "data").glob("*.parquet")
+        } == {"results", "balances", "positions", "orders"}
+        assert (run_output / "report/execution-summary.md").is_file()
+        assert (run_output / "report/metrics.json").is_file()
+        assert (run_output / "code/strategy.py").is_file()
+        performance = json.loads(
+            (run_output / "evidence/performance.json").read_text(encoding="utf-8")
         )
-        assert status["next_action"] == "return_to_caller"
-        assert not (run_output / "recommendation.json").exists()
-        assert not (run_output / "local-research-report.md").exists()
-        assert not tuple(run_output.glob("*.parquet"))
+        assert performance["cold"]["digest"] == performance["warm"]["digest"]
+        assert 0 <= performance["cold"]["seconds"] < 180
+        assert 0 <= performance["warm"]["seconds"] < 180
+        assert tuple(performance["stages"]) == (
+            "core_facts",
+            "followup_prepare",
+            "followup_vectorbt",
+            "parquet_materialize",
+            "primary_vectorbt",
+            "readback_validate",
+            "report_and_manifest",
+            "strategy_extensions",
+            "strategy_load",
+            "strategy_prepare",
+        )
+        assert not tuple(run_output.rglob("*.duckdb"))
         assert not tuple(market_root.rglob("*.duckdb"))
+
+        reused = subprocess.run(
+            [
+                str(repo_root / ".venv/Scripts/python.exe"),
+                str(repo_root / "scripts/research/local_quant_research/cli.py"),
+                "run",
+                "--config",
+                str(run_path.relative_to(repo_root)),
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            shell=False,
+            check=False,
+            timeout=120,
+        )
+        assert reused.returncode == 0, reused.stderr + reused.stdout
+        assert json.loads(reused.stdout)["reused"] is True
+
+        manifest_path = run_output / "manifest.json"
+        tampered = json.loads(manifest_path.read_text(encoding="utf-8"))
+        tampered["package_sha256"] = "0" * 64
+        manifest_path.write_text(
+            json.dumps(tampered, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        conflict = subprocess.run(
+            [
+                str(repo_root / ".venv/Scripts/python.exe"),
+                str(repo_root / "scripts/research/local_quant_research/cli.py"),
+                "run",
+                "--config",
+                str(run_path.relative_to(repo_root)),
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            shell=False,
+            check=False,
+            timeout=120,
+        )
+        assert conflict.returncode == 1
+        assert json.loads(conflict.stdout)["status"] == "failed"
     finally:
-        shutil.rmtree(output_project, ignore_errors=True)
+        if "run_output" in locals():
+            shutil.rmtree(run_output, ignore_errors=True)
+        try:
+            output_project.rmdir()
+        except OSError:
+            pass
+        if attempts_root.is_dir():
+            for attempt in attempts_root.glob("*.json"):
+                if attempt.name not in existing_attempts:
+                    attempt.unlink(missing_ok=True)
+            try:
+                attempts_root.rmdir()
+                output_project.rmdir()
+            except OSError:
+                pass
         shutil.rmtree(project_root, ignore_errors=True)
         if snapshot is not None:
             snapshot.path.unlink(missing_ok=True)
         for batch_id in batch_ids:
             shutil.rmtree(market_root / "batches" / batch_id, ignore_errors=True)
         _remove_empty_test_roots(repo_root, market_root)
+
+
+def test_public_cli_maps_missing_config_to_evidence_insufficient(
+    repo_root: Path,
+) -> None:
+    missing = repo_root / ".local/e2e-tests/does-not-exist.json"
+
+    completed = subprocess.run(
+        [
+            str(repo_root / ".venv/Scripts/python.exe"),
+            str(repo_root / "scripts/research/local_quant_research/cli.py"),
+            "run",
+            "--config",
+            str(missing.relative_to(repo_root)),
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        shell=False,
+        check=False,
+        timeout=30,
+    )
+
+    assert completed.returncode == 2
+    assert json.loads(completed.stdout)["status"] == "evidence_insufficient"
+    assert "Traceback" not in completed.stderr + completed.stdout
 
 
 def test_shared_sources_do_not_depend_on_one_strategy(repo_root: Path) -> None:
@@ -240,3 +313,12 @@ def test_shared_sources_do_not_depend_on_one_strategy(repo_root: Path) -> None:
         "512100.xshg",
     ):
         assert forbidden not in text
+
+    shared_runtime = repo_root / "scripts/research/local_quant_research"
+    for path in shared_runtime.glob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        if path.name == "vectorbt_runtime.py":
+            assert "Portfolio.from_order_func" in source
+        else:
+            assert "import vectorbt" not in source
+            assert "from vectorbt" not in source

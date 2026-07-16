@@ -13,6 +13,12 @@ if TYPE_CHECKING:
 
 
 RunStatus = Literal["complete", "evidence_insufficient", "failed"]
+RUN_OUTPUT_ROOT = Path(".local/quant-research")
+RUN_STATUSES: tuple[RunStatus, ...] = (
+    "complete",
+    "evidence_insufficient",
+    "failed",
+)
 
 SIDE_NONE = 0
 SIDE_BUY = 1
@@ -207,20 +213,16 @@ class OutputSpec:
     format: Literal["json", "csv", "markdown", "text", "parquet", "directory"]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RunConfig:
     project_id: str
+    strategy_root: Path
+    strategy_module: str
+    strategy_symbol: str
     snapshot_id: str
     snapshot_requirements: Mapping[str, object]
-    project_entry: Path
-    command: tuple[str, ...]
-    project_config: Path
-    code_identity: Path
-    benchmark_input: Path | None
+    scenario_config: Path
     declared_inputs: tuple[Path, ...]
-    required_outputs: tuple[OutputSpec, ...]
-    output_root: Path
-    stop_states: tuple[RunStatus, ...]
     document: Mapping[str, object]
 
     def __post_init__(self) -> None:

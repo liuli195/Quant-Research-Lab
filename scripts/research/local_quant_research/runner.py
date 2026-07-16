@@ -166,7 +166,7 @@ def _output_path(value: object) -> str:
     return path.as_posix()
 
 
-def load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
+def _legacy_load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
     repo_root = Path(repo_root).resolve()
     document = _load_raw_config(path, repo_root=repo_root)
     if _contains_sensitive_key(document):
@@ -699,7 +699,7 @@ def _actual_staging_files(staging: Path) -> set[str]:
     return files
 
 
-def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
+def _legacy_run_project(config_path: Path, *, repo_root: Path) -> RunResult:
     repo_root = Path(repo_root).resolve()
     stages: list[StageRecord] = []
     try:
@@ -1139,4 +1139,722 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
         reasons=(),
         stages=tuple(StageRecord(name, "complete") for name in _COMPLETE_STAGE_NAMES),
         next_action="return_to_caller",
+    )
+
+
+# Configuration v2 and the fixed shared execution path intentionally supersede the
+# legacy project-command runner above.  The legacy helpers remain available while
+# their security-focused tests are migrated to the fixed child protocol.
+_V2_CONFIG_FIELDS = {
+    "schema_version",
+    "project_id",
+    "strategy",
+    "snapshot_id",
+    "snapshot_requirements",
+    "scenario_config",
+    "declared_inputs",
+}
+_LEGACY_RUN_FIELDS = {
+    "command",
+    "project_entry",
+    "code_identity",
+    "required_outputs",
+    "output_root",
+    "stop_states",
+}
+
+
+def load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
+    from .contracts import RUN_STATUSES
+
+    repo_root = Path(repo_root).resolve()
+    document = _load_raw_config(path, repo_root=repo_root)
+    if _contains_sensitive_key(document):
+        raise ConfigurationError("credential_field", "credential fields are forbidden")
+    if set(document) & _LEGACY_RUN_FIELDS:
+        raise ConfigurationError(
+            "legacy_run_field",
+            "legacy command and output fields are forbidden in configuration v2",
+        )
+    if set(document) != _V2_CONFIG_FIELDS or document.get("schema_version") != 2:
+        raise ConfigurationError(
+            "invalid_config",
+            "configuration v2 fields are incomplete or unknown",
+        )
+    project_id = document["project_id"]
+    if not isinstance(project_id, str) or _PROJECT_ID_PATTERN.fullmatch(project_id) is None:
+        raise ConfigurationError("invalid_project_id", "project_id is invalid")
+    snapshot_id = document["snapshot_id"]
+    if not isinstance(snapshot_id, str) or _SHA256_PATTERN.fullmatch(snapshot_id) is None:
+        raise ConfigurationError("missing_snapshot", "snapshot_id is missing or invalid")
+    requirements = document["snapshot_requirements"]
+    if not isinstance(requirements, Mapping) or _contains_sensitive_key(requirements):
+        raise ConfigurationError(
+            "missing_snapshot_requirements",
+            "snapshot requirements are missing or invalid",
+        )
+    strategy = document["strategy"]
+    if not isinstance(strategy, Mapping) or set(strategy) != {"root", "module", "symbol"}:
+        raise ConfigurationError("invalid_strategy_fields", "strategy fields are invalid")
+    strategy_root = _resolve_repo_path(
+        strategy["root"], repo_root=repo_root, field="strategy.root"
+    )
+    if not strategy_root.is_dir():
+        raise ConfigurationError("missing_strategy_root", "strategy root is missing")
+    strategy_module = strategy["module"]
+    strategy_symbol = strategy["symbol"]
+    if not isinstance(strategy_module, str) or not strategy_module:
+        raise ConfigurationError("invalid_strategy_module", "strategy module is invalid")
+    if not isinstance(strategy_symbol, str) or not strategy_symbol:
+        raise ConfigurationError("invalid_strategy_symbol", "strategy symbol is invalid")
+    scenario_config = _resolve_repo_path(
+        document["scenario_config"],
+        repo_root=repo_root,
+        field="scenario_config",
+    )
+    if not scenario_config.is_file():
+        raise ConfigurationError("missing_scenario_config", "scenario config is missing")
+    try:
+        scenario_document = json.loads(scenario_config.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ConfigurationError(
+            "invalid_scenario_config",
+            "scenario config is not valid UTF-8 JSON",
+        ) from exc
+    if not isinstance(scenario_document, Mapping) or _contains_sensitive_key(
+        scenario_document
+    ):
+        raise ConfigurationError("invalid_scenario_config", "scenario config is invalid")
+    declared = document["declared_inputs"]
+    if not isinstance(declared, list) or any(not isinstance(item, str) for item in declared):
+        raise ConfigurationError("invalid_inputs", "declared_inputs must be a path array")
+    declared_inputs = tuple(
+        _resolve_repo_path(item, repo_root=repo_root, field="declared_inputs")
+        for item in declared
+    )
+    if len(declared_inputs) != len(set(declared_inputs)):
+        raise ConfigurationError("invalid_inputs", "declared_inputs must be unique")
+    if any(not item.is_file() for item in declared_inputs):
+        raise ConfigurationError("missing_declared_input", "a declared input is missing")
+    if tuple(RUN_STATUSES) != _STOP_STATES:
+        raise RuntimeError("shared run statuses are inconsistent")
+    return RunConfig(
+        project_id=project_id,
+        strategy_root=strategy_root,
+        strategy_module=strategy_module,
+        strategy_symbol=strategy_symbol,
+        snapshot_id=snapshot_id,
+        snapshot_requirements=dict(requirements),
+        scenario_config=scenario_config,
+        declared_inputs=declared_inputs,
+        document=document,
+    )
+
+
+def _execute_command(
+    *,
+    repo_root: Path,
+    execution_root: Path,
+    staging: Path,
+) -> tuple[Path | str, ...]:
+    return (
+        Path(repo_root) / ".venv/Scripts/python.exe",
+        Path(repo_root) / "scripts/research/local_quant_research/cli.py",
+        "_execute",
+        "--frozen-inputs",
+        Path(execution_root) / "request.json",
+        "--staging",
+        Path(staging),
+    )
+
+
+def _runtime_lock(repo_root: Path) -> tuple[dict[str, object], tuple[Path, ...]]:
+    import importlib.metadata
+    import platform
+    import sys
+
+    source_roots = (
+        repo_root / "scripts/research/local_quant_research",
+        repo_root / "scripts/research/market_data",
+    )
+    sources = tuple(
+        sorted(
+            (path for root in source_roots for path in root.glob("*.py")),
+            key=lambda path: path.relative_to(repo_root).as_posix(),
+        )
+    )
+    dependencies = {}
+    for name in ("duckdb", "numba", "numpy", "pandas", "pyarrow", "vectorbt"):
+        try:
+            dependencies[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError as exc:
+            raise ConfigurationError(
+                "missing_runtime_dependency",
+                f"required dependency is missing: {name}",
+            ) from exc
+    return (
+        {
+            "schema_version": 1,
+            "python": sys.version.split()[0],
+            "platform": platform.system(),
+            "dependencies": dependencies,
+        },
+        sources,
+    )
+
+
+def _v2_identity(
+    config: RunConfig,
+    *,
+    repo_root: Path,
+) -> tuple[object, str, str, dict[str, object], dict[str, object], dict[str, object]]:
+    from .strategy_loader import ConfigurationError as StrategyConfigurationError
+    from .strategy_loader import load_strategy
+
+    strategy_document = config.document["strategy"]
+    try:
+        loaded = load_strategy(repo_root, strategy_document)
+    except StrategyConfigurationError as exc:
+        raise ConfigurationError(exc.code, str(exc)) from exc
+    if loaded.descriptor.strategy_id != config.project_id:
+        raise ConfigurationError(
+            "strategy_identity_mismatch",
+            "project_id must match the loaded strategy descriptor",
+        )
+    runtime_lock, runtime_sources = _runtime_lock(repo_root)
+    code_sources = tuple(
+        sorted(
+            {*loaded.source_paths, *runtime_sources},
+            key=lambda item: item.relative_to(repo_root).as_posix(),
+        )
+    )
+    code_identity = {
+        "schema_version": 1,
+        "files": [
+            {
+                "path": source.relative_to(repo_root).as_posix(),
+                "sha256": file_digest(source),
+            }
+            for source in code_sources
+        ],
+    }
+    declared = [
+        {
+            "path": item.relative_to(repo_root).as_posix(),
+            "sha256": file_digest(item),
+        }
+        for item in config.declared_inputs
+    ]
+    scenario = {
+        "path": config.scenario_config.relative_to(repo_root).as_posix(),
+        "sha256": file_digest(config.scenario_config),
+    }
+    config_identity = {
+        "project_run": dict(config.document),
+        "scenario": scenario,
+        "declared_inputs": declared,
+    }
+    config_digest = canonical_digest(config_identity)
+    code_digest = canonical_digest(
+        {"code_identity": code_identity, "runtime_lock": runtime_lock}
+    )
+    evidence = {
+        "config_sha256": config_digest,
+        "code_sha256": code_digest,
+        "scenario": scenario,
+        "declared_inputs": declared,
+        "code_identity": code_identity,
+        "runtime_lock": runtime_lock,
+    }
+    return loaded, config_digest, code_digest, evidence, code_identity, runtime_lock
+
+
+def _copy_v2_inputs(
+    *,
+    config_path: Path,
+    config: RunConfig,
+    loaded: object,
+    repo_root: Path,
+    market_root: Path,
+    snapshot_document: Mapping[str, object],
+    snapshot_digest: str,
+    identity: Mapping[str, object],
+    code_identity: Mapping[str, object],
+    runtime_lock: Mapping[str, object],
+    execution_root: Path,
+) -> None:
+    from .strategy_loader import LoadedStrategy
+
+    if not isinstance(loaded, LoadedStrategy):
+        raise InputIntegrityError("invalid_strategy", "loaded strategy is invalid")
+    frozen_repo = execution_root / "repository"
+    frozen_market = execution_root / "market-data"
+    try:
+        execution_root.mkdir()
+        paths = (config_path, config.scenario_config, *config.declared_inputs, *loaded.source_paths)
+        for source in paths:
+            relative = source.resolve().relative_to(repo_root)
+            _copy_verified_file(source, frozen_repo / relative, file_digest(source))
+        snapshot_path = market_root / "snapshots" / f"{config.snapshot_id}.json"
+        _copy_verified_file(
+            snapshot_path,
+            frozen_market / "snapshots" / snapshot_path.name,
+            snapshot_digest,
+        )
+        for batch in snapshot_document["batches"]:
+            batch_id = str(batch["batch_id"])
+            for name, digest_field in (
+                ("manifest.json", "manifest_sha256"),
+                ("market-data.parquet", "parquet_sha256"),
+                ("corporate-actions.parquet", "corporate_actions_sha256"),
+                ("validation.json", "validation_sha256"),
+            ):
+                _copy_verified_file(
+                    market_root / "batches" / batch_id / name,
+                    frozen_market / "batches" / batch_id / name,
+                    str(batch[digest_field]),
+                )
+        request = {
+            "schema_version": 1,
+            "repository": str(frozen_repo.resolve()),
+            "market_data": str(frozen_market.resolve()),
+            "config": config_path.resolve().relative_to(repo_root).as_posix(),
+            "run_id": str(identity["run_id"]),
+            "code_identity": dict(code_identity),
+            "runtime_lock": dict(runtime_lock),
+            "market_snapshot": dict(snapshot_document),
+            "environment": {
+                "schema_version": 1,
+                "python": runtime_lock["python"],
+                "platform": runtime_lock["platform"],
+            },
+        }
+        write_manifest(execution_root / "request.json", request)
+        frozen = open_snapshot(config.snapshot_id, root=frozen_market)
+        if frozen.digest != identity["snapshot_normalized_sha256"]:
+            raise InputIntegrityError(
+                "run_input_changed",
+                "frozen snapshot differs from the run identity",
+            )
+    except (KeyError, OSError, MarketDataError, ValueError, InputIntegrityError) as exc:
+        shutil.rmtree(execution_root, ignore_errors=True)
+        if isinstance(exc, InputIntegrityError):
+            raise
+        raise InputIntegrityError(
+            "run_input_changed",
+            "run inputs could not be frozen",
+        ) from exc
+
+
+def _v2_environment(repo_root: Path, execution_root: Path) -> dict[str, str]:
+    environment = _sanitized_environment(repo_root)
+    cache = execution_root / "runtime-cache"
+    cache.mkdir()
+    environment["NUMBA_CACHE_DIR"] = str(cache)
+    return environment
+
+
+def _package_identity(path: Path, *, project_id: str, run_id: str) -> Mapping[str, object]:
+    from .result_package import ResultContractError, validate_result_package
+
+    try:
+        document = validate_result_package(path)
+    except ResultContractError as exc:
+        raise EvidenceError("completed result package is invalid") from exc
+    identity = document.get("object")
+    if not isinstance(identity, Mapping) or (
+        identity.get("kind") != "local_research"
+        or identity.get("status") != "complete"
+        or identity.get("strategy_id") != project_id
+        or identity.get("run_id") != run_id
+    ):
+        raise EvidenceError("completed result package identity is invalid")
+    return document
+
+
+def _child_result(completed: subprocess.CompletedProcess[str]) -> tuple[str, str]:
+    try:
+        document = json.loads(completed.stdout)
+    except (TypeError, json.JSONDecodeError):
+        return "failed", "project_process_failed"
+    if not isinstance(document, Mapping):
+        return "failed", "project_process_failed"
+    status = document.get("status")
+    reasons = document.get("reasons")
+    code = reasons[0] if isinstance(reasons, list) and reasons else "project_process_failed"
+    if not isinstance(code, str) or _REASON_PATTERN.fullmatch(code) is None:
+        code = "project_process_failed"
+    if status not in {"complete", "evidence_insufficient", "failed"}:
+        status = "failed"
+    return str(status), code
+
+
+def _v2_inputs_unchanged(
+    *,
+    config_path: Path,
+    repo_root: Path,
+    market_root: Path,
+    config_digest: str,
+    code_digest: str,
+    snapshot_digest: str,
+    snapshot_normalized_digest: str,
+) -> bool:
+    try:
+        current_config = load_run_config(config_path, repo_root=repo_root)
+        _, current_config_digest, current_code_digest, _, _, _ = _v2_identity(
+            current_config,
+            repo_root=repo_root,
+        )
+        current_snapshot_path = (
+            market_root / "snapshots" / f"{current_config.snapshot_id}.json"
+        )
+        current_snapshot = open_snapshot(
+            current_config.snapshot_id,
+            root=market_root,
+        )
+    except (ConfigurationError, MarketDataError, OSError):
+        return False
+    return (
+        current_config_digest == config_digest
+        and current_code_digest == code_digest
+        and file_digest(current_snapshot_path) == snapshot_digest
+        and current_snapshot.digest == snapshot_normalized_digest
+    )
+
+
+def execute_frozen_inputs(frozen_inputs: Path, staging: Path) -> dict[str, object]:
+    from .scenario import ScenarioRequest, execute_scenario
+    from .strategy_loader import load_strategy
+
+    request_path = Path(frozen_inputs).resolve()
+    execution_root = request_path.parent
+    try:
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ConfigurationError("invalid_frozen_inputs", "frozen inputs are invalid") from exc
+    if not isinstance(request, Mapping) or request.get("schema_version") != 1:
+        raise ConfigurationError("invalid_frozen_inputs", "frozen inputs are invalid")
+    repository = Path(str(request.get("repository", ""))).resolve()
+    market_data = Path(str(request.get("market_data", ""))).resolve()
+    if not _inside(repository, execution_root) or not _inside(market_data, execution_root):
+        raise ConfigurationError("unsafe_frozen_inputs", "frozen input roots are unsafe")
+    config_path = repository / str(request.get("config", ""))
+    config = load_run_config(config_path, repo_root=repository)
+    started = time.perf_counter()
+    loaded = load_strategy(repository, config.document["strategy"])
+    strategy_load_seconds = time.perf_counter() - started
+    snapshot = open_snapshot(config.snapshot_id, root=market_data)
+    try:
+        scenario_document = json.loads(config.scenario_config.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ConfigurationError("invalid_scenario_config", "scenario config is invalid") from exc
+    if not isinstance(scenario_document, Mapping):
+        raise ConfigurationError("invalid_scenario_config", "scenario config is invalid")
+    outcome = execute_scenario(
+        ScenarioRequest(
+            loaded_strategy=loaded,
+            snapshot=snapshot,
+            scenario=scenario_document,
+            project_document=config.document,
+            run_id=str(request["run_id"]),
+            output_dir=Path(staging),
+            code_identity=request["code_identity"],
+            market_snapshot=request["market_snapshot"],
+            runtime_lock=request["runtime_lock"],
+            environment=request["environment"],
+            strategy_load_seconds=strategy_load_seconds,
+        )
+    )
+    return {
+        "status": "complete",
+        "reasons": [],
+        "package_sha256": outcome.package.package_sha256,
+    }
+
+
+def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
+    from .contracts import RUN_OUTPUT_ROOT
+
+    repo_root = Path(repo_root).resolve()
+    stages: list[StageRecord] = []
+    try:
+        raw = _load_raw_config(config_path, repo_root=repo_root)
+        config = load_run_config(config_path, repo_root=repo_root)
+    except ConfigurationError as exc:
+        project_id = "_invalid"
+        try:
+            project_id = _safe_project_id(raw)  # type: ignore[possibly-undefined]
+        except UnboundLocalError:
+            pass
+        return _attempt_result(
+            repo_root=repo_root,
+            project_id=project_id,
+            status="evidence_insufficient",
+            stage="config_validation",
+            code=exc.code,
+            message=str(exc),
+            run_id=None,
+            stages=(StageRecord("config_validation", "evidence_insufficient"),),
+        )
+    project_id = config.project_id
+    market_root = repo_root / ".local/market-data"
+    snapshot_path = market_root / "snapshots" / f"{config.snapshot_id}.json"
+    if not snapshot_path.is_file():
+        return _attempt_result(
+            repo_root=repo_root,
+            project_id=project_id,
+            status="evidence_insufficient",
+            stage="snapshot_validation",
+            code="missing_snapshot",
+            message="declared snapshot is missing",
+            run_id=None,
+            stages=(StageRecord("snapshot_validation", "evidence_insufficient"),),
+        )
+    try:
+        snapshot = open_snapshot(config.snapshot_id, root=market_root)
+        snapshot_document = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        snapshot_digest = file_digest(snapshot_path)
+    except (MarketDataError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return _attempt_result(
+            repo_root=repo_root,
+            project_id=project_id,
+            status="failed",
+            stage="snapshot_validation",
+            code="snapshot_integrity_failed",
+            message="declared snapshot failed integrity validation",
+            run_id=None,
+            stages=(StageRecord("snapshot_validation", "failed"),),
+        )
+    if not _snapshot_requirements_match(
+        snapshot_document.get("selection"), config.snapshot_requirements
+    ):
+        return _attempt_result(
+            repo_root=repo_root,
+            project_id=project_id,
+            status="evidence_insufficient",
+            stage="snapshot_validation",
+            code="snapshot_requirements_unmet",
+            message="snapshot does not exactly cover the declared requirements",
+            run_id=None,
+            stages=(StageRecord("snapshot_validation", "evidence_insufficient"),),
+        )
+    stages.append(StageRecord("snapshot_validation", "complete"))
+    try:
+        loaded, config_digest, code_digest, inputs, code_identity, runtime_lock = (
+            _v2_identity(config, repo_root=repo_root)
+        )
+    except ConfigurationError as exc:
+        return _attempt_result(
+            repo_root=repo_root,
+            project_id=project_id,
+            status="evidence_insufficient",
+            stage="config_validation",
+            code=exc.code,
+            message=str(exc),
+            run_id=None,
+            stages=(*stages, StageRecord("config_validation", "evidence_insufficient")),
+        )
+    stages.append(StageRecord("config_validation", "complete"))
+    run_id = compute_run_id(snapshot_digest, config_digest, code_digest)
+    identity = {
+        **inputs,
+        "run_id": run_id,
+        "snapshot_manifest_sha256": snapshot_digest,
+        "snapshot_normalized_sha256": snapshot.digest,
+    }
+    project_root = (repo_root / RUN_OUTPUT_ROOT / project_id).resolve()
+    run_dir = project_root / run_id
+    if run_dir.exists():
+        try:
+            _package_identity(run_dir, project_id=project_id, run_id=run_id)
+        except EvidenceError:
+            return _attempt_result(
+                repo_root=repo_root,
+                project_id=project_id,
+                status="failed",
+                stage="evidence_finalization",
+                code="completed_evidence_mismatch",
+                message="existing complete run failed revalidation",
+                run_id=run_id,
+                stages=(*stages, StageRecord("evidence_finalization", "failed")),
+            )
+        return RunResult(
+            "complete",
+            project_id,
+            run_id,
+            run_dir,
+            None,
+            True,
+            (),
+            tuple(StageRecord(name, "complete") for name in _COMPLETE_STAGE_NAMES),
+            "return_to_caller",
+        )
+    project_root.mkdir(parents=True, exist_ok=True)
+    attempt_id = uuid.uuid4().hex
+    staging = project_root / f".{run_id}.{attempt_id}.tmp"
+    execution_root = project_root / f".{run_id}.{attempt_id}.inputs"
+    try:
+        _copy_v2_inputs(
+            config_path=Path(config_path).resolve(),
+            config=config,
+            loaded=loaded,
+            repo_root=repo_root,
+            market_root=market_root,
+            snapshot_document=snapshot_document,
+            snapshot_digest=snapshot_digest,
+            identity=identity,
+            code_identity=code_identity,
+            runtime_lock=runtime_lock,
+            execution_root=execution_root,
+        )
+    except InputIntegrityError as exc:
+        return _attempt_result(
+            repo_root=repo_root,
+            project_id=project_id,
+            status="failed",
+            stage="project_execution",
+            code=exc.code,
+            message=str(exc),
+            run_id=run_id,
+            stages=(*stages, StageRecord("project_execution", "failed")),
+            staging=staging,
+        )
+    before_state = _repo_state(repo_root, ignored_roots=(staging, execution_root))
+    command = _execute_command(
+        repo_root=repo_root,
+        execution_root=execution_root,
+        staging=staging,
+    )
+    completed: subprocess.CompletedProcess[str] | None = None
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=repo_root,
+            shell=False,
+            env=_v2_environment(repo_root, execution_root),
+            capture_output=True,
+            text=True,
+            timeout=_PROJECT_EXECUTION_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        shutil.rmtree(execution_root)
+    except OSError:
+        return _attempt_result(
+            repo_root=repo_root,
+            project_id=project_id,
+            status="failed",
+            stage="project_execution",
+            code="input_cleanup_failed",
+            message="frozen run inputs could not be cleaned up",
+            run_id=run_id,
+            stages=(*stages, StageRecord("project_execution", "failed")),
+            staging=staging,
+        )
+    after_state = _repo_state(repo_root, ignored_roots=(staging, execution_root))
+    if after_state != before_state:
+        return _attempt_result(
+            repo_root=repo_root,
+            project_id=project_id,
+            status="failed",
+            stage="project_execution",
+            code="write_outside_staging",
+            message="project wrote outside staging",
+            run_id=run_id,
+            stages=(*stages, StageRecord("project_execution", "failed")),
+            staging=staging,
+        )
+    if not _v2_inputs_unchanged(
+        config_path=Path(config_path).resolve(),
+        repo_root=repo_root,
+        market_root=market_root,
+        config_digest=config_digest,
+        code_digest=code_digest,
+        snapshot_digest=snapshot_digest,
+        snapshot_normalized_digest=snapshot.digest,
+    ):
+        return _attempt_result(
+            repo_root=repo_root,
+            project_id=project_id,
+            status="failed",
+            stage="project_execution",
+            code="run_input_changed",
+            message="run input changed during shared scenario execution",
+            run_id=run_id,
+            stages=(*stages, StageRecord("project_execution", "failed")),
+            staging=staging,
+        )
+    if completed is None:
+        return _attempt_result(
+            repo_root=repo_root,
+            project_id=project_id,
+            status="failed",
+            stage="project_execution",
+            code="project_process_failed",
+            message="project process could not complete",
+            run_id=run_id,
+            stages=(*stages, StageRecord("project_execution", "failed")),
+            staging=staging,
+        )
+    child_status, child_code = _child_result(completed)
+    if completed.returncode != 0 or child_status != "complete":
+        status = child_status if child_status == "evidence_insufficient" else "failed"
+        return _attempt_result(
+            repo_root=repo_root,
+            project_id=project_id,
+            status=status,
+            stage="project_execution",
+            code=child_code,
+            message="shared scenario execution did not complete",
+            run_id=run_id,
+            stages=(*stages, StageRecord("project_execution", status)),
+            staging=staging,
+        )
+    stages.append(StageRecord("project_execution", "complete"))
+    try:
+        _package_identity(staging, project_id=project_id, run_id=run_id)
+    except EvidenceError:
+        return _attempt_result(
+            repo_root=repo_root,
+            project_id=project_id,
+            status="failed",
+            stage="output_validation",
+            code="output_validation_failed",
+            message="archive-ready result package failed validation",
+            run_id=run_id,
+            stages=(*stages, StageRecord("output_validation", "failed")),
+            staging=staging,
+        )
+    stages.append(StageRecord("output_validation", "complete"))
+    published = False
+    try:
+        _publish_directory(staging, run_dir)
+        published = True
+        _package_identity(run_dir, project_id=project_id, run_id=run_id)
+    except (OSError, EvidenceError):
+        if published:
+            shutil.rmtree(run_dir, ignore_errors=True)
+        return _attempt_result(
+            repo_root=repo_root,
+            project_id=project_id,
+            status="failed",
+            stage="evidence_finalization",
+            code="evidence_finalization_failed",
+            message="complete evidence could not be atomically finalized",
+            run_id=run_id,
+            stages=(*stages, StageRecord("evidence_finalization", "failed")),
+            staging=staging if staging.exists() else None,
+        )
+    return RunResult(
+        "complete",
+        project_id,
+        run_id,
+        run_dir,
+        None,
+        False,
+        (),
+        tuple(StageRecord(name, "complete") for name in _COMPLETE_STAGE_NAMES),
+        "return_to_caller",
     )
