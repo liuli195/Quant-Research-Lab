@@ -1,0 +1,89 @@
+{
+  "scenarios": [
+    {
+      "cash": {
+        "rows": 3432,
+        "sha256": "7d5f2bad3115cb08fb7e38562bdd5004105d794b6501f2087c39129574220382"
+      },
+      "fees": {
+        "rows": 1799,
+        "sha256": "b2f1bf548c2ade9c223ff55db19f7d68ba796d6286b1ad88c3d6e6f0254b6e48"
+      },
+      "logic": "8fe291e4e2339ca383466885dec1f455c661bd15a468bca31eae1719a9bf7f16",
+      "orders": {
+        "rows": 1799,
+        "sha256": "d1877caaf7d1e97acb7f2fa35091b0b0b7f0bd17ad7f95a5a8960bca92a21c47"
+      },
+      "positions": {
+        "rows": 4847,
+        "sha256": "cea5348ac2cf9cee66a798b74d339986c110f820e02c8a8a1c93347cde94c585"
+      },
+      "scenario": "immediate-11-etf",
+      "state": {
+        "events": 3249,
+        "sha256": "46260fb20344348bac7995c1cdd07400ecfe3c7844cbc3f02e6b924020d5ce37"
+      },
+      "value": {
+        "rows": 3432,
+        "sha256": "e5e4842ef25cde4d998f87cc0fd877feea88f70d78a8e3f050bf9662222bc78d"
+      }
+    },
+    {
+      "cash": {
+        "rows": 3432,
+        "sha256": "88233873fe7be4d8566b72ed8bc63fe627ed92663fba1cc3a781e298f028b01a"
+      },
+      "fees": {
+        "rows": 4008,
+        "sha256": "eef914a386120c6cbb7321ec4392917eee2a3a12a7465308b93f6eca5c1e5bef"
+      },
+      "logic": "a1e1b83e7478e98c61f0dbe0b076fd58f519b9d2f9855c7d850c74d553ccc157",
+      "orders": {
+        "rows": 4008,
+        "sha256": "c87a79d2280f4e67fd6256a36302a3f5943f00daadf69bbc2e9c5f478af34836"
+      },
+      "positions": {
+        "rows": 8281,
+        "sha256": "80473f35d321ab22aa0743bf8b318ac01312203a5e745dd4de7703ca09c50be9"
+      },
+      "scenario": "immediate-17-etf",
+      "state": {
+        "events": 5148,
+        "sha256": "9ff69d630275163b2c4df5e67afc2279041fd6f1fbeac1c6f914c83d96559136"
+      },
+      "value": {
+        "rows": 3432,
+        "sha256": "3e5fc67e06719da1f41a618321cce95948e65114b15cec7eca478058fecc6a80"
+      }
+    },
+    {
+      "cash": {
+        "rows": 3432,
+        "sha256": "ca15b2484fe390e70e0cfcd9b6ae4cdc9e3d8fdae369840736dd69e5214530f0"
+      },
+      "fees": {
+        "rows": 1175,
+        "sha256": "f0934237db44835f47a8c5add4f2d4b03929391fb955cb1f2fc50f7567b24b0d"
+      },
+      "logic": "87397421db6345f6ee18dd9a4a30f71e411610c7e9345f0c3796f8e2e72c3d47",
+      "orders": {
+        "rows": 1175,
+        "sha256": "900249d7d03e416ff4acebd8e8e70a3b61054af2ac27754ed04654d1ff0ad2e9"
+      },
+      "positions": {
+        "rows": 5691,
+        "sha256": "812997e88688e6ef7fc56945f6982f107935f2c39219b345b12451fdbc07e192"
+      },
+      "scenario": "delayed-11-etf-1d",
+      "state": {
+        "events": 1175,
+        "sha256": "1fc6d5b118865fe2e9470bcb71d17354bdd807e9875ad78de583db276b368974"
+      },
+      "value": {
+        "rows": 3432,
+        "sha256": "8704f912a913d52821abd7ee171d13b303dd4104260f470ee644ff230e372f66"
+      }
+    }
+  ],
+  "schema_version": 1
+}

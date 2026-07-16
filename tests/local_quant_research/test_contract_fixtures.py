@@ -162,3 +162,31 @@ def test_authoritative_docs_confirm_the_same_new_baseline(repo_root: Path) -> No
         assert "全量仓位再分配" in text
         assert "4/6/12" in text
         assert "180 秒" in text
+
+
+def test_local_research_performance_baseline_freezes_release_gate(
+    repo_root: Path,
+) -> None:
+    fixture = json.loads(
+        (
+            repo_root
+            / "tests/local_quant_research/fixtures/performance-baseline.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert fixture["schema_version"] == 1
+    assert fixture["environment"] == {"python": "3.12", "vectorbt": "1.1.0"}
+    assert fixture["sampling"] == {
+        "cold_processes": 3,
+        "warm_runs": 5,
+        "statistic": "median",
+    }
+    assert fixture["limits"] == {
+        "relative_ratio": 1.05,
+        "absolute_seconds": 180.0,
+    }
+    assert tuple(fixture["scenarios"]) == (
+        "immediate-11-etf",
+        "immediate-17-etf",
+        "delayed-11-etf-1d",
+    )

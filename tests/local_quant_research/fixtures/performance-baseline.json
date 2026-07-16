@@ -1,0 +1,78 @@
+{
+  "environment": {
+    "python": "3.12",
+    "vectorbt": "1.1.0"
+  },
+  "limits": {
+    "absolute_seconds": 180.0,
+    "relative_ratio": 1.05
+  },
+  "sampling": {
+    "cold_processes": 3,
+    "statistic": "median",
+    "warm_runs": 5
+  },
+  "scenarios": {
+    "immediate-11-etf": {
+      "cold_process": {
+        "median_package_bytes": 1301953,
+        "median_peak_memory_mib": 736.555,
+        "median_seconds": 27.91186
+      },
+      "snapshot_id": "e88238cca420a8ae66b90adb6cda4dd6c38a07390a13b8ac2f471e534742e33e",
+      "summary_sha256": "4236159e03c26eb2ad960a22bf209f6bddd84a3fd69be931926b163260196356",
+      "warm": {
+        "median_peak_memory_mib": 739.293,
+        "median_seconds": 4.72136,
+        "phase_medians_seconds": {
+          "adapt": 0.989717,
+          "materialize": 1.287137,
+          "prepare": 1.559825,
+          "simulate": 0.104212,
+          "snapshot": 0.780649
+        }
+      }
+    },
+    "immediate-17-etf": {
+      "cold_process": {
+        "median_package_bytes": 2201309,
+        "median_peak_memory_mib": 815.695,
+        "median_seconds": 34.097205
+      },
+      "snapshot_id": "27c0a452ad5cd8c7f865d2d8cd7555595df0b1fc7afecb86eace4b36336a7ddd",
+      "summary_sha256": "b4867dc8ca5892731aedc05c7eee74b028543f2289f8c58bab7a9486623e1fcb",
+      "warm": {
+        "median_peak_memory_mib": 831.824,
+        "median_seconds": 7.416527,
+        "phase_medians_seconds": {
+          "adapt": 1.625338,
+          "materialize": 2.175907,
+          "prepare": 2.171298,
+          "simulate": 0.142485,
+          "snapshot": 1.204335
+        }
+      }
+    },
+    "delayed-11-etf-1d": {
+      "cold_process": {
+        "median_package_bytes": 1273364,
+        "median_peak_memory_mib": 726.73,
+        "median_seconds": 28.192719
+      },
+      "snapshot_id": "e88238cca420a8ae66b90adb6cda4dd6c38a07390a13b8ac2f471e534742e33e",
+      "summary_sha256": "4a1db1ab95101824b1d501dc0cdb5a3874bff874b1f2fb205eb00754f74a6baa",
+      "warm": {
+        "median_peak_memory_mib": 823.609,
+        "median_seconds": 4.776813,
+        "phase_medians_seconds": {
+          "adapt": 0.972513,
+          "materialize": 1.299029,
+          "prepare": 1.476906,
+          "simulate": 0.186745,
+          "snapshot": 0.796745
+        }
+      }
+    }
+  },
+  "schema_version": 1
+}
