@@ -144,7 +144,7 @@ git commit -m "测试：冻结本地研究等价性与性能基线"
 
 - [ ] **Step 1: 写 contracts 和双策略加载失败测试**
 
-测试真实海龟模块和最小 fixture 模块可由同一加载器加载，并拒绝绝对路径、`..`、仓库外 module file、未知 symbol、重复/缺失 source file、旧 `command/project_entry` 字段：
+测试两个最小 fixture 模块可由同一加载器加载，并拒绝绝对路径、`..`、仓库外 module file、未知 symbol、重复/缺失 source file、旧 `command/project_entry` 字段：
 
 ```python
 @pytest.mark.parametrize("invalid", ("C:/outside", "../outside", "/outside"))
