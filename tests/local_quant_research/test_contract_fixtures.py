@@ -185,6 +185,16 @@ def test_local_research_performance_baseline_freezes_release_gate(
         "relative_ratio": 1.05,
         "absolute_seconds": 180.0,
     }
+    assert fixture["collection"] == {
+        "python": ".venv/Scripts/python.exe",
+        "entrypoint": (
+            "joinquant/strategies/strategy-003/research/"
+            "turtle_etf/vectorbt_cli.py"
+        ),
+        "memory_method": "ctypes.GetProcessMemoryInfo",
+        "cold_process_model": "independent_process_per_sample",
+        "warm_process_model": "same_process_for_all_samples",
+    }
     assert tuple(fixture["scenarios"]) == (
         "immediate-11-etf",
         "immediate-17-etf",

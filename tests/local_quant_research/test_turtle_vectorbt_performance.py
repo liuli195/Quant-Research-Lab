@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import statistics
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -193,6 +194,16 @@ def test_release_performance_baseline_has_real_three_by_five_samples(
     }
 
     assert tuple(performance["scenarios"]) == REFERENCE_SCENARIOS
+    assert performance["collection"] == {
+        "python": ".venv/Scripts/python.exe",
+        "entrypoint": (
+            "joinquant/strategies/strategy-003/research/"
+            "turtle_etf/vectorbt_cli.py"
+        ),
+        "memory_method": "ctypes.GetProcessMemoryInfo",
+        "cold_process_model": "independent_process_per_sample",
+        "warm_process_model": "same_process_for_all_samples",
+    }
     for scenario in REFERENCE_SCENARIOS:
         metrics = performance["scenarios"][scenario]
         expected_digest = hashlib.sha256(
@@ -214,11 +225,13 @@ def test_release_performance_baseline_has_real_three_by_five_samples(
             "median_seconds",
             "median_peak_memory_mib",
             "median_package_bytes",
+            "samples",
         }
         assert set(metrics["warm"]) == {
             "median_seconds",
             "median_peak_memory_mib",
             "phase_medians_seconds",
+            "samples",
         }
         assert set(metrics["warm"]["phase_medians_seconds"]) == {
             "snapshot",
@@ -227,10 +240,98 @@ def test_release_performance_baseline_has_real_three_by_five_samples(
             "adapt",
             "materialize",
         }
-        assert 0.0 < metrics["cold_process"]["median_seconds"] <= 180.0
+        cold_samples = metrics["cold_process"]["samples"]
+        warm_samples = metrics["warm"]["samples"]
+        assert len(cold_samples) == performance["sampling"]["cold_processes"]
+        assert len(warm_samples) == performance["sampling"]["warm_runs"]
+        assert [item["sample_id"] for item in cold_samples] == [
+            "cold-1",
+            "cold-2",
+            "cold-3",
+        ]
+        assert [item["sample_id"] for item in warm_samples] == [
+            "warm-1",
+            "warm-2",
+            "warm-3",
+            "warm-4",
+            "warm-5",
+        ]
+        assert len({item["process_id"] for item in cold_samples}) == 3
+        assert len({item["process_id"] for item in warm_samples}) == 1
+        assert all(
+            set(item)
+            == {
+                "sample_id",
+                "process_id",
+                "seconds",
+                "peak_working_set_bytes",
+                "package_bytes",
+            }
+            for item in cold_samples
+        )
+        assert all(
+            set(item)
+            == {
+                "sample_id",
+                "process_id",
+                "seconds",
+                "peak_working_set_bytes",
+                "package_bytes",
+                "phase_seconds",
+            }
+            for item in warm_samples
+        )
+        assert all(
+            set(item["phase_seconds"])
+            == {"snapshot", "prepare", "simulate", "adapt", "materialize"}
+            for item in warm_samples
+        )
+        assert all(
+            item["process_id"] > 0
+            and item["peak_working_set_bytes"] > 0
+            and item["package_bytes"] > 0
+            for item in (*cold_samples, *warm_samples)
+        )
+        assert all(
+            all(value > 0.0 for value in item["phase_seconds"].values())
+            for item in warm_samples
+        )
+        absolute_seconds = performance["limits"]["absolute_seconds"]
+        assert all(0.0 < item["seconds"] < absolute_seconds for item in cold_samples)
+        assert all(0.0 < item["seconds"] < absolute_seconds for item in warm_samples)
+        assert metrics["cold_process"]["median_seconds"] == pytest.approx(
+            statistics.median(item["seconds"] for item in cold_samples)
+        )
+        assert metrics["cold_process"]["median_peak_memory_mib"] == pytest.approx(
+            statistics.median(
+                item["peak_working_set_bytes"] for item in cold_samples
+            )
+            / (1024 * 1024),
+            abs=0.001,
+        )
+        assert metrics["cold_process"]["median_package_bytes"] == statistics.median(
+            item["package_bytes"] for item in cold_samples
+        )
+        assert metrics["warm"]["median_seconds"] == pytest.approx(
+            statistics.median(item["seconds"] for item in warm_samples)
+        )
+        assert metrics["warm"]["median_peak_memory_mib"] == pytest.approx(
+            statistics.median(
+                item["peak_working_set_bytes"] for item in warm_samples
+            )
+            / (1024 * 1024),
+            abs=0.001,
+        )
+        for phase in ("snapshot", "prepare", "simulate", "adapt", "materialize"):
+            assert metrics["warm"]["phase_medians_seconds"][phase] == pytest.approx(
+                statistics.median(
+                    item["phase_seconds"][phase] for item in warm_samples
+                )
+            )
+        assert 0.0 < metrics["cold_process"]["median_seconds"] < 180.0
         assert metrics["cold_process"]["median_peak_memory_mib"] > 0.0
         assert metrics["cold_process"]["median_package_bytes"] > 0
-        assert 0.0 < metrics["warm"]["median_seconds"] <= 180.0
+        assert 0.0 < metrics["warm"]["median_seconds"] < 180.0
         assert metrics["warm"]["median_peak_memory_mib"] > 0.0
         assert all(
             value > 0.0

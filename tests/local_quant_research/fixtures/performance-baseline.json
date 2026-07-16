@@ -1,4 +1,11 @@
 {
+  "collection": {
+    "cold_process_model": "independent_process_per_sample",
+    "entrypoint": "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_cli.py",
+    "memory_method": "ctypes.GetProcessMemoryInfo",
+    "python": ".venv/Scripts/python.exe",
+    "warm_process_model": "same_process_for_all_samples"
+  },
   "environment": {
     "python": "3.12",
     "vectorbt": "1.1.0"
@@ -15,62 +22,347 @@
   "scenarios": {
     "immediate-11-etf": {
       "cold_process": {
-        "median_package_bytes": 1301953,
-        "median_peak_memory_mib": 736.555,
-        "median_seconds": 27.91186
+        "median_package_bytes": 1301907,
+        "median_peak_memory_mib": 742.508,
+        "median_seconds": 27.350171,
+        "samples": [
+          {
+            "package_bytes": 1301908,
+            "peak_working_set_bytes": 776437760,
+            "process_id": 25056,
+            "sample_id": "cold-1",
+            "seconds": 27.350171
+          },
+          {
+            "package_bytes": 1301907,
+            "peak_working_set_bytes": 779202560,
+            "process_id": 12264,
+            "sample_id": "cold-2",
+            "seconds": 27.328044
+          },
+          {
+            "package_bytes": 1301907,
+            "peak_working_set_bytes": 778575872,
+            "process_id": 8184,
+            "sample_id": "cold-3",
+            "seconds": 27.379933
+          }
+        ]
       },
       "snapshot_id": "e88238cca420a8ae66b90adb6cda4dd6c38a07390a13b8ac2f471e534742e33e",
-      "summary_sha256": "4236159e03c26eb2ad960a22bf209f6bddd84a3fd69be931926b163260196356",
+      "summary_sha256": "c6ac2f4859df1c11aad57e927350d8f10bdd989984514255b2e3bd2fb3acf09e",
       "warm": {
-        "median_peak_memory_mib": 739.293,
-        "median_seconds": 4.72136,
+        "median_peak_memory_mib": 721.848,
+        "median_seconds": 4.664146,
         "phase_medians_seconds": {
-          "adapt": 0.989717,
-          "materialize": 1.287137,
-          "prepare": 1.559825,
-          "simulate": 0.104212,
-          "snapshot": 0.780649
-        }
+          "adapt": 0.986605,
+          "materialize": 1.27292,
+          "prepare": 1.479399,
+          "simulate": 0.103399,
+          "snapshot": 0.790033
+        },
+        "samples": [
+          {
+            "package_bytes": 1281277,
+            "peak_working_set_bytes": 755023872,
+            "phase_seconds": {
+              "adapt": 1.005442,
+              "materialize": 1.266728,
+              "prepare": 1.453404,
+              "simulate": 0.104756,
+              "snapshot": 0.786358
+            },
+            "process_id": 14060,
+            "sample_id": "warm-1",
+            "seconds": 4.616696
+          },
+          {
+            "package_bytes": 1281277,
+            "peak_working_set_bytes": 755023872,
+            "phase_seconds": {
+              "adapt": 0.98139,
+              "materialize": 1.270248,
+              "prepare": 1.531598,
+              "simulate": 0.103399,
+              "snapshot": 0.777506
+            },
+            "process_id": 14060,
+            "sample_id": "warm-2",
+            "seconds": 4.664146
+          },
+          {
+            "package_bytes": 1281277,
+            "peak_working_set_bytes": 756912128,
+            "phase_seconds": {
+              "adapt": 0.977264,
+              "materialize": 1.274467,
+              "prepare": 1.479399,
+              "simulate": 0.103902,
+              "snapshot": 0.807764
+            },
+            "process_id": 14060,
+            "sample_id": "warm-3",
+            "seconds": 4.642801
+          },
+          {
+            "package_bytes": 1281277,
+            "peak_working_set_bytes": 758992896,
+            "phase_seconds": {
+              "adapt": 0.986605,
+              "materialize": 1.285781,
+              "prepare": 1.456695,
+              "simulate": 0.102775,
+              "snapshot": 0.873627
+            },
+            "process_id": 14060,
+            "sample_id": "warm-4",
+            "seconds": 4.705488
+          },
+          {
+            "package_bytes": 1281277,
+            "peak_working_set_bytes": 780541952,
+            "phase_seconds": {
+              "adapt": 0.988505,
+              "materialize": 1.27292,
+              "prepare": 1.534652,
+              "simulate": 0.102404,
+              "snapshot": 0.790033
+            },
+            "process_id": 14060,
+            "sample_id": "warm-5",
+            "seconds": 4.688518
+          }
+        ]
       }
     },
     "immediate-17-etf": {
       "cold_process": {
-        "median_package_bytes": 2201309,
-        "median_peak_memory_mib": 815.695,
-        "median_seconds": 34.097205
+        "median_package_bytes": 2201265,
+        "median_peak_memory_mib": 819.57,
+        "median_seconds": 33.215047,
+        "samples": [
+          {
+            "package_bytes": 2201266,
+            "peak_working_set_bytes": 859381760,
+            "process_id": 6380,
+            "sample_id": "cold-1",
+            "seconds": 33.164935
+          },
+          {
+            "package_bytes": 2201263,
+            "peak_working_set_bytes": 840359936,
+            "process_id": 13116,
+            "sample_id": "cold-2",
+            "seconds": 33.215047
+          },
+          {
+            "package_bytes": 2201265,
+            "peak_working_set_bytes": 860909568,
+            "process_id": 7264,
+            "sample_id": "cold-3",
+            "seconds": 33.260551
+          }
+        ]
       },
       "snapshot_id": "27c0a452ad5cd8c7f865d2d8cd7555595df0b1fc7afecb86eace4b36336a7ddd",
-      "summary_sha256": "b4867dc8ca5892731aedc05c7eee74b028543f2289f8c58bab7a9486623e1fcb",
+      "summary_sha256": "cfb42161eec33fbb87e3799f71f35b6a7e11db926a71dca218d3daaa1efc2524",
       "warm": {
-        "median_peak_memory_mib": 831.824,
-        "median_seconds": 7.416527,
+        "median_peak_memory_mib": 863.402,
+        "median_seconds": 7.346294,
         "phase_medians_seconds": {
-          "adapt": 1.625338,
-          "materialize": 2.175907,
-          "prepare": 2.171298,
-          "simulate": 0.142485,
-          "snapshot": 1.204335
-        }
+          "adapt": 1.640124,
+          "materialize": 2.171504,
+          "prepare": 2.140393,
+          "simulate": 0.143466,
+          "snapshot": 1.270234
+        },
+        "samples": [
+          {
+            "package_bytes": 2179571,
+            "peak_working_set_bytes": 871301120,
+            "phase_seconds": {
+              "adapt": 1.643303,
+              "materialize": 2.177581,
+              "prepare": 2.116857,
+              "simulate": 0.141557,
+              "snapshot": 1.177482
+            },
+            "process_id": 14060,
+            "sample_id": "warm-1",
+            "seconds": 7.256785
+          },
+          {
+            "package_bytes": 2179571,
+            "peak_working_set_bytes": 898465792,
+            "phase_seconds": {
+              "adapt": 1.634968,
+              "materialize": 2.164927,
+              "prepare": 2.137434,
+              "simulate": 0.143774,
+              "snapshot": 1.259592
+            },
+            "process_id": 14060,
+            "sample_id": "warm-2",
+            "seconds": 7.340699
+          },
+          {
+            "package_bytes": 2179571,
+            "peak_working_set_bytes": 905342976,
+            "phase_seconds": {
+              "adapt": 1.649341,
+              "materialize": 2.178504,
+              "prepare": 2.160176,
+              "simulate": 0.143827,
+              "snapshot": 1.270234
+            },
+            "process_id": 14060,
+            "sample_id": "warm-3",
+            "seconds": 7.402086
+          },
+          {
+            "package_bytes": 2179571,
+            "peak_working_set_bytes": 905342976,
+            "phase_seconds": {
+              "adapt": 1.640124,
+              "materialize": 2.171504,
+              "prepare": 2.14131,
+              "simulate": 0.142223,
+              "snapshot": 1.298777
+            },
+            "process_id": 14060,
+            "sample_id": "warm-4",
+            "seconds": 7.393945
+          },
+          {
+            "package_bytes": 2179571,
+            "peak_working_set_bytes": 907571200,
+            "phase_seconds": {
+              "adapt": 1.625617,
+              "materialize": 2.162463,
+              "prepare": 2.140393,
+              "simulate": 0.143466,
+              "snapshot": 1.27435
+            },
+            "process_id": 14060,
+            "sample_id": "warm-5",
+            "seconds": 7.346294
+          }
+        ]
       }
     },
     "delayed-11-etf-1d": {
       "cold_process": {
-        "median_package_bytes": 1273364,
-        "median_peak_memory_mib": 726.73,
-        "median_seconds": 28.192719
+        "median_package_bytes": 1273318,
+        "median_peak_memory_mib": 747.129,
+        "median_seconds": 27.757129,
+        "samples": [
+          {
+            "package_bytes": 1273318,
+            "peak_working_set_bytes": 799870976,
+            "process_id": 34388,
+            "sample_id": "cold-1",
+            "seconds": 27.769536
+          },
+          {
+            "package_bytes": 1273318,
+            "peak_working_set_bytes": 783421440,
+            "process_id": 22016,
+            "sample_id": "cold-2",
+            "seconds": 27.757129
+          },
+          {
+            "package_bytes": 1273317,
+            "peak_working_set_bytes": 781729792,
+            "process_id": 28808,
+            "sample_id": "cold-3",
+            "seconds": 27.624058
+          }
+        ]
       },
       "snapshot_id": "e88238cca420a8ae66b90adb6cda4dd6c38a07390a13b8ac2f471e534742e33e",
-      "summary_sha256": "4a1db1ab95101824b1d501dc0cdb5a3874bff874b1f2fb205eb00754f74a6baa",
+      "summary_sha256": "60218b20e774981c2555f079c093cb249d692425976f26dbd87515daa9da25c8",
       "warm": {
-        "median_peak_memory_mib": 823.609,
-        "median_seconds": 4.776813,
+        "median_peak_memory_mib": 865.527,
+        "median_seconds": 4.70711,
         "phase_medians_seconds": {
-          "adapt": 0.972513,
-          "materialize": 1.299029,
-          "prepare": 1.476906,
-          "simulate": 0.186745,
-          "snapshot": 0.796745
-        }
+          "adapt": 0.965305,
+          "materialize": 1.287114,
+          "prepare": 1.501302,
+          "simulate": 0.185535,
+          "snapshot": 0.786126
+        },
+        "samples": [
+          {
+            "package_bytes": 1252683,
+            "peak_working_set_bytes": 907571200,
+            "phase_seconds": {
+              "adapt": 0.965305,
+              "materialize": 1.290191,
+              "prepare": 1.421793,
+              "simulate": 0.185535,
+              "snapshot": 0.790935
+            },
+            "process_id": 14060,
+            "sample_id": "warm-1",
+            "seconds": 4.653763
+          },
+          {
+            "package_bytes": 1252683,
+            "peak_working_set_bytes": 907571200,
+            "phase_seconds": {
+              "adapt": 0.958211,
+              "materialize": 1.279316,
+              "prepare": 1.502601,
+              "simulate": 0.184109,
+              "snapshot": 0.785772
+            },
+            "process_id": 14060,
+            "sample_id": "warm-2",
+            "seconds": 4.710013
+          },
+          {
+            "package_bytes": 1252683,
+            "peak_working_set_bytes": 907571200,
+            "phase_seconds": {
+              "adapt": 0.963309,
+              "materialize": 1.272238,
+              "prepare": 1.501302,
+              "simulate": 0.186448,
+              "snapshot": 0.783808
+            },
+            "process_id": 14060,
+            "sample_id": "warm-3",
+            "seconds": 4.70711
+          },
+          {
+            "package_bytes": 1252683,
+            "peak_working_set_bytes": 907571200,
+            "phase_seconds": {
+              "adapt": 0.975865,
+              "materialize": 1.287114,
+              "prepare": 1.426913,
+              "simulate": 0.185574,
+              "snapshot": 0.786814
+            },
+            "process_id": 14060,
+            "sample_id": "warm-4",
+            "seconds": 4.662283
+          },
+          {
+            "package_bytes": 1252683,
+            "peak_working_set_bytes": 907571200,
+            "phase_seconds": {
+              "adapt": 0.980808,
+              "materialize": 1.311796,
+              "prepare": 1.508867,
+              "simulate": 0.184094,
+              "snapshot": 0.786126
+            },
+            "process_id": 14060,
+            "sample_id": "warm-5",
+            "seconds": 4.771696
+          }
+        ]
       }
     }
   },
