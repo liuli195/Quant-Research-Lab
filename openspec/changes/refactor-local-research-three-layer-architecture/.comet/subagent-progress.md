@@ -1,0 +1,23 @@
+# Subagent Progress
+
+- Change: `refactor-local-research-three-layer-architecture`
+- Plan: `docs/superpowers/plans/2026-07-17-local-research-three-layer-architecture.md`
+- Review mode: `thorough`
+- TDD mode: `tdd`
+- Current plan task: `Task 1: 冻结旧路径的等价性与发布性能基线`
+- OpenSpec mappings:
+  - `1.1 为即时、17 ETF 扩展和 additional_delay_days=1 延迟场景补齐成交、费用、现金、持仓、净值、策略状态和逻辑摘要特征测试`
+  - `1.2 在固定 .venv 环境采集三个冷启动新进程与五次预热的主场景基线，并记录分阶段时间、峰值内存和结果包体积`
+  - `1.3 固化旧配置、停止状态、清单、代码身份和分析视图契约，确保后续破坏性迁移只能通过新 Interface 完成`
+- Stage: `done`
+- Task base: `a9bfd3c`
+- Implementer: `/root/task1_freeze_baselines`
+- Implementation commits: `78e3d79457772abc4e15d70025612a0df7a3b74f 测试：冻结本地研究等价性与性能基线`; `c35a6e8406c1c9cda81e4516d70b1749ff638a47 测试：补全本地研究冻结证据`
+- Changed files: `tests/local_quant_research/fixtures/local-research-v1-baseline.json`; `tests/local_quant_research/fixtures/performance-baseline.json`; `tests/local_quant_research/test_contract_fixtures.py`; `tests/local_quant_research/test_local_research_equivalence.py`; `tests/local_quant_research/test_turtle_vectorbt_performance.py`
+- RED evidence: 初始 `2 failed, 4 passed`、扩展 `5 failed, 4 passed`、性能结构 `1 failed`；修复轮 `5 failed in 4.41s` 精确命中完整归因、物化契约、逐次性能、采集证据和缺快照门禁
+- GREEN evidence: 修复聚焦 `5 passed in 3.21s`；行为与契约 `11 passed in 39.68s`；完整相关回归 `11 passed in 87.26s`、`0 skipped`；Ruff 与 diff check 通过
+- Risk signals: `DONE_WITH_CONCERNS`; 跨模块只读验证；`diff > 200`（551 行）
+- Task review: `spec compliant; code quality approved after fix round 1/2`
+- Review-fix round: `1/2`
+- Unresolved feedback: `none`
+- Coordinator verification: `ctypes/worker evidence confirmed from live process observation, raw 3/5 samples and report; RED/GREEN order confirmed from live agent messages and appended report; fixed-machine final regression reported 11 passed, 0 skipped`

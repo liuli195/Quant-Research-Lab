@@ -60,7 +60,7 @@ base-ref: ea195d36501848d3ba677b1e97c1aba667da7e1e
 - Consumes: 现有 `run_vectorbt_simulation()`、`to_joinquant_facts()`、11 ETF 基线、17 ETF 扩展和延迟 1 日配置。
 - Produces: `logic_digest(facts) -> str`、三个场景的行为基线与固定机器性能基线；后续迁移任务以这些 fixture（夹具）为零差异裁判。
 
-- [ ] **Step 1: 写失败的行为冻结测试**
+- [x] **Step 1: 写失败的行为冻结测试**
 
 在新测试中对每个场景固定以下摘要，摘要输入必须包含成交数量/价格/费用、每日现金/持仓/净值、海龟单位/共同止损/原因码，不能只比较最终收益：
 
@@ -83,7 +83,7 @@ def test_all_reference_scenarios_have_complete_equivalence_fixtures(repo_root: P
     assert all(set(item) == {"scenario", "orders", "fees", "cash", "positions", "value", "state", "logic"} for item in fixture["scenarios"])
 ```
 
-- [ ] **Step 2: 运行测试并确认 fixture 尚未存在**
+- [x] **Step 2: 运行测试并确认 fixture 尚未存在**
 
 Run:
 
@@ -93,7 +93,7 @@ Run:
 
 Expected: FAIL，指出两份新 fixture 缺失或未包含三个完整场景。
 
-- [ ] **Step 3: 使用旧生产路径生成并固化基线**
+- [x] **Step 3: 使用旧生产路径生成并固化基线**
 
 在测试辅助函数中从现有 `LocalExecutionFacts` 构造 canonical（规范化）摘要；对浮点数组统一编码为 little-endian float64（小端双精度），逻辑字段使用排序 JSON，再把真实摘要写入 `local-research-v1-baseline.json`。发布性能 fixture 固定以下结构并由现有三个真实场景采集值填充：
 
@@ -109,7 +109,7 @@ Expected: FAIL，指出两份新 fixture 缺失或未包含三个完整场景。
 
 采集命令必须从项目 `.venv` 启动旧公开入口；fixture 只保存摘要、阶段时间、中位峰值内存和包体积，不提交 `.local` 运行目录。
 
-- [ ] **Step 4: 复跑冻结测试和旧 E2E（端到端）测试**
+- [x] **Step 4: 复跑冻结测试和旧 E2E（端到端）测试**
 
 Run:
 
@@ -119,7 +119,7 @@ Run:
 
 Expected: PASS；三个场景都有行为摘要，性能 fixture 明确 3/5 采样与 5%/180 秒门槛。
 
-- [ ] **Step 5: 提交冻结证据**
+- [x] **Step 5: 提交冻结证据**
 
 ```powershell
 git add -- tests/local_quant_research/test_local_research_equivalence.py tests/local_quant_research/fixtures/local-research-v1-baseline.json tests/local_quant_research/fixtures/performance-baseline.json tests/local_quant_research/test_turtle_vectorbt_performance.py tests/local_quant_research/test_contract_fixtures.py
