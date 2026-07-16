@@ -53,23 +53,13 @@
     "exit_days": 20,
     "n_days": 20,
     "add_step_n": 0.5,
-    "stop_n": 2.0
+    "stop_n": 2.0,
+    "max_units": 4
   },
   "risk": {
-    "risk_per_unit": 0.005,
-    "security_risk_cap": 0.0125,
-    "security_value_cap": 0.3,
-    "asset_group_risk_cap": 0.025,
-    "asset_group_value_cap": 0.5,
-    "portfolio_risk_cap": 0.05,
-    "portfolio_value_cap": 1.0,
-    "covariance": {
-      "method": "sample",
-      "window_days": 60
-    },
-    "target_volatility": 0.1,
-    "risk_reduction_target_volatility": 0.095,
-    "minimum_aligned_samples": 60
+    "unit_risk_per_n": 0.01,
+    "asset_group_unit_cap": 6.0,
+    "portfolio_unit_cap": 12.0
   },
   "market_data": {
     "source": "joinquant",
@@ -112,22 +102,28 @@
     "remote_cleanup_required": true
   },
   "execution": {
+    "additional_delay_days": 0,
     "order_priority": [
       "full_exit",
-      "mandatory_risk_reduction",
-      "entry_or_addition"
+      "redistribution_sell",
+      "entry_or_addition",
+      "redistribution_buy"
     ],
-    "allocation": "a1_uniform_completion",
+    "allocation": "full_position_redistribution",
     "acceptance_fixture": {
       "same_security_exit_cancels_buys": true,
-      "standard_request_limit": "one_u0",
-      "uniform_completion_ratio": true,
-      "capped_budget_redistribution": true,
-      "lot_rounding": "floor_then_largest_remainder",
-      "recheck_hard_caps_each_lot": true,
-      "tie_breaker": "security_code_ascending",
+      "candidate_requires_net_buy_lot": true,
+      "group_unit_cap": 6.0,
+      "portfolio_unit_cap": 12.0,
+      "cash_scaling": "uniform",
+      "lot_rounding": "floor",
+      "residual_cash_redistribution": false,
       "input_order_invariant": true
     }
+  },
+  "costs": {
+    "commission_multiplier": 1.0,
+    "one_way_slippage": 0.0005
   },
   "research": {
     "initial_cash": 1500000,

@@ -8,8 +8,8 @@
     {"scenario_id": "entry-60", "dimension": "parameter", "overrides": {"signal": {"entry_days": 60}}},
     {"scenario_id": "stop-1-5n", "dimension": "parameter", "overrides": {"signal": {"stop_n": 1.5}}},
     {"scenario_id": "stop-2-5n", "dimension": "parameter", "overrides": {"signal": {"stop_n": 2.5}}},
-    {"scenario_id": "covariance-120d", "dimension": "parameter", "overrides": {"risk": {"covariance": {"method": "sample", "window_days": 120}}}},
-    {"scenario_id": "covariance-ewma-30d", "dimension": "parameter", "overrides": {"risk": {"covariance": {"method": "ewma", "window_days": 120, "half_life_days": 30}}}}
+    {"scenario_id": "group-unit-cap-5", "dimension": "parameter", "overrides": {"risk": {"asset_group_unit_cap": 5.0}}},
+    {"scenario_id": "portfolio-unit-cap-10", "dimension": "parameter", "overrides": {"risk": {"portfolio_unit_cap": 10.0}}}
   ],
   "universe": {
     "159819.XSHE": "china_sync_equity",
