@@ -135,8 +135,10 @@ def render_export_program(request: ExportRequest) -> str:
 
         def export_market_data():
             frames = []
+            coverage = []
             for security in SECURITIES:
-                start_date = get_security_info(security).start_date
+                security_info = get_security_info(security)
+                start_date = security_info.start_date
                 frame = get_price(
                     security,
                     start_date=start_date,
@@ -152,7 +154,16 @@ def render_export_program(request: ExportRequest) -> str:
                 frame['date'] = frame['date'].map(
                     lambda value: value.strftime('%Y-%m-%d')
                 )
+                if frame.empty:
+                    raise ValueError('security has no market rows: ' + security)
                 frame.insert(1, 'security', security)
+                coverage.append({{
+                    'security': security,
+                    'official_start_date': _text(security_info.start_date),
+                    'first_market_date': frame['date'].iloc[0],
+                    'last_market_date': frame['date'].iloc[-1],
+                    'market_rows': len(frame),
+                }})
                 frames.append(frame[OUTPUT_FIELDS])
 
             if not frames:
@@ -161,7 +172,9 @@ def render_export_program(request: ExportRequest) -> str:
             output = output[OUTPUT_FIELDS].sort_values(
                 ['date', 'security'], kind='mergesort'
             )
-            return _write_verified(REMOTE_PATH, output)
+            result = _write_verified(REMOTE_PATH, output)
+            result['securities'] = coverage
+            return result
 
 
         def export_corporate_actions():

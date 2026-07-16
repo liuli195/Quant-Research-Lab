@@ -105,7 +105,8 @@ def test_rendered_program_uses_verified_joinquant_research_contract() -> None:
     )
 
     compile(program, "<joinquant-export>", "exec")
-    assert "get_security_info(security).start_date" in program
+    assert "security_info = get_security_info(security)" in program
+    assert "start_date = security_info.start_date" in program
     assert "get_price(" in program
     assert "fq=None" in program
     assert "skip_paused=False" in program
@@ -230,6 +231,15 @@ def test_rendered_program_executes_with_injected_research_apis() -> None:
         payload
     ).hexdigest()
     assert namespace["export_result"]["market_data"]["rows"] == 2
+    assert namespace["export_result"]["market_data"]["securities"] == [
+        {
+            "security": "510300.XSHG",
+            "official_start_date": "2026-01-05",
+            "first_market_date": "2026-01-05",
+            "last_market_date": "2026-01-06",
+            "market_rows": 2,
+        }
+    ]
     assert namespace["export_result"]["corporate_actions"]["sha256"] == (
         hashlib.sha256(action_payload).hexdigest()
     )
