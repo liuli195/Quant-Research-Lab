@@ -12,9 +12,12 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from scripts.research.local_quant_research.contracts import OutputSpec
-from scripts.research.local_quant_research.evidence import collect_output_evidence
+from scripts.research.local_quant_research.evidence import (
+    EvidenceError,
+    canonical_digest,
+    collect_output_evidence,
+)
 from scripts.research.local_quant_research.runner import _project_status, run_project
-from scripts.research.local_quant_research.evidence import canonical_digest
 from scripts.research.market_data.contracts import SnapshotSelection
 from scripts.research.market_data.storage import create_snapshot, import_batch
 
@@ -34,9 +37,15 @@ FIELDS = (
     "high_limit",
     "low_limit",
 )
+COMPLETE_STATUS = {
+    "schema_version": 1,
+    "status": "complete",
+    "reason_codes": [],
+    "next_action": "return_to_caller",
+}
 
 
-def test_complete_project_status_can_declare_human_confirmation_next_action(
+def test_complete_project_status_rejects_human_confirmation_next_action(
     tmp_path: Path,
 ) -> None:
     _write_json(
@@ -49,7 +58,8 @@ def test_complete_project_status_can_declare_human_confirmation_next_action(
         },
     )
 
-    assert _project_status(tmp_path) == ("complete", ())
+    with pytest.raises(EvidenceError, match="next_action"):
+        _project_status(tmp_path)
 
 
 def test_complete_project_status_can_return_single_scenario_to_caller(
@@ -185,7 +195,7 @@ def _successful_process(
         output_dir = _output_dir(command)
         _write_json(
             output_dir / "project-status.json",
-            {"schema_version": 1, "status": "complete", "reason_codes": []},
+            COMPLETE_STATUS,
         )
         _write_json(output_dir / "result.json", {"answer": 42})
         return subprocess.CompletedProcess(command, 0, stdout="ignored", stderr="ignored")
@@ -454,6 +464,35 @@ def test_same_complete_identity_is_revalidated_and_reused_without_execution(
     assert {path.name: _sha256(path) for path in second.run_path.iterdir()} == before
 
 
+def test_complete_run_with_human_confirmation_status_is_not_reused(
+    repo_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_root, config_path, _ = _build_repo(tmp_path, repo_root)
+    monkeypatch.setattr(subprocess, "run", _successful_process())
+    first = run_project(config_path, repo_root=fake_root)
+    _write_json(
+        first.run_path / "project-status.json",
+        {
+            "schema_version": 1,
+            "status": "complete",
+            "reason_codes": [],
+            "next_action": "human_confirmation_required",
+        },
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("invalid complete run must not execute"),
+    )
+
+    result = run_project(config_path, repo_root=fake_root)
+
+    assert result.status == "failed"
+    assert result.reused is False
+
+
 def test_tampered_complete_output_fails_without_overwriting_old_run(
     repo_root: Path,
     tmp_path: Path,
@@ -642,7 +681,7 @@ def test_missing_required_output_is_failed(tmp_path: Path, repo_root: Path, monk
     def process(command: list[str], **kwargs):
         _write_json(
             _output_dir(command) / "project-status.json",
-            {"schema_version": 1, "status": "complete", "reason_codes": []},
+            COMPLETE_STATUS,
         )
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -696,7 +735,7 @@ def test_project_reads_frozen_input_when_original_changes_temporarily(
         output_dir = _output_dir(command)
         _write_json(
             output_dir / "project-status.json",
-            {"schema_version": 1, "status": "complete", "reason_codes": []},
+            COMPLETE_STATUS,
         )
         _write_json(output_dir / "result.json", {"input": value_used})
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
