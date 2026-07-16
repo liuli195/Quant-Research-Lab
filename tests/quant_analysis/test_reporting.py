@@ -136,19 +136,19 @@ def _analysis() -> dict[str, object]:
                 "near_full_ratio": 0.0017,
                 "average_cash_ratio": 0.737,
                 "maximum_invested_ratio": 1.0,
+                "maximum_security_weight": 0.4,
+                "maximum_asset_group_weight": 0.5,
                 "planned_risk_coverage": 1.0,
-                "maximum_portfolio_planned_risk_usage": 0.325,
+                "maximum_planned_loss_ratio": 0.0325,
+                "maximum_effective_risk_units": 12.0,
+                "maximum_portfolio_unit_utilization": 1.0,
                 "maximum_realized_60d_volatility": 0.1835,
-                "realized_60d_volatility_above_target_days": 39,
                 "filled_order_count": 438,
                 "closed_order_count": 201,
                 "closed_order_win_rate": 0.5423,
                 "fees": 7454.77,
                 "protective_stop_events": 65,
-                "risk_constraint_events": 3245,
-                "mark_to_market_security_weight_above_entry_cap_rows": 1845,
-                "mark_to_market_group_weight_above_entry_cap_rows": 0,
-                "mark_to_market_portfolio_weight_above_cap_days": 0,
+                "redistribution_event_count": 3245,
             },
         },
         "benchmarks": {
@@ -291,6 +291,12 @@ def test_report_is_complete_and_explicitly_excludes_vibe_group_analysis() -> Non
     assert "公司行动元数据只用于审计" in report
     assert "经济单位不等同于真实 ETF 份额" in report
     assert "不能与聚宽逐日账户精确对账" in report
+    assert "最高计划损失比例" in report
+    assert "最高有效 N 风险单位" in report
+    assert "组合单位预算最高利用率" in report
+    assert "全量仓位再分配事件" in report
+    assert "高于入场上限" not in report
+    assert "高于目标" not in report
     assert "human_confirmation_required" in report
 
 

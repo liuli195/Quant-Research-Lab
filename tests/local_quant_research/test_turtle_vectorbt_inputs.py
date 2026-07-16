@@ -56,10 +56,7 @@ def _config() -> dict[str, object]:
             {"security": "ETF-A", "asset_group": "group-a"},
         ],
         "signal": {"entry_days": 2, "exit_days": 2, "n_days": 2},
-        "risk": {
-            "covariance": {"method": "sample", "window_days": 2},
-            "minimum_aligned_samples": 2,
-        },
+        "risk": {},
         "execution": {"additional_delay_days": 0},
     }
 
@@ -71,19 +68,13 @@ def _simulation_config() -> dict[str, object]:
         **config["signal"],
         "add_step_n": 0.5,
         "stop_n": 2.0,
+        "max_units": 4,
     }
     config["risk"] = {
-        **config["risk"],
         "lot_size": 100,
-        "risk_per_unit": 0.01,
-        "security_risk_cap": 1.0,
-        "security_value_cap": 1.0,
-        "asset_group_risk_cap": 1.0,
-        "asset_group_value_cap": 1.0,
-        "portfolio_risk_cap": 1.0,
-        "portfolio_value_cap": 1.0,
-        "target_volatility": 10.0,
-        "risk_reduction_target_volatility": 9.5,
+        "unit_risk_per_n": 0.005,
+        "asset_group_unit_cap": 6.0,
+        "portfolio_unit_cap": 12.0,
     }
     config["costs"] = {
         "commission_multiplier": 1.0,
@@ -170,12 +161,34 @@ def test_simulation_inputs_are_aligned_stable_and_read_only() -> None:
     assert inputs.paused.dtype == np.dtype("bool")
     assert inputs.close.dtype == np.dtype("float64")
     assert inputs.close.flags.c_contiguous
-    assert inputs.covariance.shape == (6, 2, 2)
     for value in vars(inputs).values():
         if isinstance(value, np.ndarray):
             assert not value.flags.writeable
     with pytest.raises(ValueError):
         inputs.close[0, 0] = 999.0
+
+
+def test_additional_execution_delay_does_not_move_signal_inputs() -> None:
+    frames = {
+        "ETF-B": _frame("ETF-B", [20.0, 21.0, 22.0, 23.0, 24.0, 25.0]),
+        "ETF-A": _frame("ETF-A", [9.0, 10.0, 13.0, 12.0, 14.0, 15.0]),
+    }
+    immediate_config = _config()
+    delayed_config = _config()
+    delayed_config["execution"] = {"additional_delay_days": 1}
+
+    immediate = prepare_simulation_inputs(frames, immediate_config)
+    delayed = prepare_simulation_inputs(frames, delayed_config)
+
+    assert np.array_equal(delayed.signal_source_index, immediate.signal_source_index)
+    assert np.array_equal(delayed.signal_close, immediate.signal_close, equal_nan=True)
+    assert np.array_equal(
+        delayed.signal_entry_high, immediate.signal_entry_high, equal_nan=True
+    )
+    assert np.array_equal(
+        delayed.signal_exit_low, immediate.signal_exit_low, equal_nan=True
+    )
+    assert np.array_equal(delayed.signal_n, immediate.signal_n, equal_nan=True)
 
 
 def test_signal_inputs_are_shifted_to_execution_row_without_future_data() -> None:
@@ -261,8 +274,6 @@ def test_simulation_inputs_expose_only_strategy_and_risk_arrays() -> None:
         "signal_entry_high",
         "signal_exit_low",
         "signal_n",
-        "covariance",
-        "covariance_eligible",
     )
 
 
@@ -468,14 +479,3 @@ def test_corporate_action_digest_mismatch_closes_the_run() -> None:
             corporate_actions_digest="0" * 64,
         )
 
-
-def test_covariance_returns_use_continuous_close_over_continuous_pre_close() -> None:
-    inputs = prepare_simulation_inputs(
-        {"ETF-A": _corporate_action_frame()},
-        _single_config(),
-        corporate_actions=[_corporate_action()],
-    )
-    returns = np.array([0.0, 0.02, 0.0, 1.0 / 51.0, 1.0 / 52.0])
-
-    assert inputs.covariance[3, 0, 0] == pytest.approx(np.var(returns[1:3], ddof=1))
-    assert inputs.covariance[4, 0, 0] == pytest.approx(np.var(returns[2:4], ddof=1))

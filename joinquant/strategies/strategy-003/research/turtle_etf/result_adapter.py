@@ -21,11 +21,12 @@ from .vectorbt_callbacks import (
     ACTION_ENTRY,
     ACTION_FULL_EXIT,
     ACTION_NONE,
-    ACTION_RISK_REDUCTION,
+    ACTION_REDISTRIBUTION_BUY,
+    ACTION_REDISTRIBUTION_SELL,
     REASON_ALLOCATION_CONSTRAINT,
     REASON_ENTRY_BREAKOUT,
     REASON_FIXED_ADDITION_LEVEL,
-    REASON_HELD_RISK_INPUT_MISSING,
+    REASON_FULL_POSITION_REDISTRIBUTION,
     REASON_HIGH_LIMIT,
     REASON_LOW_LIMIT,
     REASON_MISSING_OPEN,
@@ -33,8 +34,14 @@ from .vectorbt_callbacks import (
     REASON_ORDER_REJECTED,
     REASON_PAUSED,
     REASON_PROTECTIVE_STOP,
-    REASON_TARGET_VOLATILITY_REDUCTION,
     REASON_TREND_EXIT,
+)
+from .vectorbt_delayed import (
+    ADJUST_CASH_TRUNCATED,
+    ADJUST_HOLDING_TRUNCATED,
+    ADJUST_HORIZON_EXPIRED,
+    ADJUST_NONE,
+    ADJUST_UNTRADABLE,
 )
 
 
@@ -59,8 +66,8 @@ _REASON_CODES = {
     "signal_add",
     "signal_exit",
     "protective_stop",
-    "forced_risk_reduction",
-    "risk_gate_block",
+    "full_position_redistribution",
+    "allocation_constraint",
     "untradeable",
     "order_rejected",
     "state_update",
@@ -83,9 +90,10 @@ _ACCOUNTING_CONTRACT = {
 _ACTION_NAMES = {
     ACTION_NONE: "none",
     ACTION_FULL_EXIT: "full_exit",
-    ACTION_RISK_REDUCTION: "risk_reduction",
+    ACTION_REDISTRIBUTION_SELL: "redistribution_sell",
     ACTION_ENTRY: "entry",
     ACTION_ADDITION: "addition",
+    ACTION_REDISTRIBUTION_BUY: "redistribution_buy",
 }
 _REASON_NAMES = {
     REASON_NONE: "none",
@@ -93,16 +101,22 @@ _REASON_NAMES = {
     REASON_FIXED_ADDITION_LEVEL: "fixed_addition_level",
     REASON_PROTECTIVE_STOP: "protective_stop",
     REASON_TREND_EXIT: "trend_exit",
-    REASON_TARGET_VOLATILITY_REDUCTION: "target_volatility_reduction",
+    REASON_FULL_POSITION_REDISTRIBUTION: "full_position_redistribution",
     REASON_MISSING_OPEN: "missing_open",
     REASON_PAUSED: "paused",
     REASON_HIGH_LIMIT: "high_limit",
     REASON_LOW_LIMIT: "low_limit",
     REASON_ALLOCATION_CONSTRAINT: "allocation_constraint",
-    REASON_HELD_RISK_INPUT_MISSING: "held_risk_input_missing",
     REASON_ORDER_REJECTED: "order_rejected",
 }
-_SELL_ACTIONS = {"full_exit", "risk_reduction"}
+_SELL_ACTIONS = {"full_exit", "redistribution_sell"}
+_ADJUSTMENT_NAMES = {
+    ADJUST_NONE: "none",
+    ADJUST_CASH_TRUNCATED: "cash_truncated",
+    ADJUST_HOLDING_TRUNCATED: "holding_truncated",
+    ADJUST_UNTRADABLE: "untradable",
+    ADJUST_HORIZON_EXPIRED: "horizon_expired",
+}
 
 _RESULTS_SCHEMA = pa.schema(
     [
@@ -233,6 +247,16 @@ def _nullable(value: float) -> float | None:
     return float(value) if np.isfinite(value) else None
 
 
+def _safe_simulation_number(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if np.isfinite(numeric) else None
+
+
 def _changed(left: float, right: float) -> bool:
     if np.isnan(left) and np.isnan(right):
         return False
@@ -264,12 +288,14 @@ def _reason_code(action: str, source_reason: str) -> str:
         return "order_rejected"
     if source_reason in {"missing_open", "paused", "high_limit", "low_limit"}:
         return "untradeable"
-    if source_reason in {"allocation_constraint", "held_risk_input_missing"}:
-        return "risk_gate_block"
+    if source_reason == "allocation_constraint":
+        return "allocation_constraint"
     if source_reason == "protective_stop":
         return "protective_stop"
-    if action == "risk_reduction" or source_reason == "target_volatility_reduction":
-        return "forced_risk_reduction"
+    if action in {"redistribution_sell", "redistribution_buy"} or (
+        source_reason == "full_position_redistribution"
+    ):
+        return "full_position_redistribution"
     if action == "full_exit" or source_reason == "trend_exit":
         return "signal_exit"
     if action == "entry":
@@ -288,6 +314,8 @@ def _planned_risk(quantity: int, average_cost: float, common_stop: float) -> flo
 
 
 def _json_value(value: object) -> object:
+    if isinstance(value, (np.bool_, bool)):
+        return bool(value)
     if isinstance(value, (np.integer, int)):
         return int(value)
     if isinstance(value, (np.floating, float)):
@@ -343,12 +371,87 @@ def to_joinquant_facts(
     next_add = _matrix(
         simulation.state_next_add_index, shape, "state_next_add_index"
     ).astype(np.int64)
+    unit_counts = _matrix(
+        getattr(simulation, "state_unit_counts", next_add),
+        shape,
+        "state_unit_counts",
+    ).astype(np.int64)
+    candidate_base_quantities = _matrix(
+        getattr(
+            simulation,
+            "candidate_base_quantities",
+            np.where(
+                np.isin(actions, [ACTION_ENTRY, ACTION_ADDITION]),
+                requested,
+                0,
+            ),
+        ),
+        shape,
+        "candidate_base_quantities",
+    ).astype(np.int64)
+    event_group_scales = _matrix(
+        getattr(
+            simulation,
+            "event_group_scales",
+            np.ones(shape, dtype=np.float64),
+        ),
+        shape,
+        "event_group_scales",
+    ).astype(np.float64)
+    event_portfolio_scales = _vector(
+        getattr(
+            simulation,
+            "event_portfolio_scales",
+            np.ones(rows, dtype=np.float64),
+        ),
+        rows,
+        "event_portfolio_scales",
+    )
+    event_cash_scales = _vector(
+        getattr(
+            simulation,
+            "event_cash_scales",
+            np.ones(rows, dtype=np.float64),
+        ),
+        rows,
+        "event_cash_scales",
+    )
+    portfolio_unit_cap = _safe_simulation_number(
+        getattr(simulation, "portfolio_unit_cap", None)
+    )
     raw_signal_n = getattr(inputs, "signal_n", None)
     signal_n = (
         np.full(shape, np.nan, dtype=np.float64)
         if raw_signal_n is None
         else _matrix(raw_signal_n, shape, "signal_n").astype(np.float64)
     )
+    row_indices = np.broadcast_to(
+        np.arange(rows, dtype=np.int64)[:, None], shape
+    )
+    planned_row_indices = _matrix(
+        getattr(
+            simulation,
+            "planned_row_indices",
+            np.where(actions != ACTION_NONE, row_indices, -1),
+        ),
+        shape,
+        "planned_row_indices",
+    ).astype(np.int64)
+    adjustments = _matrix(
+        getattr(
+            simulation,
+            "execution_adjustment_codes",
+            np.zeros(shape, dtype=np.int16),
+        ),
+        shape,
+        "execution_adjustment_codes",
+    ).astype(np.int64)
+    frozen_signal_n = _matrix(
+        getattr(simulation, "frozen_signal_n", signal_n),
+        shape,
+        "frozen_signal_n",
+    ).astype(np.float64)
+    execution_delay_days = int(getattr(simulation, "execution_delay_days", 0))
     if np.any(requested < 0) or np.any(planned < 0) or np.any(filled < 0):
         raise ResultContractError("simulation quantities must be non-negative")
     if not np.all(np.isfinite(fees)) or np.any(fees < 0.0):
@@ -357,6 +460,13 @@ def to_joinquant_facts(
         raise ResultContractError("simulation action code is unknown")
     if any(int(value) not in _REASON_NAMES for value in np.unique(reasons)):
         raise ResultContractError("simulation reason code is unknown")
+    if any(int(value) not in _ADJUSTMENT_NAMES for value in np.unique(adjustments)):
+        raise ResultContractError("simulation execution adjustment code is unknown")
+    if execution_delay_days < 0:
+        raise ResultContractError("simulation execution delay is invalid")
+    active_plan_rows = planned_row_indices[actions != ACTION_NONE]
+    if np.any(active_plan_rows < 0) or np.any(active_plan_rows >= rows):
+        raise ResultContractError("simulation planned row is invalid")
 
     values = _vector(simulation.portfolio.value(), rows, "value")
     cash = _vector(simulation.portfolio.cash(), rows, "cash")
@@ -368,6 +478,7 @@ def to_joinquant_facts(
     previous_close = np.full(columns, np.nan, dtype=np.float64)
     previous_stop = np.full(columns, np.nan, dtype=np.float64)
     previous_next_add = np.zeros(columns, dtype=np.int64)
+    previous_unit_count = np.zeros(columns, dtype=np.int64)
     order_rows: list[dict[str, object]] = []
     position_rows: list[dict[str, object]] = []
     attribution_rows: list[dict[str, object]] = []
@@ -447,6 +558,54 @@ def to_joinquant_facts(
             }
         )
 
+    for expired in getattr(simulation, "horizon_expired_orders", ()):
+        planned_row = int(getattr(expired, "planned_row_index"))
+        column = int(getattr(expired, "column"))
+        if not 0 <= planned_row < rows or not 0 <= column < columns:
+            raise ResultContractError("horizon-expired order identity is invalid")
+        date_text = _date_text(dates[planned_row])
+        security = securities[column]
+        action = _ACTION_NAMES[int(getattr(expired, "action_code"))]
+        source_reason = _REASON_NAMES[int(getattr(expired, "reason_code"))]
+        reason_code = _reason_code(action, source_reason)
+        target = int(getattr(expired, "target_quantity"))
+        requested_quantity = int(getattr(expired, "requested_quantity"))
+        delay_days = int(getattr(expired, "delay_days"))
+        attribution_rows.append(
+            {
+                "time": f"{date_text} 09:30:00",
+                "event_id": _event_id(
+                    scenario_id,
+                    date_text,
+                    security,
+                    "decision",
+                    reason_code + ":horizon_expired",
+                ),
+                "scope": "security",
+                "security": security,
+                "event_type": "decision",
+                "reason_code": reason_code,
+                "requested_amount": float(requested_quantity),
+                "executed_amount": 0.0,
+                "reference_price": _nullable(float(close[planned_row, column])),
+                "risk_before": None,
+                "risk_after": None,
+                "details_json": _details(
+                    action=action,
+                    source_reason=source_reason,
+                    planned_date=date_text,
+                    execution_date=None,
+                    delay_days=delay_days,
+                    frozen_reason=source_reason,
+                    frozen_target_amount=target,
+                    frozen_signal_n=float(getattr(expired, "signal_n")),
+                    execution_adjustment="horizon_expired",
+                    planned_amount=target,
+                    state_changed=False,
+                ),
+            }
+        )
+
     for row in range(rows):
         date_text = _date_text(dates[row])
         execution_time = f"{date_text} 09:30:00"
@@ -458,7 +617,14 @@ def to_joinquant_facts(
             action = _ACTION_NAMES[int(actions[row, column])]
             source_reason = _REASON_NAMES[int(reasons[row, column])]
             reason_code = _reason_code(action, source_reason)
+            adjustment = _ADJUSTMENT_NAMES[int(adjustments[row, column])]
+            planned_row = int(planned_row_indices[row, column])
+            planned_date = (
+                _date_text(dates[planned_row]) if planned_row >= 0 else date_text
+            )
+            entrust_time = f"{planned_date} 09:30:00"
             quantity = int(filled[row, column])
+            frozen_target = max(int(planned[row, column]), quantity)
             before = int(previous_quantity[column])
             before_cost = float(average_cost[column])
             fee = float(fees[row, column])
@@ -493,8 +659,8 @@ def to_joinquant_facts(
                         "cancel_time": None,
                         "action": "close" if is_sell else "open",
                         "limit_price": 0.0,
-                        "comment": "",
-                        "entrust_time": execution_time,
+                        "comment": "" if adjustment == "none" else adjustment,
+                        "entrust_time": entrust_time,
                         "finish_time": execution_time,
                         "side": "long",
                         "price": price,
@@ -505,13 +671,15 @@ def to_joinquant_facts(
                         "security_name": security,
                         "security": security,
                         "filled": quantity,
-                        "amount": quantity,
+                        "amount": frozen_target,
                         "status": "done",
                     }
                 )
             elif int(state_quantities[row, column]) != before:
                 raise ResultContractError("position changed without a filled order")
-            elif source_reason == "order_rejected" and action != "none":
+            elif action != "none" and (
+                source_reason == "order_rejected" or adjustment != "none"
+            ):
                 amount = max(
                     int(requested[row, column]), int(planned[row, column])
                 )
@@ -524,8 +692,12 @@ def to_joinquant_facts(
                         "cancel_time": execution_time,
                         "action": "close" if is_sell else "open",
                         "limit_price": 0.0,
-                        "comment": source_reason,
-                        "entrust_time": execution_time,
+                        "comment": (
+                            source_reason
+                            if adjustment == "none"
+                            else adjustment
+                        ),
+                        "entrust_time": entrust_time,
                         "finish_time": None,
                         "side": "long",
                         "price": 0.0,
@@ -544,10 +716,23 @@ def to_joinquant_facts(
             after = int(state_quantities[row, column])
             stop_after = float(common_stops[row, column])
             next_after = int(next_add[row, column])
+            units_after = int(unit_counts[row, column])
             state_changed = (
                 before != after
                 or _changed(float(previous_stop[column]), stop_after)
                 or int(previous_next_add[column]) != next_after
+            )
+            logical_state_changed = (
+                _changed(float(previous_stop[column]), stop_after)
+                or int(previous_next_add[column]) != next_after
+                or int(previous_unit_count[column]) != units_after
+            )
+            effective_risk_units = float(
+                np.sum(
+                    unit_counts[row].astype(np.float64)
+                    * event_group_scales[row]
+                )
+                * event_portfolio_scales[row]
             )
             risk_before = _planned_risk(
                 before, before_cost, float(previous_stop[column])
@@ -593,7 +778,51 @@ def to_joinquant_facts(
                             common_stop_after=stop_after,
                             next_add_before=int(previous_next_add[column]),
                             next_add_after=next_after,
+                            unit_count_before=int(previous_unit_count[column]),
+                            unit_count_after=units_after,
+                            candidate_base_quantity=int(
+                                candidate_base_quantities[row, column]
+                            ),
+                            frozen_signal_n=float(
+                                frozen_signal_n[row, column]
+                            ),
+                            actual_fill_price=(
+                                float(fill_prices[row, column])
+                                if quantity > 0
+                                else np.nan
+                            ),
+                            group_scale=float(
+                                event_group_scales[row, column]
+                            ),
+                            portfolio_scale=float(
+                                event_portfolio_scales[row]
+                            ),
+                            cash_scale=float(event_cash_scales[row]),
+                            effective_risk_units=effective_risk_units,
+                            portfolio_unit_cap=portfolio_unit_cap,
+                            redistribution_state_changed=(
+                                logical_state_changed
+                                if action
+                                in {
+                                    "redistribution_sell",
+                                    "redistribution_buy",
+                                }
+                                else None
+                            ),
                             state_changed=state_changed,
+                            **(
+                                {
+                                    "planned_date": planned_date,
+                                    "execution_date": date_text,
+                                    "delay_days": execution_delay_days,
+                                    "frozen_reason": source_reason,
+                                    "frozen_target_amount": frozen_target,
+                                    "execution_adjustment": adjustment,
+                                }
+                                if execution_delay_days > 0
+                                or adjustment != "none"
+                                else {}
+                            ),
                         ),
                     }
                 )
@@ -711,6 +940,7 @@ def to_joinquant_facts(
             previous_quantity[column] = after
             previous_stop[column] = stop_after
             previous_next_add[column] = next_after
+            previous_unit_count[column] = units_after
 
         portfolio_daily_pnl = float(values[row]) - (
             initial_cash if row == 0 else float(values[row - 1])
@@ -927,12 +1157,20 @@ def validate_turtle_attribution(facts: LocalExecutionFacts) -> None:
     }
     if coverage != filled_orders:
         raise ResultContractError("attribution does not cover every order")
-    rejected_coverage = {
-        (str(item["time"])[:10], str(item["security"]))
-        for item in rows
-        if item["event_type"] == "decision"
-        and item["reason_code"] == "order_rejected"
-    }
+    rejected_coverage = set()
+    for item in rows:
+        if item["event_type"] != "decision":
+            continue
+        details = parsed_details[str(item["event_id"])]
+        adjustment = details.get("execution_adjustment", "none")
+        is_canceled_adjustment = (
+            adjustment in {"cash_truncated", "holding_truncated", "untradable"}
+            and float(item["executed_amount"] or 0.0) == 0.0
+        )
+        if item["reason_code"] == "order_rejected" or is_canceled_adjustment:
+            rejected_coverage.add(
+                (str(item["time"])[:10], str(item["security"]))
+            )
     canceled_orders = {
         (str(item["time"])[:10], str(item["security"]))
         for item in facts.orders.to_pylist()

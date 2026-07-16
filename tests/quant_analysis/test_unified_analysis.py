@@ -357,7 +357,7 @@ def test_analysis_seconds_are_recorded_once_and_preserved_on_rerun(
     assert second["analysis_seconds"] == 7.25
 
 
-def test_risk_diagnostics_do_not_mislabel_mark_to_market_rows_as_gate_breaches() -> None:
+def test_risk_diagnostics_use_actual_exposure_and_optional_turtle_units() -> None:
     date = pd.Timestamp("2024-01-02")
     scenario = ScenarioInput(
         scenario_id="baseline",
@@ -382,20 +382,29 @@ def test_risk_diagnostics_do_not_mislabel_mark_to_market_rows_as_gate_breaches()
             {
                 "event_type": ["decision", "valuation", "decision", "valuation"],
                 "reason_code": [
-                    "risk_gate_block",
-                    "risk_gate_block",
+                    "full_position_redistribution",
+                    "full_position_redistribution",
                     "protective_stop",
                     "protective_stop",
+                ],
+                "details_json": [
+                    json.dumps(
+                        {
+                            "effective_risk_units": 12.0,
+                            "portfolio_unit_cap": 12.0,
+                        }
+                    ),
+                    "{}",
+                    "{}",
+                    "{}",
                 ],
             }
         ),
         params={
             "risk": {
-                "security_value_cap": 0.3,
-                "asset_group_value_cap": 0.5,
-                "portfolio_value_cap": 0.9,
-                "portfolio_risk_cap": 0.1,
-                "target_volatility": 0.1,
+                "unit_risk_per_n": 0.01,
+                "asset_group_unit_cap": 6.0,
+                "portfolio_unit_cap": 12.0,
             }
         },
         performance={},
@@ -413,13 +422,41 @@ def test_risk_diagnostics_do_not_mislabel_mark_to_market_rows_as_gate_breaches()
 
     metrics = _risk_metrics(scenario, positions)
 
-    assert metrics["mark_to_market_security_weight_above_entry_cap_rows"] == 1
-    assert metrics["mark_to_market_group_weight_above_entry_cap_rows"] == 0
-    assert metrics["mark_to_market_portfolio_weight_above_cap_days"] == 0
-    assert metrics["realized_60d_volatility_above_target_days"] == 0
-    assert metrics["risk_constraint_events"] == 1
+    assert metrics["maximum_security_weight"] == pytest.approx(0.4)
+    assert metrics["maximum_asset_group_weight"] == pytest.approx(0.4)
+    assert metrics["maximum_planned_loss_ratio"] == pytest.approx(0.01)
+    assert metrics["maximum_effective_risk_units"] == pytest.approx(12.0)
+    assert metrics["maximum_portfolio_unit_utilization"] == pytest.approx(1.0)
+    assert metrics["redistribution_event_count"] == 1
     assert metrics["protective_stop_events"] == 1
-    assert "security_value_cap_breaches" not in metrics
+    assert "mark_to_market_security_weight_above_entry_cap_rows" not in metrics
+    assert "realized_60d_volatility_above_target_days" not in metrics
+
+
+def test_risk_diagnostics_accept_joinquant_results_without_turtle_evidence() -> None:
+    date = pd.Timestamp("2024-01-02")
+    scenario = ScenarioInput(
+        scenario_id="joinquant",
+        run_id="run-1",
+        result_dir=Path("."),
+        returns=pd.Series([0.0], index=[date]),
+        balances=pd.DataFrame(
+            {"date": [date], "total_value": [1000.0], "cash": [1000.0]}
+        ),
+        positions=pd.DataFrame(),
+        orders=pd.DataFrame(
+            columns=["status", "filled", "action", "price", "commission", "gains"]
+        ),
+        events=pd.DataFrame(),
+        params={},
+        performance={},
+    )
+
+    metrics = _risk_metrics(scenario, pd.DataFrame())
+
+    assert metrics["maximum_effective_risk_units"] is None
+    assert metrics["maximum_portfolio_unit_utilization"] is None
+    assert metrics["redistribution_event_count"] == 0
 
 
 def test_deletion_sensitivity_keeps_unheld_securities_and_groups_in_matrix() -> None:
@@ -520,7 +557,9 @@ def test_source_registration_rejects_duplicate_run_ids(tmp_path: Path) -> None:
         _register_source_results(root, workspace, registry)
 
 
-def test_source_registration_requires_exactly_seven_scenarios(tmp_path: Path) -> None:
+def test_source_registration_supports_baseline_plus_one_challenge(
+    tmp_path: Path,
+) -> None:
     root = tmp_path
     workspace = root / ".local" / "strategy-analysis-preparations" / "preparation-1"
     _write_json(workspace / "preparation.json", {"preparation_id": "preparation-1"})
@@ -528,11 +567,35 @@ def test_source_registration_requires_exactly_seven_scenarios(tmp_path: Path) ->
     scenarios = json.loads(
         (workspace / "analysis-scenarios.json").read_text(encoding="utf-8")
     )
-    removed = scenarios["scenarios"].pop()
-    registry.pop(removed["scenario_id"])
+    scenarios["scenarios"] = scenarios["scenarios"][:2]
+    registry = {
+        scenario["scenario_id"]: registry[scenario["scenario_id"]]
+        for scenario in scenarios["scenarios"]
+    }
     _write_json(workspace / "analysis-scenarios.json", scenarios)
 
-    with pytest.raises(UnifiedAnalysisError, match="exactly seven"):
+    document = _register_source_results(root, workspace, registry)
+
+    assert [source["scenario_id"] for source in document["sources"]] == [
+        "baseline",
+        "entry-40",
+    ]
+    assert document["source_registry"]["scenario_count"] == 2
+
+
+def test_source_registration_requires_at_least_two_scenarios(tmp_path: Path) -> None:
+    root = tmp_path
+    workspace = root / ".local" / "strategy-analysis-preparations" / "preparation-1"
+    _write_json(workspace / "preparation.json", {"preparation_id": "preparation-1"})
+    registry = _source_fixture(root, workspace)
+    scenarios = json.loads(
+        (workspace / "analysis-scenarios.json").read_text(encoding="utf-8")
+    )
+    scenarios["scenarios"] = scenarios["scenarios"][:1]
+    registry = {"baseline": registry["baseline"]}
+    _write_json(workspace / "analysis-scenarios.json", scenarios)
+
+    with pytest.raises(UnifiedAnalysisError, match="at least two planned scenarios"):
         _register_source_results(root, workspace, registry)
 
 

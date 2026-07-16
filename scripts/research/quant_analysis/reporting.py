@@ -466,45 +466,24 @@ def render_analysis_report(
                     ["接近满仓的日期占比", _pct(risk.get("near_full_ratio"))],
                     ["平均现金", _pct(risk.get("average_cash_ratio"))],
                     ["最高仓位", _pct(risk.get("maximum_invested_ratio"))],
+                    ["最高单标的权重", _pct(risk.get("maximum_security_weight"))],
+                    ["最高资产组权重", _pct(risk.get("maximum_asset_group_weight"))],
                     ["计划风险覆盖率", _pct(risk.get("planned_risk_coverage"))],
                     [
-                        "最高组合计划风险/风险预算",
-                        _pct(risk.get("maximum_portfolio_planned_risk_usage")),
+                        "最高计划损失比例",
+                        _pct(risk.get("maximum_planned_loss_ratio")),
+                    ],
+                    [
+                        "最高有效 N 风险单位",
+                        _num(risk.get("maximum_effective_risk_units"), 2),
+                    ],
+                    [
+                        "组合单位预算最高利用率",
+                        _pct(risk.get("maximum_portfolio_unit_utilization")),
                     ],
                     ["最高60日已实现波动率", _pct(risk.get("maximum_realized_60d_volatility"))],
-                    [
-                        "60日已实现波动率高于目标的天数",
-                        _num(risk.get("realized_60d_volatility_above_target_days"), 0),
-                    ],
-                    [
-                        "持有期单证券权重高于入场上限的记录",
-                        _num(
-                            risk.get(
-                                "mark_to_market_security_weight_above_entry_cap_rows"
-                            ),
-                            0,
-                        ),
-                    ],
-                    [
-                        "持有期资产组权重高于入场上限的记录",
-                        _num(
-                            risk.get(
-                                "mark_to_market_group_weight_above_entry_cap_rows"
-                            ),
-                            0,
-                        ),
-                    ],
-                    [
-                        "组合权重高于上限的日期",
-                        _num(
-                            risk.get("mark_to_market_portfolio_weight_above_cap_days"),
-                            0,
-                        ),
-                    ],
                 ],
             ),
-            "",
-            "上述持有期权重记录是按收盘市值观察的诊断，不等同于下单时风险门禁失效；价格上涨可以使持仓在成交后超过入场上限。",
             "",
             "### 交易与成本",
             "",
@@ -516,7 +495,10 @@ def render_analysis_report(
                     ["平仓胜率", _pct(risk.get("closed_order_win_rate"))],
                     ["费用", _money(risk.get("fees"))],
                     ["保护止损事件", _num(risk.get("protective_stop_events"), 0)],
-                    ["风险约束事件", _num(risk.get("risk_constraint_events"), 0)],
+                    [
+                        "全量仓位再分配事件",
+                        _num(risk.get("redistribution_event_count"), 0),
+                    ],
                 ],
             ),
             "",

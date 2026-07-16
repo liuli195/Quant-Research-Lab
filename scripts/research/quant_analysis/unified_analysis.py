@@ -331,9 +331,9 @@ def _register_source_results(
         planned_scenarios, (str, bytes)
     ):
         raise UnifiedAnalysisError("analysis scenarios are invalid")
-    if len(planned_scenarios) != 7:
+    if len(planned_scenarios) < 2:
         raise UnifiedAnalysisError(
-            "source registry requires exactly seven planned scenarios"
+            "source registry requires at least two planned scenarios"
         )
     scenario_ids = [str(scenario["scenario_id"]) for scenario in planned_scenarios]
     registered_ids = {str(key) for key in source_registry}
@@ -686,28 +686,21 @@ def _risk_metrics(scenario: ScenarioInput, positions: pd.DataFrame) -> dict[str,
         (balances["total_value"].astype(float) - balances["cash"].astype(float))
         / balances["total_value"].astype(float)
     )
-    risk = scenario.params["risk"]
+    risk = scenario.params.get("risk", {})
     if not isinstance(risk, Mapping):
         raise UnifiedAnalysisError("scenario risk config is invalid")
     if positions.empty:
         max_security_weight = max_group_weight = 0.0
-        security_value_breaches = group_value_breaches = 0
         planned_coverage = 0.0
-        max_planned_risk_usage = None
+        max_planned_loss_ratio = None
     else:
         max_security_weight = float(positions["weight"].max())
         group_weights = positions.groupby(["date", "asset_group"])["weight"].sum()
         max_group_weight = float(group_weights.max())
-        security_value_breaches = int(
-            (positions["weight"] > float(risk["security_value_cap"]) + 1e-12).sum()
-        )
-        group_value_breaches = int(
-            (group_weights > float(risk["asset_group_value_cap"]) + 1e-12).sum()
-        )
         planned = positions.loc[positions["common_stop"].notna()].copy()
         planned_coverage = float(len(planned) / len(positions))
         if planned.empty:
-            max_planned_risk_usage = None
+            max_planned_loss_ratio = None
         else:
             planned["planned_loss"] = (
                 (
@@ -719,8 +712,8 @@ def _risk_metrics(scenario: ScenarioInput, positions: pd.DataFrame) -> dict[str,
             )
             daily_risk = planned.groupby("date")["planned_loss"].sum()
             equity = balances.set_index("date")["total_value"].astype(float)
-            usage = daily_risk / equity.reindex(daily_risk.index) / float(risk["portfolio_risk_cap"])
-            max_planned_risk_usage = float(usage.max())
+            loss_ratio = daily_risk / equity.reindex(daily_risk.index)
+            max_planned_loss_ratio = float(loss_ratio.max())
     rolling_vol = scenario.returns.rolling(60, min_periods=60).std(ddof=1) * math.sqrt(252)
     filled_orders = scenario.orders.loc[
         (scenario.orders["status"] == "done") & (scenario.orders["filled"].astype(float) > 0)
@@ -740,6 +733,39 @@ def _risk_metrics(scenario: ScenarioInput, positions: pd.DataFrame) -> dict[str,
         if "reason_code" in decision_events
         else pd.Series(dtype="object")
     )
+    maximum_effective_risk_units: float | None = None
+    maximum_portfolio_unit_utilization: float | None = None
+    if not decision_events.empty and "details_json" in decision_events:
+        for raw_details in decision_events["details_json"]:
+            try:
+                details = json.loads(str(raw_details))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(details, Mapping):
+                continue
+            effective = _safe_number(details.get("effective_risk_units"))
+            if effective is None:
+                continue
+            effective_value = float(effective)
+            maximum_effective_risk_units = (
+                effective_value
+                if maximum_effective_risk_units is None
+                else max(maximum_effective_risk_units, effective_value)
+            )
+            cap = _safe_number(
+                details.get(
+                    "portfolio_unit_cap", risk.get("portfolio_unit_cap")
+                )
+            )
+            if cap is not None and float(cap) > 0.0:
+                utilization = effective_value / float(cap)
+                maximum_portfolio_unit_utilization = (
+                    utilization
+                    if maximum_portfolio_unit_utilization is None
+                    else max(
+                        maximum_portfolio_unit_utilization, utilization
+                    )
+                )
     return {
         "average_invested_ratio": float(balances["invested_ratio"].mean()),
         "median_invested_ratio": float(balances["invested_ratio"].median()),
@@ -747,19 +773,15 @@ def _risk_metrics(scenario: ScenarioInput, positions: pd.DataFrame) -> dict[str,
         "near_full_ratio": float((balances["invested_ratio"] >= 0.9).mean()),
         "average_cash_ratio": float((1.0 - balances["invested_ratio"]).mean()),
         "maximum_invested_ratio": float(balances["invested_ratio"].max()),
-        "mark_to_market_portfolio_weight_above_cap_days": int(
-            (balances["invested_ratio"] > float(risk["portfolio_value_cap"]) + 1e-12).sum()
-        ),
         "maximum_security_weight": max_security_weight,
-        "mark_to_market_security_weight_above_entry_cap_rows": security_value_breaches,
         "maximum_asset_group_weight": max_group_weight,
-        "mark_to_market_group_weight_above_entry_cap_rows": group_value_breaches,
         "planned_risk_coverage": planned_coverage,
-        "maximum_portfolio_planned_risk_usage": max_planned_risk_usage,
-        "maximum_realized_60d_volatility": _safe_number(rolling_vol.max()),
-        "realized_60d_volatility_above_target_days": int(
-            (rolling_vol > float(risk["target_volatility"]) + 1e-12).sum()
+        "maximum_planned_loss_ratio": max_planned_loss_ratio,
+        "maximum_effective_risk_units": maximum_effective_risk_units,
+        "maximum_portfolio_unit_utilization": (
+            maximum_portfolio_unit_utilization
         ),
+        "maximum_realized_60d_volatility": _safe_number(rolling_vol.max()),
         "filled_order_count": int(len(filled_orders)),
         "rejected_order_count": int((scenario.orders["status"] != "done").sum()),
         "turnover": None if average_equity == 0.0 else filled_notional / average_equity,
@@ -770,10 +792,8 @@ def _risk_metrics(scenario: ScenarioInput, positions: pd.DataFrame) -> dict[str,
         "protective_stop_events": int(
             (event_reason_codes == "protective_stop").sum()
         ),
-        "risk_constraint_events": int(
-            event_reason_codes.isin(
-                ["risk_gate_block", "forced_risk_reduction"]
-            ).sum()
+        "redistribution_event_count": int(
+            (event_reason_codes == "full_position_redistribution").sum()
         ),
     }
 

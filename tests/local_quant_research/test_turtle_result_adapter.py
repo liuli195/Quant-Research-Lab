@@ -34,11 +34,11 @@ from turtle_etf.vectorbt_callbacks import (  # noqa: E402
     ACTION_ADDITION,
     ACTION_ENTRY,
     ACTION_FULL_EXIT,
-    ACTION_RISK_REDUCTION,
+    ACTION_REDISTRIBUTION_SELL,
     REASON_ENTRY_BREAKOUT,
+    REASON_FULL_POSITION_REDISTRIBUTION,
     REASON_ORDER_REJECTED,
     REASON_PROTECTIVE_STOP,
-    REASON_TARGET_VOLATILITY_REDUCTION,
     REASON_TREND_EXIT,
 )
 from turtle_etf.vectorbt_engine import run_vectorbt_simulation  # noqa: E402
@@ -70,13 +70,19 @@ def _simulation() -> tuple[SimpleNamespace, SimpleNamespace]:
         initial_cash=10_000.0,
         portfolio=_Portfolio(),
         action_codes=np.asarray(
-            [[ACTION_ENTRY, ACTION_ENTRY], [ACTION_FULL_EXIT, ACTION_RISK_REDUCTION]],
+            [
+                [ACTION_ENTRY, ACTION_ENTRY],
+                [ACTION_FULL_EXIT, ACTION_REDISTRIBUTION_SELL],
+            ],
             dtype=np.int16,
         ),
         reason_codes=np.asarray(
             [
                 [REASON_ENTRY_BREAKOUT, REASON_ENTRY_BREAKOUT],
-                [REASON_PROTECTIVE_STOP, REASON_TARGET_VOLATILITY_REDUCTION],
+                [
+                    REASON_PROTECTIVE_STOP,
+                    REASON_FULL_POSITION_REDISTRIBUTION,
+                ],
             ],
             dtype=np.int16,
         ),
@@ -86,10 +92,117 @@ def _simulation() -> tuple[SimpleNamespace, SimpleNamespace]:
         fill_prices=np.asarray([[10.0, 20.0], [11.0, 21.0]], dtype=np.float64),
         fees=np.asarray([[5.0, 5.0], [5.0, 5.0]], dtype=np.float64),
         state_quantities=np.asarray([[100, 100], [0, 50]], dtype=np.int64),
-        state_common_stop=np.asarray([[8.0, 18.0], [np.nan, 19.0]], dtype=np.float64),
+        state_common_stop=np.asarray([[8.0, 18.0], [np.nan, 18.0]], dtype=np.float64),
         state_next_add_index=np.asarray([[1, 1], [0, 1]], dtype=np.int64),
+        state_unit_counts=np.asarray([[1, 1], [0, 1]], dtype=np.int64),
+        candidate_base_quantities=np.asarray(
+            [[100, 100], [0, 0]], dtype=np.int64
+        ),
+        event_group_scales=np.asarray(
+            [[1.0, 1.0], [1.0, 0.75]], dtype=np.float64
+        ),
+        event_portfolio_scales=np.asarray(
+            [1.0, 12.0 / 13.0], dtype=np.float64
+        ),
+        event_cash_scales=np.asarray([1.0, 0.9], dtype=np.float64),
+        portfolio_unit_cap=12.0,
     )
     return inputs, simulation
+
+
+def test_attribution_exposes_unit_and_redistribution_evidence() -> None:
+    inputs, simulation = _simulation()
+
+    facts = to_joinquant_facts(inputs, simulation, scenario_id="baseline")
+    decisions = [
+        row
+        for row in facts.attribution.to_pylist()
+        if row["event_type"] == "decision"
+    ]
+    entry = next(
+        row
+        for row in decisions
+        if row["time"].startswith("2026-01-05")
+        and row["security"] == "ETF-A"
+    )
+    entry_details = json.loads(entry["details_json"])
+    assert entry_details["candidate_base_quantity"] == 100
+    assert entry_details["frozen_signal_n"] == 1.0
+    assert entry_details["actual_fill_price"] == 10.0
+    assert entry_details["unit_count_after"] == 1
+    assert entry_details["common_stop_after"] == 8.0
+
+    redistribution = next(
+        row
+        for row in decisions
+        if row["reason_code"] == "full_position_redistribution"
+    )
+    details = json.loads(redistribution["details_json"])
+    assert details["unit_count_after"] == 1
+    assert details["group_scale"] == pytest.approx(0.75)
+    assert details["portfolio_scale"] == pytest.approx(12.0 / 13.0)
+    assert details["cash_scale"] == pytest.approx(0.9)
+    assert details["redistribution_state_changed"] is False
+
+
+def _delayed_inputs(
+    *,
+    delayed_open: float = 12.0,
+    rows: int = 3,
+) -> SimulationInputs:
+    dates = np.arange(
+        np.datetime64("2026-01-05"),
+        np.datetime64("2026-01-05") + np.timedelta64(rows, "D"),
+    )
+    opens = np.asarray([[10.0], *([[delayed_open]] * (rows - 1))], dtype=np.float64)
+    signal_close = np.full((rows, 1), np.nan, dtype=np.float64)
+    signal_entry_high = np.full((rows, 1), np.nan, dtype=np.float64)
+    signal_n = np.full((rows, 1), 999.0, dtype=np.float64)
+    signal_close[0, 0] = 11.0
+    signal_entry_high[0, 0] = 10.0
+    signal_n[0, 0] = 1.5
+    return SimulationInputs(
+        dates=_readonly(dates, "datetime64[D]"),
+        securities=("ETF-A",),
+        asset_groups=("group-a",),
+        asset_group_ids=_readonly([0], "int64"),
+        raw_open=_readonly(opens, "float64"),
+        raw_high=_readonly(opens, "float64"),
+        raw_low=_readonly(opens, "float64"),
+        raw_close=_readonly(opens, "float64"),
+        raw_pre_close=_readonly(opens, "float64"),
+        continuous_open=_readonly(opens, "float64"),
+        continuous_high=_readonly(opens, "float64"),
+        continuous_low=_readonly(opens, "float64"),
+        continuous_close=_readonly(opens, "float64"),
+        continuous_pre_close=_readonly(opens, "float64"),
+        continuity_factor=_readonly(np.ones((rows, 1)), "float64"),
+        corporate_action_applied=_readonly(np.zeros((rows, 1)), "bool"),
+        corporate_actions_digest="4" * 64,
+        corporate_action_applications=(),
+        paused=_readonly(np.zeros((rows, 1)), "bool"),
+        high_limit=_readonly(np.full((rows, 1), np.nan), "float64"),
+        low_limit=_readonly(np.full((rows, 1), np.nan), "float64"),
+        signal_source_index=_readonly(np.arange(rows) - 1, "int64"),
+        signal_close=_readonly(signal_close, "float64"),
+        signal_entry_high=_readonly(signal_entry_high, "float64"),
+        signal_exit_low=_readonly(np.full((rows, 1), np.nan), "float64"),
+        signal_n=_readonly(signal_n, "float64"),
+    )
+
+
+def _delayed_config(*, initial_cash: float = 100_000.0) -> dict[str, object]:
+    return {
+        "research": {"initial_cash": initial_cash},
+        "signal": {"add_step_n": 0.5, "stop_n": 2.0, "max_units": 4},
+        "risk": {
+            "unit_risk_per_n": 0.025,
+            "asset_group_unit_cap": 6.0,
+            "portfolio_unit_cap": 12.0,
+        },
+        "costs": {"commission_multiplier": 1.0, "one_way_slippage": 0.0},
+        "execution": {"additional_delay_days": 1},
+    }
 
 
 def test_result_adapter_writes_joinquant_shaped_package(tmp_path: Path) -> None:
@@ -201,22 +314,14 @@ def test_adapter_accepts_real_vectorbt_portfolio() -> None:
         signal_entry_high=_readonly([[10.0], [np.nan]], "float64"),
         signal_exit_low=_readonly([[np.nan], [np.nan]], "float64"),
         signal_n=_readonly([[1.0], [1.0]], "float64"),
-        covariance=_readonly([[[0.000001]], [[0.000001]]], "float64"),
-        covariance_eligible=_readonly([[True], [True]], "bool"),
     )
     config = {
         "research": {"initial_cash": 10_000.0},
-        "signal": {"add_step_n": 0.5, "stop_n": 2.0},
+        "signal": {"add_step_n": 0.5, "stop_n": 2.0, "max_units": 4},
         "risk": {
-            "risk_per_unit": 0.05,
-            "security_risk_cap": 1.0,
-            "security_value_cap": 1.0,
-            "asset_group_risk_cap": 1.0,
-            "asset_group_value_cap": 1.0,
-            "portfolio_risk_cap": 1.0,
-            "portfolio_value_cap": 1.0,
-            "target_volatility": 10.0,
-            "risk_reduction_target_volatility": 9.5,
+            "unit_risk_per_n": 0.025,
+            "asset_group_unit_cap": 6.0,
+            "portfolio_unit_cap": 12.0,
         },
         "costs": {"commission_multiplier": 1.0, "one_way_slippage": 0.0},
     }
@@ -228,6 +333,76 @@ def test_adapter_accepts_real_vectorbt_portfolio() -> None:
     assert facts.positions.num_rows == 2
     assert facts.results["returns"].to_pylist()[0] == pytest.approx(-0.0005)
     validate_turtle_attribution(facts)
+
+
+def test_delayed_order_keeps_planned_and_execution_dates_and_frozen_evidence() -> None:
+    inputs = _delayed_inputs()
+    simulation = run_vectorbt_simulation(inputs, _delayed_config())
+
+    facts = to_joinquant_facts(inputs, simulation, scenario_id="delayed")
+
+    order = facts.orders.to_pylist()[0]
+    assert order["entrust_time"] == "2026-01-05 09:30:00"
+    assert order["match_time"] == "2026-01-06 09:30:00"
+    assert order["finish_time"] == order["match_time"]
+    assert order["time"] == order["match_time"]
+    assert order["amount"] == int(simulation.planned_quantities[1, 0])
+    assert order["filled"] == int(simulation.filled_quantities[1, 0])
+    decision = next(
+        row
+        for row in facts.attribution.to_pylist()
+        if row["event_type"] == "decision"
+    )
+    details = json.loads(decision["details_json"])
+    assert details["planned_date"] == "2026-01-05"
+    assert details["execution_date"] == "2026-01-06"
+    assert details["delay_days"] == 1
+    assert details["frozen_reason"] == "entry_breakout"
+    assert details["frozen_target_amount"] == order["amount"]
+    assert details["frozen_signal_n"] == 1.5
+    assert details["execution_adjustment"] == "none"
+
+
+def test_delayed_partial_fill_preserves_frozen_order_amount() -> None:
+    inputs = _delayed_inputs(delayed_open=200.0)
+    simulation = run_vectorbt_simulation(
+        inputs, _delayed_config(initial_cash=25_000.0)
+    )
+
+    facts = to_joinquant_facts(inputs, simulation, scenario_id="delayed-partial")
+
+    order = facts.orders.to_pylist()[0]
+    assert order["status"] == "done"
+    assert order["comment"] == "cash_truncated"
+    assert order["filled"] == 100
+    assert order["amount"] > order["filled"]
+    decision = next(
+        row
+        for row in facts.attribution.to_pylist()
+        if row["event_type"] == "decision"
+    )
+    assert json.loads(decision["details_json"])["execution_adjustment"] == (
+        "cash_truncated"
+    )
+
+
+def test_delayed_horizon_expiry_is_attribution_only() -> None:
+    inputs = _delayed_inputs(rows=1)
+    simulation = run_vectorbt_simulation(inputs, _delayed_config())
+
+    facts = to_joinquant_facts(inputs, simulation, scenario_id="delayed-expired")
+
+    assert facts.orders.num_rows == 0
+    expired = [
+        row
+        for row in facts.attribution.to_pylist()
+        if json.loads(row["details_json"]).get("execution_adjustment")
+        == "horizon_expired"
+    ]
+    assert len(expired) == 1
+    assert expired[0]["time"] == "2026-01-05 09:30:00"
+    assert expired[0]["requested_amount"] > 0
+    assert expired[0]["executed_amount"] == 0
 
 
 def test_physical_fields_and_cross_table_facts_match_joinquant_contract(
@@ -449,14 +624,19 @@ def test_security_daily_pnl_prices_additions_and_trend_exit_at_execution() -> No
             cash=lambda: pd.Series([9_049.0, 8_523.0, 9_522.0, 10_256.0]),
         ),
         action_codes=np.asarray(
-            [[ACTION_ENTRY], [ACTION_ADDITION], [ACTION_RISK_REDUCTION], [ACTION_FULL_EXIT]],
+            [
+                [ACTION_ENTRY],
+                [ACTION_ADDITION],
+                [ACTION_REDISTRIBUTION_SELL],
+                [ACTION_FULL_EXIT],
+            ],
             dtype=np.int16,
         ),
         reason_codes=np.asarray(
             [
                 [REASON_ENTRY_BREAKOUT],
                 [REASON_ENTRY_BREAKOUT],
-                [REASON_TARGET_VOLATILITY_REDUCTION],
+                [REASON_FULL_POSITION_REDISTRIBUTION],
                 [REASON_TREND_EXIT],
             ],
             dtype=np.int16,
@@ -467,7 +647,7 @@ def test_security_daily_pnl_prices_additions_and_trend_exit_at_execution() -> No
         fill_prices=np.asarray([[9.5], [10.5], [12.5], [10.5]], dtype=np.float64),
         fees=np.asarray([[1.0], [1.0], [1.0], [1.0]], dtype=np.float64),
         state_quantities=np.asarray([[100], [150], [70], [0]], dtype=np.int64),
-        state_common_stop=np.asarray([[8.0], [9.0], [10.0], [np.nan]], dtype=np.float64),
+        state_common_stop=np.asarray([[8.0], [9.0], [9.0], [np.nan]], dtype=np.float64),
         state_next_add_index=np.asarray([[1], [2], [2], [0]], dtype=np.int64),
     )
 

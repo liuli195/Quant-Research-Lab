@@ -7,6 +7,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 
 RESEARCH_ROOT = (
     Path(__file__).resolve().parents[2]
@@ -17,7 +19,7 @@ RESEARCH_ROOT = (
 )
 sys.path.insert(0, str(RESEARCH_ROOT))
 
-from turtle_etf.vectorbt_callbacks import CallbackInputs  # noqa: E402
+from turtle_etf.vectorbt_callbacks import CallbackInputs, CallbackParams  # noqa: E402
 from turtle_etf.vectorbt_engine import _params  # noqa: E402
 
 
@@ -53,7 +55,8 @@ def test_vectorbt_execution_identity_and_license_are_auditable(repo_root: Path) 
 
     assert execution == {
         "backend": "vectorbt.Portfolio.from_order_func",
-        "adapter_version": "local-vectorbt-adapter/1",
+        "delayed_backend": "vectorbt.Portfolio.from_orders",
+        "adapter_version": "local-vectorbt-adapter/2",
         "dependencies": {
             "vectorbt": "1.1.0",
             "numba": "0.66.0",
@@ -82,7 +85,9 @@ def test_vectorbt_execution_identity_and_license_are_auditable(repo_root: Path) 
     assert {
         "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_inputs.py",
         "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_callbacks.py",
+        "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_delayed.py",
         "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_engine.py",
+        "scripts/research/market_data/economic_returns.py",
     }.issubset(identity_paths)
 
     distribution = importlib.metadata.distribution("vectorbt")
@@ -97,17 +102,11 @@ def test_vectorbt_execution_identity_and_license_are_auditable(repo_root: Path) 
 def test_callback_contract_contains_only_strategy_inputs_and_risk_parameters() -> None:
     config = {
         "research": {"initial_cash": 1_000_000.0},
-        "signal": {"add_step_n": 0.5, "stop_n": 2.0},
+        "signal": {"add_step_n": 0.5, "stop_n": 2.0, "max_units": 4},
         "risk": {
-            "risk_per_unit": 0.01,
-            "security_risk_cap": 0.02,
-            "security_value_cap": 0.30,
-            "asset_group_risk_cap": 0.04,
-            "asset_group_value_cap": 0.50,
-            "portfolio_risk_cap": 0.10,
-            "portfolio_value_cap": 1.00,
-            "target_volatility": 0.20,
-            "risk_reduction_target_volatility": 0.15,
+            "unit_risk_per_n": 0.005,
+            "asset_group_unit_cap": 6.0,
+            "portfolio_unit_cap": 12.0,
         },
     }
 
@@ -122,23 +121,75 @@ def test_callback_contract_contains_only_strategy_inputs_and_risk_parameters() -
         "paused",
         "high_limit",
         "low_limit",
-        "covariance",
-        "covariance_eligible",
         "asset_group_ids",
     )
-    assert params._fields == (
+    assert CallbackParams._fields == (
         "lot_size",
-        "risk_per_unit",
+        "unit_risk_per_n",
         "add_step_n",
         "stop_n",
+        "max_units",
+        "asset_group_unit_cap",
+        "portfolio_unit_cap",
+        "commission_multiplier",
+        "one_way_slippage",
+    )
+    assert params.max_units == 4
+    assert params.asset_group_unit_cap == 6.0
+    assert params.portfolio_unit_cap == 12.0
+
+
+def _new_config() -> dict[str, object]:
+    return {
+        "research": {"initial_cash": 1_000_000.0},
+        "signal": {"add_step_n": 0.5, "stop_n": 2.0, "max_units": 4},
+        "risk": {
+            "unit_risk_per_n": 0.01,
+            "asset_group_unit_cap": 6.0,
+            "portfolio_unit_cap": 12.0,
+        },
+    }
+
+
+def test_max_units_requires_exactly_four() -> None:
+    config = _new_config()
+
+    _, params = _params(config)
+    assert params.unit_risk_per_n == 0.01
+    assert params.max_units == 4
+
+    for invalid in (None, True, False, 0, -1, 1.5, 3, 5):
+        config["signal"]["max_units"] = invalid
+        with pytest.raises(ValueError, match="max_units must equal four"):
+            _params(config)
+
+    del config["signal"]["max_units"]
+    with pytest.raises(ValueError, match="missing config value: max_units"):
+        _params(config)
+
+
+@pytest.mark.parametrize(
+    "legacy_field",
+    (
         "security_risk_cap",
         "security_value_cap",
         "asset_group_risk_cap",
         "asset_group_value_cap",
         "portfolio_risk_cap",
         "portfolio_value_cap",
+        "covariance",
         "target_volatility",
         "risk_reduction_target_volatility",
-        "commission_multiplier",
-        "one_way_slippage",
+        "minimum_aligned_samples",
+    ),
+)
+def test_legacy_risk_fields_are_rejected(legacy_field: str) -> None:
+    config = _new_config()
+    config["risk"][legacy_field] = (
+        {"method": "sample", "window_days": 60}
+        if legacy_field == "covariance"
+        else 1.0
     )
+
+    with pytest.raises(ValueError, match="legacy risk fields are not supported"):
+        _params(config)

@@ -18,25 +18,11 @@ RESEARCH_ROOT = (
 )
 sys.path.insert(0, str(RESEARCH_ROOT))
 
-from turtle_etf.vectorbt_callbacks import (  # noqa: E402
-    ACTION_ADDITION,
-    ACTION_ENTRY,
-    ACTION_RISK_REDUCTION,
-    CallbackInputs,
-    REASON_HIGH_LIMIT,
-    REASON_HELD_RISK_INPUT_MISSING,
-    REASON_LOW_LIMIT,
-    REASON_ORDER_REJECTED,
-    REASON_PAUSED,
-    order_func_nb,
-    post_order_func_nb,
-    pre_segment_func_nb,
-    pre_sim_func_nb,
-)
-from turtle_etf.vectorbt_engine import run_vectorbt_simulation  # noqa: E402
+from turtle_etf import vectorbt_callbacks as callbacks  # noqa: E402
 from turtle_etf.vectorbt_engine import (  # noqa: E402
     _mutable_state,
     _params,
+    run_vectorbt_simulation,
 )
 from turtle_etf.vectorbt_inputs import SimulationInputs  # noqa: E402
 
@@ -57,14 +43,13 @@ def _inputs(
     paused: list[list[bool]] | None = None,
     high_limit: list[list[float]] | None = None,
     low_limit: list[list[float]] | None = None,
+    group_ids: list[int] | None = None,
 ) -> SimulationInputs:
     open_array = np.asarray(opens, dtype=np.float64)
     rows, columns = open_array.shape
     securities = tuple(f"ETF-{chr(65 + column)}" for column in range(columns))
     close = np.where(np.isfinite(open_array), open_array, 10.0)
-    covariance = np.zeros((rows, columns, columns), dtype=np.float64)
-    for row in range(rows):
-        covariance[row] = np.eye(columns) * 0.000001
+    ids = np.arange(columns) if group_ids is None else np.asarray(group_ids)
     return SimulationInputs(
         dates=_ro(
             np.arange(
@@ -74,8 +59,8 @@ def _inputs(
             "datetime64[D]",
         ),
         securities=securities,
-        asset_groups=tuple(f"group-{column}" for column in range(columns)),
-        asset_group_ids=_ro(np.arange(columns), "int64"),
+        asset_groups=tuple(f"group-{group}" for group in ids),
+        asset_group_ids=_ro(ids, "int64"),
         raw_open=_ro(open_array, "float64"),
         raw_high=_ro(open_array, "float64"),
         raw_low=_ro(open_array, "float64"),
@@ -117,337 +102,207 @@ def _inputs(
             np.ones((rows, columns)) if signal_n is None else signal_n,
             "float64",
         ),
-        covariance=_ro(covariance, "float64"),
-        covariance_eligible=_ro(np.ones((rows, columns), dtype=np.bool_), "bool"),
     )
 
 
-def _config(initial_cash: float = 10_000.0) -> dict[str, object]:
+def _config(
+    initial_cash: float = 100_000.0,
+    *,
+    unit_risk: float = 0.01,
+    group_cap: float = 6.0,
+    portfolio_cap: float = 12.0,
+) -> dict[str, object]:
     return {
         "research": {"initial_cash": initial_cash},
-        "signal": {"add_step_n": 0.5, "stop_n": 2.0},
+        "signal": {"add_step_n": 0.5, "stop_n": 2.0, "max_units": 4},
         "risk": {
-            "risk_per_unit": 0.5,
-            "security_risk_cap": 1.0,
-            "security_value_cap": 1.0,
-            "asset_group_risk_cap": 1.0,
-            "asset_group_value_cap": 1.0,
-            "portfolio_risk_cap": 1.0,
-            "portfolio_value_cap": 1.0,
-            "target_volatility": 10.0,
-            "risk_reduction_target_volatility": 9.5,
-            "minimum_aligned_samples": 2,
+            "unit_risk_per_n": unit_risk,
+            "asset_group_unit_cap": group_cap,
+            "portfolio_unit_cap": portfolio_cap,
         },
         "costs": {"commission_multiplier": 1.0, "one_way_slippage": 0.0},
     }
 
 
-def _with_asset_groups(
-    inputs: SimulationInputs,
-    group_ids: list[int],
-) -> SimulationInputs:
-    return SimulationInputs(
-        **{
-            **vars(inputs),
-            "asset_groups": tuple(f"group-{group}" for group in group_ids),
-            "asset_group_ids": _ro(group_ids, "int64"),
-        }
+def test_group_and_portfolio_unit_scales_follow_confirmed_formula() -> None:
+    group_scales, portfolio_scale = callbacks._risk_scales_nb.py_func(
+        np.asarray([4, 4, 4], dtype=np.int64),
+        np.asarray([0, 0, 1], dtype=np.int64),
+        2,
+        6.0,
+        12.0,
     )
+    assert group_scales.tolist() == pytest.approx([0.75, 1.0])
+    assert portfolio_scale == pytest.approx(1.0)
 
-
-def test_official_callbacks_share_cash_and_a1_scales_all_breakouts() -> None:
-    inputs = _inputs(
-        opens=[[10.0, 10.0], [10.0, 10.0]],
-        signal_close=[[11.0, 11.0], [np.nan, np.nan]],
-        entry_high=[[10.0, 10.0], [np.nan, np.nan]],
+    group_scales, portfolio_scale = callbacks._risk_scales_nb.py_func(
+        np.asarray([4, 4, 4, 4], dtype=np.int64),
+        np.asarray([0, 1, 2, 3], dtype=np.int64),
+        4,
+        6.0,
+        12.0,
     )
-
-    result = run_vectorbt_simulation(inputs, _config())
-
-    assert result.portfolio.wrapper.grouper.get_group_lens().tolist() == [2]
-    assert result.action_codes[0].tolist() == [ACTION_ENTRY, ACTION_ENTRY]
-    assert result.requested_quantities[0].tolist() == [2500, 2500]
-    assert 0 < result.filled_quantities[0, 0]
-    assert 0 < result.filled_quantities[0, 1]
-    assert abs(result.filled_quantities[0, 0] - result.filled_quantities[0, 1]) <= 100
-    assert float(result.portfolio.cash().iloc[-1]) >= 0.0
-    assert result.state_quantities[0].tolist() == result.filled_quantities[0].tolist()
-    for callback in (
-        pre_sim_func_nb,
-        pre_segment_func_nb,
-        order_func_nb,
-        post_order_func_nb,
-    ):
-        assert callback.nopython_signatures
+    assert group_scales.tolist() == pytest.approx([1.0, 1.0, 1.0, 1.0])
+    assert portfolio_scale == pytest.approx(0.75)
 
 
-def test_passive_security_cap_breach_allows_another_security_entry() -> None:
-    inputs = _inputs(
-        opens=[[10.0, 10.0], [40.0, 10.0], [40.0, 10.0]],
-        signal_close=[[11.0, np.nan], [10.0, 11.0], [np.nan, np.nan]],
-        entry_high=[[10.0, np.nan], [20.0, 10.0], [np.nan, np.nan]],
+def test_target_rounding_is_uniform_and_input_order_invariant() -> None:
+    bases = np.asarray([[1000, 0, 0, 0], [2000, 0, 0, 0]], dtype=np.int64)
+    counts = np.asarray([1, 1], dtype=np.int64)
+    groups = np.asarray([0, 1], dtype=np.int64)
+    scales = np.asarray([1.0, 1.0])
+    locked = np.asarray([-1, -1], dtype=np.int64)
+
+    targets = callbacks._targets_for_scale_nb.py_func(
+        bases, counts, groups, scales, 1.0, 0.55, locked, 100
     )
-    config = _config()
-    config["risk"]["risk_per_unit"] = 0.021
-    config["risk"]["security_value_cap"] = 0.30
+    permuted = callbacks._targets_for_scale_nb.py_func(
+        bases[::-1], counts[::-1], groups[::-1], scales, 1.0, 0.55, locked, 100
+    )[::-1]
 
-    result = run_vectorbt_simulation(inputs, config)
-
-    assert result.state_quantities[0].tolist() == [100, 0]
-    assert result.filled_quantities[1, 0] == 0
-    assert result.filled_quantities[1, 1] == 100
+    assert targets.tolist() == [500, 1100]
+    assert targets.tolist() == permuted.tolist()
+    assert np.all(targets % 100 == 0)
 
 
-def test_passive_security_cap_breach_blocks_same_security_addition() -> None:
-    inputs = _inputs(
-        opens=[[10.0], [40.0], [40.0]],
-        signal_close=[[11.0], [11.0], [np.nan]],
-        entry_high=[[10.0], [20.0], [np.nan]],
-    )
-    config = _config()
-    config["risk"]["risk_per_unit"] = 0.021
-    config["risk"]["security_value_cap"] = 0.30
-
-    result = run_vectorbt_simulation(inputs, config)
-
-    assert result.action_codes[1, 0] == ACTION_ADDITION
-    assert result.filled_quantities[1, 0] == 0
-    assert result.state_quantities[1, 0] == result.state_quantities[0, 0]
-
-
-def test_passive_group_cap_breach_blocks_same_group_only() -> None:
-    inputs = _with_asset_groups(
-        _inputs(
-            opens=[
-                [10.0, 10.0, 10.0],
-                [60.0, 10.0, 10.0],
-                [60.0, 10.0, 10.0],
-            ],
-            signal_close=[
-                [11.0, np.nan, np.nan],
-                [10.0, 11.0, 11.0],
-                [np.nan, np.nan, np.nan],
-            ],
-            entry_high=[
-                [10.0, np.nan, np.nan],
-                [20.0, 10.0, 10.0],
-                [np.nan, np.nan, np.nan],
-            ],
-        ),
-        [0, 0, 1],
-    )
-    config = _config()
-    config["risk"]["risk_per_unit"] = 0.021
-    config["risk"]["asset_group_value_cap"] = 0.50
-
-    result = run_vectorbt_simulation(inputs, config)
-
-    assert result.state_quantities[0].tolist() == [100, 0, 0]
-    assert result.filled_quantities[1, 1] == 0
-    assert result.filled_quantities[1, 2] == 100
-
-
-def test_passive_value_cap_breach_does_not_block_trend_exit() -> None:
-    inputs = _inputs(
-        opens=[[10.0], [40.0], [40.0]],
-        signal_close=[[11.0], [5.0], [np.nan]],
-        entry_high=[[10.0], [20.0], [np.nan]],
-        exit_low=[[np.nan], [6.0], [np.nan]],
-    )
-    config = _config()
-    config["risk"]["risk_per_unit"] = 0.021
-    config["risk"]["security_value_cap"] = 0.30
-
-    result = run_vectorbt_simulation(inputs, config)
-
-    assert result.filled_quantities[1, 0] == 100
-    assert result.state_quantities[1, 0] == 0
-
-
-@pytest.mark.parametrize(
-    "local_cap",
-    ["security_risk_cap", "asset_group_risk_cap"],
-)
-def test_local_risk_cap_candidate_does_not_freeze_unrelated_entry(
-    local_cap: str,
-) -> None:
+def test_late_breakout_displaces_earlier_position_without_changing_its_unit() -> None:
     inputs = _inputs(
         opens=[[10.0, 10.0], [10.0, 10.0], [10.0, 10.0]],
-        signal_close=[[11.0, np.nan], [11.0, 11.0], [np.nan, np.nan]],
-        entry_high=[[10.0, np.nan], [20.0, 10.0], [np.nan, np.nan]],
+        signal_close=[[11.0, np.nan], [10.0, 11.0], [10.0, 10.0]],
+        entry_high=[[10.0, np.nan], [20.0, 10.0], [20.0, 20.0]],
     )
-    config = _config()
-    config["risk"]["risk_per_unit"] = 0.021
-    config["risk"][local_cap] = 0.025
+    result = run_vectorbt_simulation(
+        inputs, _config(initial_cash=100_005.0, portfolio_cap=1.0)
+    )
 
-    result = run_vectorbt_simulation(inputs, config)
+    assert result.state_quantities[0].tolist() == [1000, 0]
+    assert result.action_codes[1].tolist() == [
+        callbacks.ACTION_REDISTRIBUTION_SELL,
+        callbacks.ACTION_ENTRY,
+    ]
+    assert result.state_quantities[1].tolist() == [500, 500]
+    assert result.state_unit_counts[1].tolist() == [1, 1]
+    assert result.event_portfolio_scales[1] == pytest.approx(0.5)
+    assert result.state_common_stop[1, 0] == result.state_common_stop[0, 0]
+    assert result.action_codes[2].tolist() == [callbacks.ACTION_NONE] * 2
+    assert result.filled_quantities[2].tolist() == [0, 0]
 
-    assert result.state_quantities[0].tolist() == [100, 0]
-    assert result.action_codes[1].tolist() == [ACTION_ADDITION, ACTION_ENTRY]
-    assert result.filled_quantities[1, 0] == 0
-    assert result.filled_quantities[1, 1] == 100
+
+def test_same_group_units_scale_uniformly() -> None:
+    inputs = _inputs(
+        opens=[[10.0, 10.0], [10.0, 10.0]],
+        signal_close=[[11.0, np.nan], [10.0, 11.0]],
+        entry_high=[[10.0, np.nan], [20.0, 10.0]],
+        group_ids=[0, 0],
+    )
+    result = run_vectorbt_simulation(
+        inputs, _config(initial_cash=100_005.0, group_cap=1.0)
+    )
+
+    assert result.state_quantities[1].tolist() == [500, 500]
+    assert result.event_group_scales[1].tolist() == pytest.approx([0.5, 0.5])
+    assert result.event_portfolio_scales[1] == pytest.approx(1.0)
 
 
-def test_exit_fills_before_same_day_a1_buy_uses_released_cash() -> None:
+def test_each_filled_unit_freezes_its_own_n_and_only_raises_common_stop() -> None:
+    inputs = _inputs(
+        opens=[[10.0], [13.0], [13.0]],
+        signal_close=[[11.0], [10.6], [10.0]],
+        entry_high=[[10.0], [20.0], [20.0]],
+        signal_n=[[1.0], [2.0], [999.0]],
+    )
+    result = run_vectorbt_simulation(inputs, _config())
+
+    assert result.state_unit_counts[:, 0].tolist() == [1, 2, 2]
+    assert result.state_common_stop[0, 0] == pytest.approx(8.0)
+    assert result.state_common_stop[1, 0] == pytest.approx(9.0)
+    assert result.state_common_stop[2, 0] == pytest.approx(9.0)
+    assert result.state_next_add_index[:, 0].tolist() == [1, 2, 2]
+
+
+def test_additions_use_fixed_initial_levels_one_per_day_and_stop_at_four() -> None:
+    inputs = _inputs(
+        opens=[[10.0], [11.0], [11.5], [12.0], [12.5]],
+        signal_close=[[11.0], [12.0], [12.0], [12.0], [12.0]],
+        entry_high=[[10.0], [20.0], [20.0], [20.0], [20.0]],
+        signal_n=[[1.0], [8.0], [8.0], [8.0], [8.0]],
+    )
+    result = run_vectorbt_simulation(inputs, _config())
+
+    assert result.action_codes[:, 0].tolist() == [
+        callbacks.ACTION_ENTRY,
+        callbacks.ACTION_ADDITION,
+        callbacks.ACTION_ADDITION,
+        callbacks.ACTION_ADDITION,
+        callbacks.ACTION_NONE,
+    ]
+    assert result.state_unit_counts[:, 0].tolist() == [1, 2, 3, 4, 4]
+
+
+def test_untradeable_candidate_does_not_advance_unit_stop_or_add_level() -> None:
+    inputs = _inputs(
+        opens=[[10.0], [10.0], [11.0]],
+        signal_close=[[11.0], [11.0], [11.0]],
+        entry_high=[[10.0], [10.0], [10.0]],
+        paused=[[True], [False], [False]],
+        high_limit=[[np.nan], [np.nan], [11.0]],
+    )
+    result = run_vectorbt_simulation(inputs, _config())
+
+    assert result.reason_codes[0, 0] == callbacks.REASON_PAUSED
+    assert result.state_unit_counts[0, 0] == 0
+    assert result.state_unit_counts[1, 0] == 1
+    assert result.reason_codes[2, 0] == callbacks.REASON_HIGH_LIMIT
+    assert result.state_unit_counts[2, 0] == 1
+    assert result.state_next_add_index[2, 0] == 1
+    assert result.state_common_stop[2, 0] == result.state_common_stop[1, 0]
+
+
+def test_exit_sells_before_same_day_entry_uses_released_cash() -> None:
     inputs = _inputs(
         opens=[[10.0, 20.0], [12.0, 20.0], [12.0, 20.0]],
         signal_close=[[11.0, np.nan], [5.0, 21.0], [np.nan, np.nan]],
         entry_high=[[10.0, np.nan], [np.nan, 20.0], [np.nan, np.nan]],
         exit_low=[[np.nan, np.nan], [6.0, np.nan], [np.nan, np.nan]],
     )
+    result = run_vectorbt_simulation(inputs, _config(initial_cash=10_005.0))
+    day_two = result.portfolio.orders.records_readable.loc[
+        lambda frame: frame["Timestamp"] == np.datetime64("2026-01-06")
+    ]
 
-    result = run_vectorbt_simulation(inputs, _config())
-    orders = result.portfolio.orders.records_readable
-
-    day_two = orders.loc[orders["Timestamp"] == np.datetime64("2026-01-06")]
     assert day_two["Side"].tolist() == ["Sell", "Buy"]
     assert result.state_quantities[1, 0] == 0
+    assert result.state_unit_counts[1, 0] == 0
     assert result.state_quantities[1, 1] > 0
-    assert result.filled_quantities[1, 1] > 0
 
 
-def test_untradeable_orders_do_not_advance_turtle_state() -> None:
+def test_low_limit_blocks_full_exit_and_preserves_unit_state() -> None:
     inputs = _inputs(
-        opens=[[10.0, 10.0], [10.0, 10.0], [11.0, 11.0], [11.0, 11.0]],
-        signal_close=[[11.0, 11.0], [11.0, 11.0], [12.0, 12.0], [12.0, 12.0]],
-        entry_high=[[10.0, 10.0], [10.0, 10.0], [10.0, 10.0], [10.0, 10.0]],
-        paused=[[True, False], [False, False], [False, False], [False, False]],
-        high_limit=[[np.nan, 10.0], [np.nan, np.nan], [11.0, 11.0], [np.nan, np.nan]],
+        opens=[[10.0], [8.0]],
+        signal_close=[[11.0], [5.0]],
+        entry_high=[[10.0], [20.0]],
+        exit_low=[[np.nan], [6.0]],
+        low_limit=[[np.nan], [8.0]],
     )
+    result = run_vectorbt_simulation(inputs, _config())
 
-    config = _config()
-    config["risk"]["risk_per_unit"] = 0.05
-    result = run_vectorbt_simulation(inputs, config)
-
-    assert result.reason_codes[0].tolist() == [REASON_PAUSED, REASON_HIGH_LIMIT]
-    assert result.state_quantities[0].tolist() == [0, 0]
-    assert result.state_quantities[1, 0] > 0
-    assert result.state_quantities[1, 1] > 0
-    before_add = result.state_next_add_index[2].copy()
-    assert result.action_codes[2].tolist() == [ACTION_ADDITION, ACTION_ADDITION]
-    assert result.state_quantities[2].tolist() == result.state_quantities[1].tolist()
-    assert result.state_next_add_index[2].tolist() == before_add.tolist()
-    assert result.state_quantities[3, 0] > result.state_quantities[2, 0]
-    assert result.state_quantities[3, 1] > result.state_quantities[2, 1]
-    assert result.state_next_add_index[3].tolist() == [2, 2]
-
-
-def test_high_close_risk_reduces_positions_before_any_new_risk() -> None:
-    inputs = _inputs(
-        opens=[[10.0, 10.0], [10.0, 10.0], [10.0, 10.0]],
-        signal_close=[[11.0, 11.0], [10.0, 10.0], [10.0, 10.0]],
-        entry_high=[[10.0, 10.0], [20.0, 20.0], [20.0, 20.0]],
-    )
-    covariance = inputs.covariance.copy()
-    covariance[1] = np.eye(2) * 0.25
-    covariance.setflags(write=False)
-    inputs = SimulationInputs(**{**vars(inputs), "covariance": covariance})
-    config = _config()
-    config["risk"]["risk_per_unit"] = 0.05
-    config["risk"]["target_volatility"] = 0.20
-    config["risk"]["risk_reduction_target_volatility"] = 0.15
-
-    result = run_vectorbt_simulation(inputs, config)
-
-    assert result.state_quantities[0].min() > 0
-    assert result.action_codes[1].tolist() == [
-        ACTION_RISK_REDUCTION,
-        ACTION_RISK_REDUCTION,
-    ]
-    assert result.filled_quantities[1].min() > 0
-    assert np.all(result.state_quantities[1] < result.state_quantities[0])
-    order_counts = (
-        result.portfolio.orders.records_readable.groupby(["Timestamp", "Column"])
-        .size()
-        .to_numpy()
-    )
-    assert np.all(order_counts <= 1)
-
-
-def test_gap_open_applies_slippage_fee_and_fill_based_common_stop() -> None:
-    inputs = _inputs(
-        opens=[[12.0], [12.0]],
-        signal_close=[[11.0], [np.nan]],
-        entry_high=[[10.0], [np.nan]],
-    )
-    config = _config()
-    config["risk"]["risk_per_unit"] = 0.05
-    config["costs"]["one_way_slippage"] = 0.01
-
-    result = run_vectorbt_simulation(inputs, config)
-
-    assert result.filled_quantities[0, 0] == 200
-    assert result.fill_prices[0, 0] == pytest.approx(12.12)
-    assert result.fees[0, 0] == 5.0
-    assert result.state_common_stop[0, 0] == pytest.approx(10.12)
-
-
-def test_low_limit_blocks_exit_and_preserves_batches() -> None:
-    inputs = _inputs(
-        opens=[[10.0], [8.0], [8.0]],
-        signal_close=[[11.0], [5.0], [np.nan]],
-        entry_high=[[10.0], [np.nan], [np.nan]],
-        exit_low=[[np.nan], [6.0], [np.nan]],
-        low_limit=[[np.nan], [8.0], [np.nan]],
-    )
-    config = _config()
-    config["risk"]["risk_per_unit"] = 0.05
-
-    result = run_vectorbt_simulation(inputs, config)
-
-    assert result.state_quantities[0, 0] > 0
-    assert result.reason_codes[1, 0] == REASON_LOW_LIMIT
+    assert result.reason_codes[1, 0] == callbacks.REASON_LOW_LIMIT
     assert result.filled_quantities[1, 0] == 0
     assert result.state_quantities[1, 0] == result.state_quantities[0, 0]
+    assert result.state_unit_counts[1, 0] == 1
     assert result.state_common_stop[1, 0] == result.state_common_stop[0, 0]
 
 
-def test_missing_held_open_stops_new_risk_but_keeps_existing_state() -> None:
+def test_rejected_official_order_does_not_establish_candidate() -> None:
     inputs = _inputs(
-        opens=[[10.0, 20.0], [np.nan, 20.0], [10.0, 20.0]],
-        signal_close=[[11.0, np.nan], [10.0, 21.0], [np.nan, np.nan]],
-        entry_high=[[10.0, np.nan], [20.0, 20.0], [np.nan, np.nan]],
-    )
-    config = _config()
-    config["risk"]["risk_per_unit"] = 0.05
-
-    result = run_vectorbt_simulation(inputs, config)
-
-    assert result.state_quantities[0, 0] > 0
-    assert result.reason_codes[1, 1] == REASON_HELD_RISK_INPUT_MISSING
-    assert result.filled_quantities[1, 1] == 0
-    assert result.state_quantities[1, 0] == result.state_quantities[0, 0]
-    assert result.state_quantities[1, 1] == 0
-
-
-def test_missing_held_signal_close_stops_all_new_risk() -> None:
-    inputs = _inputs(
-        opens=[[10.0, 20.0], [10.0, 20.0], [10.0, 20.0]],
-        signal_close=[[11.0, np.nan], [np.nan, 21.0], [np.nan, np.nan]],
-        entry_high=[[10.0, np.nan], [20.0, 20.0], [np.nan, np.nan]],
-    )
-    config = _config()
-    config["risk"]["risk_per_unit"] = 0.05
-
-    result = run_vectorbt_simulation(inputs, config)
-
-    assert result.state_quantities[0, 0] > 0
-    assert result.reason_codes[1, 1] == REASON_HELD_RISK_INPUT_MISSING
-    assert result.filled_quantities[1, 1] == 0
-    assert result.state_quantities[1, 0] == result.state_quantities[0, 0]
-    assert result.state_quantities[1, 1] == 0
-
-
-def test_rejected_official_order_result_does_not_advance_state() -> None:
-    inputs = _inputs(
-        opens=[[10.0]],
-        signal_close=[[11.0]],
-        entry_high=[[10.0]],
+        opens=[[10.0]], signal_close=[[11.0]], entry_high=[[10.0]]
     )
     _, params = _params(_config())
-    state = _mutable_state(1, 1)
-    state.action_codes[0, 0] = ACTION_ENTRY
-    callback_inputs = CallbackInputs(
+    state = _mutable_state(1, 1, 1, 4)
+    state.action_codes[0, 0] = callbacks.ACTION_ENTRY
+    state.candidate_signal_n[0, 0] = 1.0
+    state.candidate_base_quantity[0, 0] = 1000
+    callback_inputs = callbacks.CallbackInputs(
         inputs.execution_open,
         inputs.signal_close,
         inputs.signal_entry_high,
@@ -456,8 +311,6 @@ def test_rejected_official_order_result_does_not_advance_state() -> None:
         inputs.paused,
         inputs.high_limit,
         inputs.low_limit,
-        inputs.covariance,
-        inputs.covariance_eligible,
         inputs.asset_group_ids,
     )
     context = SimpleNamespace(
@@ -479,8 +332,8 @@ def test_rejected_official_order_result_does_not_advance_state() -> None:
         ),
     )
 
-    post_order_func_nb.py_func(context, state, callback_inputs, params)
+    callbacks.post_order_func_nb.py_func(context, state, callback_inputs, params)
 
-    assert state.reason_codes[0, 0] == REASON_ORDER_REJECTED
+    assert state.reason_codes[0, 0] == callbacks.REASON_ORDER_REJECTED
+    assert state.unit_count[0] == 0
     assert state.state_quantities[0, 0] == 0
-    assert state.batch_count[0] == 0
