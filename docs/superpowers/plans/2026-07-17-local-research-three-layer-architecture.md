@@ -140,7 +140,7 @@ git commit -m "测试：冻结本地研究等价性与性能基线"
 
 **Interfaces:**
 - Consumes: `SnapshotView`、仓库根目录、配置 v2 的 `strategy.root/module/symbol`。
-- Produces: `StrategyDescriptor`、`PreparedStrategy`、`LedgerInput`、`OrderBuffer`、`OrderProgram`、`ExecutionRun`、`ExecutionBundle`、`ResultExtension`、`load_strategy() -> LoadedStrategy`。
+- Produces: `StrategyDescriptor`、`PreparedStrategy`、`LedgerInput`、`OrderBuffer`、`OrderProgram`、只读 `ExecutionLedger` Protocol（协议）、`ExecutionRun`、`ExecutionBundle`、`ResultExtension`、`load_strategy() -> LoadedStrategy`。
 
 - [ ] **Step 1: 写 contracts 和双策略加载失败测试**
 
