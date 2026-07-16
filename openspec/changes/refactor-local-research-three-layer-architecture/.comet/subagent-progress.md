@@ -4,20 +4,20 @@
 - Plan: `docs/superpowers/plans/2026-07-17-local-research-three-layer-architecture.md`
 - Review mode: `thorough`
 - TDD mode: `tdd`
-- Current plan task: `Task 1: 冻结旧路径的等价性与发布性能基线`
+- Current plan task: `Task 2: 建立后端中立 contracts 与安全 Strategy Module 加载器`
 - OpenSpec mappings:
-  - `1.1 为即时、17 ETF 扩展和 additional_delay_days=1 延迟场景补齐成交、费用、现金、持仓、净值、策略状态和逻辑摘要特征测试`
-  - `1.2 在固定 .venv 环境采集三个冷启动新进程与五次预热的主场景基线，并记录分阶段时间、峰值内存和结果包体积`
-  - `1.3 固化旧配置、停止状态、清单、代码身份和分析视图契约，确保后续破坏性迁移只能通过新 Interface 完成`
+  - `2.1 先编写失败测试，定义 Strategy Module、LedgerInput、OrderProgram、ExecutionLedger、ExecutionRun 和 ResultExtension 的最小只读 Interface`
+  - `2.2 实现仓库内 Strategy Module 安全加载与配置校验，拒绝仓库外路径、未知 symbol、旧任意 command 和策略专属 project entry`
+  - `2.3 增加第二个最小测试策略 Adapter，并证明共享入口无需修改即可加载两个策略`
 - Stage: `done`
-- Task base: `a9bfd3c`
-- Implementer: `/root/task1_freeze_baselines`
-- Implementation commits: `78e3d79457772abc4e15d70025612a0df7a3b74f 测试：冻结本地研究等价性与性能基线`; `c35a6e8406c1c9cda81e4516d70b1749ff638a47 测试：补全本地研究冻结证据`
-- Changed files: `tests/local_quant_research/fixtures/local-research-v1-baseline.json`; `tests/local_quant_research/fixtures/performance-baseline.json`; `tests/local_quant_research/test_contract_fixtures.py`; `tests/local_quant_research/test_local_research_equivalence.py`; `tests/local_quant_research/test_turtle_vectorbt_performance.py`
-- RED evidence: 初始 `2 failed, 4 passed`、扩展 `5 failed, 4 passed`、性能结构 `1 failed`；修复轮 `5 failed in 4.41s` 精确命中完整归因、物化契约、逐次性能、采集证据和缺快照门禁
-- GREEN evidence: 修复聚焦 `5 passed in 3.21s`；行为与契约 `11 passed in 39.68s`；完整相关回归 `11 passed in 87.26s`、`0 skipped`；Ruff 与 diff check 通过
-- Risk signals: `DONE_WITH_CONCERNS`; 跨模块只读验证；`diff > 200`（551 行）
-- Task review: `spec compliant; code quality approved after fix round 1/2`
+- Task base: `8f057a9711db951bbad288ab62f1630b3b9fee3a`
+- Implementer: `/root/task2_strategy_contracts`
+- Implementation commits: `6c56bd9ed515f0382586e84e80ac717199ce5151 重构：建立策略模块共享契约`; `d12217cafdb169bf08494bc4e51acece766cb8ad 修复：隔离策略模块私有命名空间`
+- Changed files: `scripts/research/local_quant_research/contracts.py`; `scripts/research/local_quant_research/strategy_loader.py`; `tests/local_quant_research/test_strategy_contract.py`; `tests/local_quant_research/fixtures/minimal_strategy/strategy.py`; `tests/local_quant_research/fixtures/minimal_strategy_b/strategy.py`
+- RED evidence: 初始 contract 缺失与叶子模块执行前边界；修复轮分别复现父 package 执行前绕过、prepare 延迟相对导入 `ModuleNotFoundError`、并发双 root 串包
+- GREEN evidence: 修复三个聚焦测试各 `1 passed`; contract `27 passed`; 完整相关回归 `58 passed in 6.32s`; Ruff 与 diff check 通过
+- Risk signals: `DONE_WITH_CONCERNS`; 公共 API；跨模块；动态导入安全；共享 sys.path/sys.modules 状态；`diff > 200`
+- Task review: `approved after fix round 1 by /root/rereview_task2_contracts`
 - Review-fix round: `1/2`
-- Unresolved feedback: `none`
-- Coordinator verification: `ctypes/worker evidence confirmed from live process observation, raw 3/5 samples and report; RED/GREEN order confirmed from live agent messages and appended report; fixed-machine final regression reported 11 passed, 0 skipped`
+- Unresolved feedback: `none; one non-blocking test-coverage suggestion and the planned child-process lifecycle gate remain`
+- Coordinator verification: `contracts.py 已与 Design Doc 3.1–3.4 逐字段/逐类型核对一致；prepare 配置顺序与最终 vectorbt 唯一导入点属于 Task 7/8 跨任务门禁`

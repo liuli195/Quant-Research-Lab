@@ -142,7 +142,7 @@ git commit -m "测试：冻结本地研究等价性与性能基线"
 - Consumes: `SnapshotView`、仓库根目录、配置 v2 的 `strategy.root/module/symbol`。
 - Produces: `StrategyDescriptor`、`PreparedStrategy`、`LedgerInput`、`OrderBuffer`、`OrderProgram`、只读 `ExecutionLedger` Protocol（协议）、`ExecutionRun`、`ExecutionBundle`、`ResultExtension`、`load_strategy() -> LoadedStrategy`。
 
-- [ ] **Step 1: 写 contracts 和双策略加载失败测试**
+- [x] **Step 1: 写 contracts 和双策略加载失败测试**
 
 测试两个最小 fixture 模块可由同一加载器加载，并拒绝绝对路径、`..`、仓库外 module file、未知 symbol、重复/缺失 source file、旧 `command/project_entry` 字段：
 
@@ -158,7 +158,7 @@ def test_shared_loader_accepts_two_strategy_modules(repo_root: Path) -> None:
     assert (first.descriptor.strategy_id, second.descriptor.strategy_id) == ("minimal-fixture", "minimal-fixture-b")
 ```
 
-- [ ] **Step 2: 运行测试并确认共享接口尚不存在**
+- [x] **Step 2: 运行测试并确认共享接口尚不存在**
 
 Run:
 
@@ -168,7 +168,7 @@ Run:
 
 Expected: FAIL，导入 `strategy_loader` 或新 contract 类型失败。
 
-- [ ] **Step 3: 实现精确只读 contracts**
+- [x] **Step 3: 实现精确只读 contracts**
 
 按技术设计建立 `slots=True, frozen=True` 数据类、数值枚举和 `SegmentView/FillEvent` namedtuple（命名元组）。`OrderBuffer` 必须验证所有数组等长，写保护只在 runtime 完成后启用；`StrategyEvidenceError` 必须携带稳定 `code`：
 
@@ -196,7 +196,7 @@ class ExecutionBundle:
 
 其余字段逐字采用 Design Doc（技术设计）3.1–3.4；`StrategyModule` Protocol（协议）的方法名和返回类型不得变化。
 
-- [ ] **Step 4: 实现 loader 与最小测试策略**
+- [x] **Step 4: 实现 loader 与最小测试策略**
 
 `load_strategy()` 只临时把已解析的 `strategy_root` 加入 `sys.path`；导入后验证 `module.__file__`、descriptor 的每个 POSIX（可移植路径）source file 都在 root 内，再恢复 `sys.path`。返回值必须同时保留模块对象、绝对源码路径和 descriptor，供 code identity（代码身份）与档案复制复用：
 
@@ -211,7 +211,7 @@ class LoadedStrategy:
 
 两个最小 fixture 的 `MODULE.prepare()` 都返回一列、两日、无订单 `OrderProgram`，但 descriptor identity（描述符身份）不同；它们只用于证明共享入口无需修改即可加载第二个策略，且不依赖海龟字段。
 
-- [ ] **Step 5: 运行 contract、runner 和共享去策略化测试**
+- [x] **Step 5: 运行 contract、runner 和共享去策略化测试**
 
 Run:
 
@@ -221,7 +221,7 @@ Run:
 
 Expected: PASS；共享源码不包含 `turtle`、`strategy-003` 或具体证券代码。
 
-- [ ] **Step 6: 提交接口接缝**
+- [x] **Step 6: 提交接口接缝**
 
 ```powershell
 git add -- scripts/research/local_quant_research/contracts.py scripts/research/local_quant_research/strategy_loader.py tests/local_quant_research/test_strategy_contract.py tests/local_quant_research/fixtures/minimal_strategy/strategy.py tests/local_quant_research/fixtures/minimal_strategy_b/strategy.py

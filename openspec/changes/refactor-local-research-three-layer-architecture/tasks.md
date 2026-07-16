@@ -6,9 +6,9 @@
 
 ## 2. 建立共享 contracts 与真实 Strategy Module 接缝
 
-- [ ] 2.1 先编写失败测试，定义 Strategy Module、LedgerInput、OrderProgram、ExecutionLedger、ExecutionRun 和 ResultExtension 的最小只读 Interface
-- [ ] 2.2 实现仓库内 Strategy Module 安全加载与配置校验，拒绝仓库外路径、未知 symbol、旧任意 command 和策略专属 project entry
-- [ ] 2.3 增加第二个最小测试策略 Adapter，并证明共享入口无需修改即可加载两个策略
+- [x] 2.1 先编写失败测试，定义 Strategy Module、LedgerInput、OrderProgram、ExecutionLedger、ExecutionRun 和 ResultExtension 的最小只读 Interface
+- [x] 2.2 实现仓库内 Strategy Module 安全加载与配置校验，拒绝仓库外路径、未知 symbol、旧任意 command 和策略专属 project entry
+- [x] 2.3 增加第二个最小测试策略 Adapter，并证明共享入口无需修改即可加载两个策略
 
 ## 3. 抽取后端中立标准结果包
 
