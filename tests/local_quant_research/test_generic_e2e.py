@@ -23,7 +23,10 @@ def _remove_empty_test_roots(repo_root: Path, market_root: Path) -> None:
             path.rmdir()
         except OSError:
             pass
-    if not (market_root / "snapshots").exists() and not (market_root / "batches").exists():
+    if (
+        not (market_root / "snapshots").exists()
+        and not (market_root / "batches").exists()
+    ):
         try:
             (market_root / ".market-data.lock").unlink(missing_ok=True)
             market_root.rmdir()
@@ -88,9 +91,21 @@ def test_non_strategy_project_completes_through_shared_market_and_runner(
                 "fields": list(MARKET_DATA_FIELDS),
                 "price_semantics": {"fq": None, "skip_paused": False},
                 "export_code_sha256": export_digest,
+                "corporate_actions": {
+                    "source": {
+                        "name": "joinquant",
+                        "dataset": "finance.FUND_DIVIDEND",
+                    },
+                    "knowledge_cutoff_date": "2026-01-06",
+                    "status": "verified_empty",
+                },
             },
             root=market_root,
         )
+        source.unlink()
+        assert not source.exists()
+        assert (batch.path / "market-data.parquet").is_file()
+        assert not tuple(batch.path.rglob("*.duckdb"))
         selection = SnapshotSelection(
             source={"name": "joinquant", "environment": "research"},
             asset_type="etf",
@@ -110,40 +125,33 @@ def test_non_strategy_project_completes_through_shared_market_and_runner(
         batch_ids = list(snapshot_document["batch_ids"])
 
         project_root.mkdir(parents=True)
-        adapter = project_root / "adapter.py"
-        adapter.write_text(
-            "import argparse, json\n"
-            "from pathlib import Path\n"
-            "p=argparse.ArgumentParser()\n"
-            "p.add_argument('--snapshot-manifest', required=True)\n"
-            "p.add_argument('--market-data-root', required=True)\n"
-            "p.add_argument('--project-config', required=True)\n"
-            "p.add_argument('--output-dir', required=True)\n"
-            "p.add_argument('--run-id', required=True)\n"
-            "p.add_argument('--snapshot-id', required=True)\n"
-            "p.add_argument('--code-sha256', required=True)\n"
-            "p.add_argument('--config-sha256', required=True)\n"
-            "a=p.parse_args()\n"
-            "out=Path(a.output_dir)\n"
-            "snap=json.loads(Path(a.snapshot_manifest).read_text(encoding='utf-8'))\n"
-            "(out/'result.json').write_text(json.dumps({'snapshot_id':snap['snapshot_id'],'run_id':a.run_id})+'\\n',encoding='utf-8')\n"
-            "(out/'project-status.json').write_text(json.dumps({'schema_version':1,'status':'complete','reason_codes':[]})+'\\n',encoding='utf-8')\n",
-            encoding="utf-8",
+        adapter = (
+            repo_root / "tests/local_quant_research/fixtures/plain_project_adapter.py"
         )
         project_config = project_root / "project.json"
         project_config.write_text('{"schema_version":1}\n', encoding="utf-8")
         declared = project_root / "input.txt"
         declared.write_text("plain input\n", encoding="utf-8")
         code_identity = project_root / "code-identity.json"
+        shared_sources = [
+            repo_root / "scripts/__init__.py",
+            repo_root / "scripts/research/__init__.py",
+            *sorted((repo_root / "scripts/research/market_data").glob("*.py")),
+        ]
+        identity_sources = sorted(
+            {adapter, *shared_sources},
+            key=lambda path: path.relative_to(repo_root).as_posix(),
+        )
         code_identity.write_text(
             json.dumps(
                 {
                     "schema_version": 1,
                     "files": [
                         {
-                            "path": adapter.relative_to(repo_root).as_posix(),
-                            "sha256": _sha256(adapter),
+                            "path": source_path.relative_to(repo_root).as_posix(),
+                            "sha256": _sha256(source_path),
                         }
+                        for source_path in identity_sources
                     ],
                 },
                 sort_keys=True,
@@ -151,6 +159,9 @@ def test_non_strategy_project_completes_through_shared_market_and_runner(
             + "\n",
             encoding="utf-8",
         )
+        required_outputs = [
+            {"path": "result.json", "format": "json"},
+        ]
         run_config = {
             "schema_version": 1,
             "project_id": project_id,
@@ -164,12 +175,14 @@ def test_non_strategy_project_completes_through_shared_market_and_runner(
             "project_config": project_config.relative_to(repo_root).as_posix(),
             "code_identity": code_identity.relative_to(repo_root).as_posix(),
             "declared_inputs": [declared.relative_to(repo_root).as_posix()],
-            "required_outputs": [{"path": "result.json", "format": "json"}],
+            "required_outputs": required_outputs,
             "output_root": ".local/quant-research",
             "stop_states": ["complete", "evidence_insufficient", "failed"],
         }
         run_path = project_root / "run.json"
-        run_path.write_text(json.dumps(run_config, sort_keys=True) + "\n", encoding="utf-8")
+        run_path.write_text(
+            json.dumps(run_config, sort_keys=True) + "\n", encoding="utf-8"
+        )
 
         completed = subprocess.run(
             [
@@ -184,17 +197,24 @@ def test_non_strategy_project_completes_through_shared_market_and_runner(
             text=True,
             shell=False,
             check=False,
-            timeout=60,
+            timeout=120,
         )
 
         assert completed.returncode == 0, completed.stderr + completed.stdout
         result = json.loads(completed.stdout)
         assert result["status"] == "complete"
-        document = json.loads(
-            (Path(result["run_path"]) / "result.json").read_text(encoding="utf-8")
-        )
+        run_output = Path(result["run_path"])
+        document = json.loads((run_output / "result.json").read_text(encoding="utf-8"))
         assert document["snapshot_id"] == snapshot.snapshot_id
         assert document["run_id"] == result["run_id"]
+        status = json.loads(
+            (run_output / "project-status.json").read_text(encoding="utf-8")
+        )
+        assert status["next_action"] == "return_to_caller"
+        assert not (run_output / "recommendation.json").exists()
+        assert not (run_output / "local-research-report.md").exists()
+        assert not tuple(run_output.glob("*.parquet"))
+        assert not tuple(market_root.rglob("*.duckdb"))
     finally:
         shutil.rmtree(output_project, ignore_errors=True)
         shutil.rmtree(project_root, ignore_errors=True)

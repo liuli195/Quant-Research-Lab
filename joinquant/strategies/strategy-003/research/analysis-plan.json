@@ -1,0 +1,85 @@
+{
+  "schema_version": "strategy-analysis-plan/1",
+  "strategy_id": "strategy-003",
+  "baseline_config": "joinquant/strategies/strategy-003/research/baseline.json",
+  "scenarios": [
+    {"scenario_id": "baseline", "dimension": "baseline", "overrides": {}},
+    {"scenario_id": "entry-40", "dimension": "parameter", "overrides": {"signal": {"entry_days": 40}}},
+    {"scenario_id": "entry-60", "dimension": "parameter", "overrides": {"signal": {"entry_days": 60}}},
+    {"scenario_id": "stop-1-5n", "dimension": "parameter", "overrides": {"signal": {"stop_n": 1.5}}},
+    {"scenario_id": "stop-2-5n", "dimension": "parameter", "overrides": {"signal": {"stop_n": 2.5}}},
+    {"scenario_id": "group-unit-cap-5", "dimension": "parameter", "overrides": {"risk": {"asset_group_unit_cap": 5.0}}},
+    {"scenario_id": "portfolio-unit-cap-10", "dimension": "parameter", "overrides": {"risk": {"portfolio_unit_cap": 10.0}}}
+  ],
+  "universe": {
+    "159819.XSHE": "china_sync_equity",
+    "510300.XSHG": "china_sync_equity",
+    "511010.XSHG": "treasury_bond",
+    "512100.XSHG": "china_sync_equity",
+    "512480.XSHG": "china_sync_equity",
+    "513100.XSHG": "cross_border_tech_equity",
+    "513180.XSHG": "cross_border_tech_equity",
+    "515180.XSHG": "china_dividend",
+    "516080.XSHG": "china_innovative_drug",
+    "516160.XSHG": "china_sync_equity",
+    "518880.XSHG": "gold"
+  },
+  "analyses": {
+    "fixed_periods": [
+      {"id": "2015-2018", "start": "2015-01-01", "end": "2018-12-31"},
+      {"id": "2019-2022", "start": "2019-01-01", "end": "2022-12-31"},
+      {"id": "2023-end", "start": "2023-01-01", "end": "2026-07-13"}
+    ],
+    "rolling": {"window_years": 3, "step_months": 3},
+    "deletions": {"each_security": true, "each_asset_group": true},
+    "cost_execution": [
+      {"id": "double-commission", "commission_multiplier": 2.0, "slippage": 0.0005, "delay_days": 0},
+      {"id": "high-slippage", "commission_multiplier": 1.0, "slippage": 0.001, "delay_days": 0},
+      {"id": "delay-one-day", "commission_multiplier": 1.0, "slippage": 0.0005, "delay_days": 1}
+    ],
+    "bootstrap": {
+      "block_sizes": [5, 20, 60],
+      "paths": 10000,
+      "horizon_days": 756,
+      "seed": 20260714,
+      "thresholds": {
+        "probability_drawdown_over_20pct_max": 0.05,
+        "probability_drawdown_over_30pct_max": 0.01,
+        "median_terminal_return_min_exclusive": 0.0
+      }
+    },
+    "historical_stress": [
+      {"id": "history-2015-a-share-volatility", "start": "2015-06-12", "end": "2015-09-30", "max_drawdown_abs_max": 0.15},
+      {"id": "history-2018-global-risk", "start": "2018-01-01", "end": "2018-12-31", "max_drawdown_abs_max": 0.15},
+      {"id": "history-2020-pandemic", "start": "2020-02-03", "end": "2020-04-30", "max_drawdown_abs_max": 0.15},
+      {"id": "history-2022-rate-hikes", "start": "2022-01-04", "end": "2022-10-31", "max_drawdown_abs_max": 0.15},
+      {"id": "history-2024-liquidity", "start": "2024-01-02", "end": "2024-02-08", "max_drawdown_abs_max": 0.15}
+    ],
+    "position_shocks": [
+      {
+        "id": "shock-synchronous-equity-crash",
+        "asset_group_shocks": {"china_sync_equity": -0.20, "cross_border_tech_equity": -0.20, "china_dividend": -0.20, "china_innovative_drug": -0.20, "gold": -0.05, "treasury_bond": 0.0},
+        "maximum_loss_abs_max": 0.15
+      },
+      {
+        "id": "shock-market-liquidity",
+        "asset_group_shocks": {"china_sync_equity": -0.15, "cross_border_tech_equity": -0.15, "china_dividend": -0.15, "china_innovative_drug": -0.15, "gold": -0.10, "treasury_bond": -0.08},
+        "maximum_loss_abs_max": 0.15
+      },
+      {
+        "id": "shock-cross-border-gap",
+        "asset_group_shocks": {"china_sync_equity": -0.08, "cross_border_tech_equity": -0.08, "china_dividend": -0.08, "china_innovative_drug": -0.08, "gold": 0.0, "treasury_bond": 0.0},
+        "security_shocks": {"513100.XSHG": -0.25, "513180.XSHG": -0.25},
+        "maximum_loss_abs_max": 0.15
+      },
+      {"id": "shock-stop-failure", "use_stop_failure_loss": true, "maximum_loss_abs_max": 0.15}
+    ],
+    "cvar": [
+      {"id": "cvar-1d-95", "horizon_days": 1, "confidence": 0.95, "maximum_loss_abs_max": 0.025, "minimum_tail_observations": 20},
+      {"id": "cvar-1d-99", "horizon_days": 1, "confidence": 0.99, "maximum_loss_abs_max": 0.04, "minimum_tail_observations": 20},
+      {"id": "cvar-5d-95", "horizon_days": 5, "confidence": 0.95, "maximum_loss_abs_max": 0.05, "minimum_tail_observations": 20}
+    ]
+  },
+  "expected": {"scenario_runs": 7, "benchmarks": 2, "bootstrap_paths": 10000, "seed": 20260714},
+  "thresholds": {"cagr_min_exclusive": 0.0, "max_drawdown_abs_max": 0.2, "calmar_min": 0.5}
+}

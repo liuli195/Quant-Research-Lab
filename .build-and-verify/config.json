@@ -298,15 +298,18 @@
           "pytest",
           "tests\\local_quant_research",
           "-k",
-          "not test_skill_public_command_runs_complete_turtle_workflow and not test_non_strategy_project_completes_through_shared_market_and_runner"
+          "not test_non_strategy_project_completes_through_shared_market_and_runner"
         ],
         "paths": [
           ".agents/skills/run-local-quant-research/**",
           ".claude/skills/run-local-quant-research",
           "scripts/research/market_data/**",
           "scripts/research/local_quant_research/**",
+          "scripts/research/analysis_data/**",
+          "scripts/research/quant_analysis/**",
           "joinquant/strategies/strategy-003/research/**",
           "tests/local_quant_research/**",
+          "tests/quant_analysis/**",
           "tests/test_skill_layout.py",
           "requirements*.txt"
         ],
@@ -315,8 +318,11 @@
           ".claude/skills/run-local-quant-research",
           "scripts/research/market_data/**",
           "scripts/research/local_quant_research/**",
+          "scripts/research/analysis_data/**",
+          "scripts/research/quant_analysis/**",
           "joinquant/strategies/strategy-003/research/**",
           "tests/local_quant_research/**",
+          "tests/quant_analysis/**",
           "tests/test_skill_layout.py",
           "requirements.txt",
           "requirements-dev.txt"
@@ -330,18 +336,19 @@
           ".\\.venv\\Scripts\\python.exe",
           "-m",
           "pytest",
-          "tests\\local_quant_research\\test_turtle_e2e.py",
           "tests\\local_quant_research\\test_generic_e2e.py",
-          "-k",
-          "skill_public_command_runs_complete_turtle_workflow or non_strategy_project_completes_through_shared_market_and_runner"
+          "tests\\local_quant_research\\test_turtle_e2e.py"
         ],
         "paths": [
           ".agents/skills/run-local-quant-research/**",
           ".claude/skills/run-local-quant-research",
           "scripts/research/market_data/**",
           "scripts/research/local_quant_research/**",
+          "scripts/research/analysis_data/**",
+          "scripts/research/quant_analysis/**",
           "joinquant/strategies/strategy-003/research/**",
           "tests/local_quant_research/**",
+          "tests/quant_analysis/**",
           "tests/test_skill_layout.py",
           "requirements*.txt"
         ],
@@ -350,15 +357,18 @@
           ".claude/skills/run-local-quant-research",
           "scripts/research/market_data/**",
           "scripts/research/local_quant_research/**",
+          "scripts/research/analysis_data/**",
+          "scripts/research/quant_analysis/**",
           "joinquant/strategies/strategy-003/research/**",
           "tests/local_quant_research/**",
+          "tests/quant_analysis/**",
           "tests/test_skill_layout.py",
           "requirements.txt",
           "requirements-dev.txt"
         ],
         "checkParallel": false,
         "pytestXdistWorkers": 1,
-        "timeoutSeconds": 180
+        "timeoutSeconds": 300
       },
       {
         "id": "verify.openspec",

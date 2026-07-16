@@ -130,24 +130,25 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
         "pytest",
         "tests\\local_quant_research",
         "-k",
-        "not test_skill_public_command_runs_complete_turtle_workflow and not test_non_strategy_project_completes_through_shared_market_and_runner",
+        "not test_non_strategy_project_completes_through_shared_market_and_runner",
     ]
     assert e2e["command"] == [
         ".\\.venv\\Scripts\\python.exe",
         "-m",
         "pytest",
-        "tests\\local_quant_research\\test_turtle_e2e.py",
         "tests\\local_quant_research\\test_generic_e2e.py",
-        "-k",
-        "skill_public_command_runs_complete_turtle_workflow or non_strategy_project_completes_through_shared_market_and_runner",
+        "tests\\local_quant_research\\test_turtle_e2e.py",
     ]
     required_paths = {
         ".agents/skills/run-local-quant-research/**",
         ".claude/skills/run-local-quant-research",
         "scripts/research/market_data/**",
         "scripts/research/local_quant_research/**",
+        "scripts/research/analysis_data/**",
+        "scripts/research/quant_analysis/**",
         "joinquant/strategies/strategy-003/research/**",
         "tests/local_quant_research/**",
+        "tests/quant_analysis/**",
     }
     assert required_paths.issubset(unit["paths"])
     assert required_paths.issubset(e2e["paths"])
@@ -163,3 +164,11 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
     assert e2e["checkParallel"] is False
     assert all(not item.startswith(".local/") for item in unit["inputs"])
     assert all(not item.startswith(".local/") for item in e2e["inputs"])
+
+
+def test_full_verify_checkout_downloads_git_lfs_objects(repo_root: Path) -> None:
+    workflow = (
+        repo_root / ".github" / "workflows" / "full-verify.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "uses: actions/checkout@v4\n        with:\n          lfs: true" in workflow

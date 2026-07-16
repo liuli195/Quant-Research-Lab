@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.vibe-trading/analysis-plan.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "strategy_id", "baseline_config", "scenarios", "universe", "analyses", "expected", "thresholds"],
+  "properties": {
+    "schema_version": {"const": "strategy-analysis-plan/1"},
+    "strategy_id": {"type": "string", "minLength": 1},
+    "baseline_config": {"type": "string", "minLength": 1},
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["scenario_id", "dimension", "overrides"],
+        "properties": {
+          "scenario_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"},
+          "dimension": {"type": "string", "minLength": 1},
+          "overrides": {"type": "object"}
+        }
+      }
+    },
+    "universe": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "minLength": 1},
+      "minProperties": 1
+    },
+    "analyses": {
+      "type": "object",
+      "required": ["fixed_periods", "rolling", "deletions", "cost_execution", "bootstrap", "historical_stress", "position_shocks", "cvar"],
+      "additionalProperties": false,
+      "properties": {
+        "fixed_periods": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "start", "end"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "start": {"type": "string", "format": "date"},
+              "end": {"type": "string", "format": "date"}
+            }
+          }
+        },
+        "rolling": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["window_years", "step_months"],
+          "properties": {
+            "window_years": {"type": "integer", "minimum": 1},
+            "step_months": {"type": "integer", "minimum": 1}
+          }
+        },
+        "deletions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["each_security", "each_asset_group"],
+          "properties": {
+            "each_security": {"const": true},
+            "each_asset_group": {"const": true}
+          }
+        },
+        "cost_execution": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "commission_multiplier", "slippage", "delay_days"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "commission_multiplier": {"type": "number", "minimum": 0},
+              "slippage": {"type": "number", "minimum": 0},
+              "delay_days": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
+        "bootstrap": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["block_sizes", "paths", "horizon_days", "seed", "thresholds"],
+          "properties": {
+            "block_sizes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "integer", "minimum": 1}},
+            "paths": {"type": "integer", "minimum": 1},
+            "horizon_days": {"type": "integer", "minimum": 1},
+            "seed": {"type": "integer"},
+            "thresholds": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["probability_drawdown_over_20pct_max", "probability_drawdown_over_30pct_max", "median_terminal_return_min_exclusive"],
+              "properties": {
+                "probability_drawdown_over_20pct_max": {"type": "number", "minimum": 0, "maximum": 1},
+                "probability_drawdown_over_30pct_max": {"type": "number", "minimum": 0, "maximum": 1},
+                "median_terminal_return_min_exclusive": {"type": "number"}
+              }
+            }
+          }
+        },
+        "historical_stress": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "start", "end", "max_drawdown_abs_max"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "start": {"type": "string", "format": "date"},
+              "end": {"type": "string", "format": "date"},
+              "max_drawdown_abs_max": {"type": "number", "exclusiveMinimum": 0}
+            }
+          }
+        },
+        "position_shocks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "maximum_loss_abs_max"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "asset_group_shocks": {"type": "object", "additionalProperties": {"type": "number"}},
+              "security_shocks": {"type": "object", "additionalProperties": {"type": "number"}},
+              "use_stop_failure_loss": {"type": "boolean"},
+              "maximum_loss_abs_max": {"type": "number", "exclusiveMinimum": 0}
+            },
+            "anyOf": [
+              {"required": ["asset_group_shocks"]},
+              {
+                "required": ["use_stop_failure_loss"],
+                "properties": {"use_stop_failure_loss": {"const": true}}
+              }
+            ]
+          }
+        },
+        "cvar": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "horizon_days", "confidence", "maximum_loss_abs_max", "minimum_tail_observations"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "horizon_days": {"type": "integer", "minimum": 1},
+              "confidence": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+              "maximum_loss_abs_max": {"type": "number", "exclusiveMinimum": 0},
+              "minimum_tail_observations": {"type": "number", "minimum": 1}
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scenario_runs", "benchmarks", "bootstrap_paths", "seed"],
+      "properties": {
+        "scenario_runs": {"type": "integer", "minimum": 1},
+        "benchmarks": {"const": 2},
+        "bootstrap_paths": {"type": "integer", "minimum": 1},
+        "seed": {"type": "integer"}
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cagr_min_exclusive", "max_drawdown_abs_max", "calmar_min"],
+      "properties": {
+        "cagr_min_exclusive": {"type": "number"},
+        "max_drawdown_abs_max": {"type": "number", "exclusiveMinimum": 0},
+        "calmar_min": {"type": "number"}
+      }
+    }
+  }
+}

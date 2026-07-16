@@ -8,8 +8,12 @@ from pathlib import Path
 from typing import Callable
 
 import pytest
+import pyarrow as pa
+import pyarrow.parquet as pq
 
-from scripts.research.local_quant_research.runner import run_project
+from scripts.research.local_quant_research.contracts import OutputSpec
+from scripts.research.local_quant_research.evidence import collect_output_evidence
+from scripts.research.local_quant_research.runner import _project_status, run_project
 from scripts.research.local_quant_research.evidence import canonical_digest
 from scripts.research.market_data.contracts import SnapshotSelection
 from scripts.research.market_data.storage import create_snapshot, import_batch
@@ -30,6 +34,38 @@ FIELDS = (
     "high_limit",
     "low_limit",
 )
+
+
+def test_complete_project_status_can_declare_human_confirmation_next_action(
+    tmp_path: Path,
+) -> None:
+    _write_json(
+        tmp_path / "project-status.json",
+        {
+            "schema_version": 1,
+            "status": "complete",
+            "reason_codes": [],
+            "next_action": "human_confirmation_required",
+        },
+    )
+
+    assert _project_status(tmp_path) == ("complete", ())
+
+
+def test_complete_project_status_can_return_single_scenario_to_caller(
+    tmp_path: Path,
+) -> None:
+    _write_json(
+        tmp_path / "project-status.json",
+        {
+            "schema_version": 1,
+            "status": "complete",
+            "reason_codes": [],
+            "next_action": "return_to_caller",
+        },
+    )
+
+    assert _project_status(tmp_path) == ("complete", ())
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -88,6 +124,14 @@ def _build_repo(tmp_path: Path, source_repo: Path) -> tuple[Path, Path, dict[str
         "fields": list(FIELDS),
         "price_semantics": {"fq": None, "skip_paused": False},
         "export_code_sha256": "a" * 64,
+        "corporate_actions": {
+            "source": {
+                "name": "joinquant",
+                "dataset": "finance.FUND_DIVIDEND",
+            },
+            "knowledge_cutoff_date": "2026-01-06",
+            "status": "verified_empty",
+        },
     }
     market_root = root / ".local" / "market-data"
     batch = import_batch(csv_path=fixture, manifest=manifest, root=market_root)
@@ -147,6 +191,63 @@ def _successful_process(
         return subprocess.CompletedProcess(command, 0, stdout="ignored", stderr="ignored")
 
     return fake_run
+
+
+def test_required_output_accepts_valid_parquet_and_rejects_invalid_bytes(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "analysis.parquet"
+    pq.write_table(pa.table({"date": ["2026-01-05"], "value": [1.0]}), path)
+    spec = OutputSpec(path=path.name, format="parquet")
+
+    evidence = collect_output_evidence(tmp_path, (spec,))
+
+    assert evidence[0]["format"] == "parquet"
+    path.write_bytes(b"not parquet")
+    with pytest.raises(Exception, match="Parquet"):
+        collect_output_evidence(tmp_path, (spec,))
+
+
+def test_optional_benchmark_input_is_frozen_and_passed_to_project(
+    repo_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_root, config_path, config = _build_repo(tmp_path, repo_root)
+    benchmark = fake_root / ".local/market-data/benchmarks/input.parquet"
+    benchmark.parent.mkdir(parents=True)
+    pq.write_table(pa.table({"date": ["2026-01-05"], "return": [0.0]}), benchmark)
+    config["benchmark_input"] = benchmark.relative_to(fake_root).as_posix()
+    _write_json(config_path, config)
+
+    def assert_invocation(command: list[str], _: dict[str, object]) -> None:
+        argument = Path(command[command.index("--benchmark-input") + 1])
+        assert argument.is_file()
+        assert ".inputs" in argument.as_posix()
+        assert argument.read_bytes() == benchmark.read_bytes()
+
+    monkeypatch.setattr(subprocess, "run", _successful_process(assert_invocation))
+
+    result = run_project(config_path, repo_root=fake_root)
+
+    assert result.status == "complete"
+
+
+def test_project_execution_timeout_covers_complete_research_workflow(
+    repo_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_root, config_path, _ = _build_repo(tmp_path, repo_root)
+
+    def assert_invocation(_: list[str], kwargs: dict[str, object]) -> None:
+        assert kwargs["timeout"] >= 3_600
+
+    monkeypatch.setattr(subprocess, "run", _successful_process(assert_invocation))
+
+    result = run_project(config_path, repo_root=fake_root)
+
+    assert result.status == "complete"
 
 
 @pytest.mark.parametrize(
@@ -230,8 +331,10 @@ def test_missing_snapshot_and_tampered_snapshot_have_distinct_states(
     missing_root, missing_config, _ = _build_repo(tmp_path / "missing", repo_root)
     next((missing_root / ".local/market-data/snapshots").glob("*.json")).unlink()
     tampered_root, tampered_config, _ = _build_repo(tmp_path / "tampered", repo_root)
-    market_csv = next((tampered_root / ".local/market-data/batches").rglob("market-data.csv"))
-    market_csv.write_bytes(market_csv.read_bytes() + b"\n")
+    market_parquet = next(
+        (tampered_root / ".local/market-data/batches").rglob("market-data.parquet")
+    )
+    market_parquet.write_bytes(market_parquet.read_bytes() + b"tampered")
     monkeypatch.setattr(
         subprocess,
         "run",
@@ -618,8 +721,14 @@ def test_adapter_guard_allows_staging_writes_and_blocks_external_writes(
     adapter.parent.mkdir(parents=True)
     adapter.write_text(
         "from pathlib import Path\n"
+        "import os\n"
         "import sys\n"
+        "with open(os.devnull, 'r+b'):\n"
+        "    pass\n"
         "output = Path(sys.argv[1])\n"
+        "cache = Path(os.environ['NUMBA_CACHE_DIR'])\n"
+        "cache.mkdir(parents=True, exist_ok=True)\n"
+        "(cache / 'compiled.bin').write_bytes(b'cache')\n"
         "(output / 'inside.txt').write_text('inside', encoding='utf-8')\n"
         "if len(sys.argv) > 3 and sys.argv[2] == 'write':\n"
         "    Path(sys.argv[3]).write_text('escaped', encoding='utf-8')\n"
@@ -673,6 +782,7 @@ def test_adapter_guard_allows_staging_writes_and_blocks_external_writes(
 
     assert allowed.returncode == 0, allowed.stderr
     assert (output_dir / "inside.txt").read_text(encoding="utf-8") == "inside"
+    assert not (output_dir / ".runtime-cache").exists()
     assert blocked.returncode != 0
     assert not escaped.exists()
 

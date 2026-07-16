@@ -42,11 +42,13 @@ _CONFIG_FIELDS = {
     "output_root",
     "stop_states",
 }
+_OPTIONAL_CONFIG_FIELDS = {"benchmark_input"}
 _STOP_STATES = ("complete", "evidence_insufficient", "failed")
 _PROJECT_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _REASON_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _SENSITIVE_KEYS = ("password", "token", "cookie", "secret", "credential", "api_key")
+_PROJECT_EXECUTION_TIMEOUT_SECONDS = 3_600
 _RESERVED_ARGUMENTS = {
     "--snapshot-manifest",
     "--market-data-root",
@@ -56,6 +58,7 @@ _RESERVED_ARGUMENTS = {
     "--snapshot-id",
     "--code-sha256",
     "--config-sha256",
+    "--benchmark-input",
 }
 _COMPLETE_STAGE_NAMES = (
     "snapshot_validation",
@@ -98,6 +101,7 @@ class _FrozenExecutionInputs:
     market_data: Path
     project_entry: Path
     project_config: Path
+    benchmark_input: Path | None
 
 
 def _inside(path: Path, root: Path) -> bool:
@@ -168,7 +172,8 @@ def load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
     if _contains_sensitive_key(document):
         raise ConfigurationError("credential_field", "credential fields are forbidden")
     missing = sorted(_CONFIG_FIELDS - set(document))
-    if missing or set(document) != _CONFIG_FIELDS:
+    unknown = set(document) - (_CONFIG_FIELDS | _OPTIONAL_CONFIG_FIELDS)
+    if missing or unknown:
         raise ConfigurationError("invalid_config", "run config fields are incomplete or unknown")
     if document["schema_version"] != 1:
         raise ConfigurationError("invalid_config", "schema_version must be 1")
@@ -193,6 +198,15 @@ def load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
     )
     code_identity = _resolve_repo_path(
         document["code_identity"], repo_root=repo_root, field="code_identity"
+    )
+    benchmark_input = (
+        _resolve_repo_path(
+            document["benchmark_input"],
+            repo_root=repo_root,
+            field="benchmark_input",
+        )
+        if "benchmark_input" in document
+        else None
     )
 
     command = document["command"]
@@ -229,7 +243,12 @@ def load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
     )
     if len(declared_inputs) != len(set(declared_inputs)):
         raise ConfigurationError("invalid_inputs", "declared_inputs must be unique")
-    for input_path in (project_config, code_identity, *declared_inputs):
+    for input_path in (
+        project_config,
+        code_identity,
+        *declared_inputs,
+        *((benchmark_input,) if benchmark_input is not None else ()),
+    ):
         if not input_path.is_file():
             raise ConfigurationError("missing_declared_input", "a declared input is missing")
 
@@ -248,7 +267,14 @@ def load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
         if not isinstance(item, dict) or set(item) != {"path", "format"}:
             raise ConfigurationError("invalid_output", "required output structure is invalid")
         output_format = item["format"]
-        if output_format not in {"json", "csv", "markdown", "text"}:
+        if output_format not in {
+            "json",
+            "csv",
+            "markdown",
+            "text",
+            "parquet",
+            "directory",
+        }:
             raise ConfigurationError("invalid_output", "required output format is invalid")
         output_specs.append(OutputSpec(path=_output_path(item["path"]), format=output_format))
     if len({spec.path for spec in output_specs}) != len(output_specs):
@@ -271,6 +297,7 @@ def load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
         command=tuple(command),
         project_config=project_config,
         code_identity=code_identity,
+        benchmark_input=benchmark_input,
         declared_inputs=declared_inputs,
         required_outputs=tuple(output_specs),
         output_root=output_root,
@@ -341,8 +368,19 @@ def _code_identity(config: RunConfig, *, repo_root: Path) -> tuple[str, dict[str
         document = json.loads(config.code_identity.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise InputIntegrityError("invalid_code_identity", "code identity is invalid") from exc
-    if not isinstance(document, dict) or set(document) != {"schema_version", "files"}:
+    if (
+        not isinstance(document, dict)
+        or not {"schema_version", "files"}.issubset(document)
+        or set(document) - {"schema_version", "files", "execution"}
+    ):
         raise InputIntegrityError("invalid_code_identity", "code identity structure is invalid")
+    execution = document.get("execution")
+    if execution is not None and (
+        not isinstance(execution, Mapping)
+        or not execution
+        or _contains_sensitive_key(execution)
+    ):
+        raise InputIntegrityError("invalid_code_identity", "execution identity is invalid")
     files = document["files"]
     if document["schema_version"] != 1 or not isinstance(files, list) or not files:
         raise InputIntegrityError("invalid_code_identity", "code identity files are invalid")
@@ -369,7 +407,9 @@ def _code_identity(config: RunConfig, *, repo_root: Path) -> tuple[str, dict[str
     entry_path = config.project_entry.relative_to(repo_root).as_posix()
     if entry_path not in {item["path"] for item in normalized}:
         raise InputIntegrityError("missing_entry_identity", "project entry is absent from code identity")
-    normalized_document = {"schema_version": 1, "files": normalized}
+    normalized_document: dict[str, object] = {"schema_version": 1, "files": normalized}
+    if execution is not None:
+        normalized_document["execution"] = dict(execution)
     return canonical_digest(normalized_document), normalized_document
 
 
@@ -384,11 +424,20 @@ def _input_evidence(config: RunConfig, *, repo_root: Path) -> tuple[str, str, di
         }
         for path in config.declared_inputs
     ]
+    benchmark_input = (
+        {
+            "path": config.benchmark_input.relative_to(repo_root).as_posix(),
+            "sha256": file_digest(config.benchmark_input),
+        }
+        if config.benchmark_input is not None
+        else None
+    )
     config_identity = {
         "run_config": dict(config.document),
         "project_config_sha256": project_config_digest,
         "code_identity_sha256": code_identity_digest,
         "declared_inputs": declared,
+        "benchmark_input": benchmark_input,
     }
     config_digest = canonical_digest(config_identity)
     evidence = {
@@ -398,6 +447,7 @@ def _input_evidence(config: RunConfig, *, repo_root: Path) -> tuple[str, str, di
         "code_sha256": code_digest,
         "code_identity": code_document,
         "declared_inputs": declared,
+        "benchmark_input": benchmark_input,
     }
     return config_digest, code_digest, evidence
 
@@ -460,6 +510,16 @@ def _freeze_execution_inputs(
                 frozen_repo / relative,
                 str(item["sha256"]),
             )
+        frozen_benchmark_input: Path | None = None
+        benchmark_evidence = inputs.get("benchmark_input")
+        if isinstance(benchmark_evidence, Mapping):
+            relative = Path(str(benchmark_evidence["path"]))
+            frozen_benchmark_input = frozen_repo / relative
+            _copy_verified_file(
+                repo_root / relative,
+                frozen_benchmark_input,
+                str(benchmark_evidence["sha256"]),
+            )
 
         snapshot_id = config.snapshot_id
         _copy_verified_file(
@@ -473,7 +533,8 @@ def _freeze_execution_inputs(
             target_dir = frozen_market / "batches" / batch_id
             for name, digest_field in (
                 ("manifest.json", "manifest_sha256"),
-                ("market-data.csv", "csv_sha256"),
+                ("market-data.parquet", "parquet_sha256"),
+                ("corporate-actions.parquet", "corporate_actions_sha256"),
                 ("validation.json", "validation_sha256"),
             ):
                 _copy_verified_file(
@@ -493,6 +554,7 @@ def _freeze_execution_inputs(
             market_data=frozen_market,
             project_entry=frozen_repo / config.project_entry.relative_to(repo_root),
             project_config=frozen_repo / project_config_relative,
+            benchmark_input=frozen_benchmark_input,
         )
     except (KeyError, TypeError, OSError, MarketDataError, InputIntegrityError) as exc:
         if execution_root.exists():
@@ -601,11 +663,12 @@ def _project_status(staging: Path) -> tuple[str, tuple[str, ...]]:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise EvidenceError("project status is missing or invalid") from exc
-    if not isinstance(document, dict) or set(document) != {
-        "schema_version",
-        "status",
-        "reason_codes",
-    }:
+    required = {"schema_version", "status", "reason_codes"}
+    if (
+        not isinstance(document, dict)
+        or not required.issubset(document)
+        or set(document) - required != ({"next_action"} if "next_action" in document else set())
+    ):
         raise EvidenceError("project status structure is invalid")
     status = document["status"]
     reasons = document["reason_codes"]
@@ -619,7 +682,20 @@ def _project_status(staging: Path) -> tuple[str, tuple[str, ...]]:
         raise EvidenceError("project status value is invalid")
     if status == "complete" and reasons:
         raise EvidenceError("complete project status must not contain reasons")
+    next_action = document.get("next_action")
+    if next_action is not None and (
+        status != "complete"
+        or next_action
+        not in {"human_confirmation_required", "return_to_caller"}
+    ):
+        raise EvidenceError("project status next_action is invalid")
     return status, tuple(reasons)
+
+
+def _project_next_action(staging: Path) -> str | None:
+    document = json.loads((Path(staging) / "project-status.json").read_text(encoding="utf-8"))
+    value = document.get("next_action")
+    return value if isinstance(value, str) else None
 
 
 def _actual_staging_files(staging: Path) -> set[str]:
@@ -766,6 +842,7 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
             reused=True,
             reasons=(),
             stages=complete_stages,
+            next_action=_project_next_action(run_dir),
         )
 
     project_root.mkdir(parents=True, exist_ok=True)
@@ -837,6 +914,10 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
         "--config-sha256",
         config_digest,
     ]
+    if frozen.benchmark_input is not None:
+        command.extend(
+            ["--benchmark-input", str(frozen.benchmark_input.resolve())]
+        )
     completed = None
     try:
         completed = subprocess.run(
@@ -846,7 +927,7 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
             env=_sanitized_environment(frozen.repository),
             capture_output=True,
             text=True,
-            timeout=600,
+            timeout=_PROJECT_EXECUTION_TIMEOUT_SECONDS,
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
@@ -932,6 +1013,7 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
 
     try:
         project_status, reason_codes = _project_status(staging)
+        next_action = _project_next_action(staging)
     except EvidenceError:
         return _attempt_result(
             repo_root=repo_root,
@@ -960,8 +1042,21 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
         )
     try:
         output_evidence = collect_output_evidence(staging, config.required_outputs)
-        expected_files = {"project-status.json", *(spec.path for spec in config.required_outputs)}
-        if _actual_staging_files(staging) != expected_files:
+        actual_files = _actual_staging_files(staging)
+        fixed_files = {
+            "project-status.json",
+            *(spec.path for spec in config.required_outputs if spec.format != "directory"),
+        }
+        directory_prefixes = tuple(
+            f"{spec.path}/"
+            for spec in config.required_outputs
+            if spec.format == "directory"
+        )
+        if not fixed_files.issubset(actual_files) or any(
+            path not in fixed_files
+            and not any(path.startswith(prefix) for prefix in directory_prefixes)
+            for path in actual_files
+        ):
             raise EvidenceError("project output file set differs from its declaration")
     except EvidenceError:
         return _attempt_result(
@@ -1053,4 +1148,5 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
         reused=False,
         reasons=(),
         stages=tuple(StageRecord(name, "complete") for name in _COMPLETE_STAGE_NAMES),
+        next_action=next_action,
     )

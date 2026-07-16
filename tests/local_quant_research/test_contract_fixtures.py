@@ -39,19 +39,12 @@ def test_baseline_freezes_universe_rules_and_price_semantics(repo_root: Path) ->
         "n_days": 20,
         "add_step_n": 0.5,
         "stop_n": 2.0,
+        "max_units": 4,
     }
     assert baseline["risk"] == {
-        "risk_per_unit": 0.005,
-        "security_risk_cap": 0.0125,
-        "security_value_cap": 0.30,
-        "asset_group_risk_cap": 0.025,
-        "asset_group_value_cap": 0.50,
-        "portfolio_risk_cap": 0.05,
-        "portfolio_value_cap": 1.0,
-        "covariance": {"method": "sample", "window_days": 60},
-        "target_volatility": 0.10,
-        "risk_reduction_target_volatility": 0.095,
-        "minimum_aligned_samples": 60,
+        "unit_risk_per_n": 0.01,
+        "asset_group_unit_cap": 6.0,
+        "portfolio_unit_cap": 12.0,
     }
     assert baseline["market_data"] == {
         "source": "joinquant",
@@ -69,7 +62,6 @@ def test_baseline_freezes_universe_rules_and_price_semantics(repo_root: Path) ->
             "close",
             "pre_close",
             "volume",
-            "money",
             "factor",
             "paused",
             "high_limit",
@@ -77,8 +69,14 @@ def test_baseline_freezes_universe_rules_and_price_semantics(repo_root: Path) ->
         ],
     }
     assert baseline["joinquant_export"] == {
-        "api_source": "research_runtime_injected",
-        "apis": ["get_price", "write_file", "read_file"],
+        "api_source": "research_runtime_and_jqdata",
+        "apis": [
+            "get_price",
+            "query",
+            "finance.FUND_DIVIDEND",
+            "write_file",
+            "read_file",
+        ],
         "pandas_version": "0.23.4",
         "csv_line_terminator_argument": "line_terminator",
         "paused_source_dtype": "float64",
@@ -88,51 +86,79 @@ def test_baseline_freezes_universe_rules_and_price_semantics(repo_root: Path) ->
         "remote_readback_sha256_required": True,
         "remote_cleanup_required": True,
     }
-    assert baseline["execution"]["order_priority"] == [
-        "full_exit",
-        "mandatory_risk_reduction",
-        "entry_or_addition",
-    ]
-    assert baseline["execution"]["allocation"] == "a1_uniform_completion"
-    assert baseline["execution"]["acceptance_fixture"] == {
-        "same_security_exit_cancels_buys": True,
-        "standard_request_limit": "one_u0",
-        "uniform_completion_ratio": True,
-        "capped_budget_redistribution": True,
-        "lot_rounding": "floor_then_largest_remainder",
-        "recheck_hard_caps_each_lot": True,
-        "tie_breaker": "security_code_ascending",
-        "input_order_invariant": True,
+    assert baseline["execution"] == {
+        "additional_delay_days": 0,
+        "order_priority": [
+            "full_exit",
+            "redistribution_sell",
+            "entry_or_addition",
+            "redistribution_buy",
+        ],
+        "allocation": "full_position_redistribution",
+        "acceptance_fixture": {
+            "same_security_exit_cancels_buys": True,
+            "candidate_requires_net_buy_lot": True,
+            "group_unit_cap": 6.0,
+            "portfolio_unit_cap": 12.0,
+            "cash_scaling": "uniform",
+            "lot_rounding": "floor",
+            "residual_cash_redistribution": False,
+            "input_order_invariant": True,
+        },
     }
 
 
-def test_candidates_are_baseline_plus_six_single_factor_challenges(
+def test_analysis_plan_is_baseline_plus_six_single_factor_challenges(
     repo_root: Path,
 ) -> None:
     document = json.loads(
-        (_research_dir(repo_root) / "candidates.json").read_text(encoding="utf-8")
+        (_research_dir(repo_root) / "analysis-plan.json").read_text(encoding="utf-8")
     )
-    candidates = document["candidates"]
+    scenarios = document["scenarios"]
 
-    assert document["schema_version"] == 1
-    assert document["baseline_config"] == "baseline.json"
-    assert [item["id"] for item in candidates] == [
+    assert document["schema_version"] == "strategy-analysis-plan/1"
+    assert document["baseline_config"].endswith("/baseline.json")
+    assert [item["scenario_id"] for item in scenarios] == [
         "baseline",
         "entry-40",
         "entry-60",
-        "stop-1.5n",
-        "stop-2.5n",
-        "covariance-120d",
-        "covariance-ewma-30d",
+        "stop-1-5n",
+        "stop-2-5n",
+        "group-unit-cap-5",
+        "portfolio-unit-cap-10",
     ]
-    assert [item["overrides"] for item in candidates] == [
+    assert [item["overrides"] for item in scenarios] == [
         {},
-        {"signal.entry_days": 40},
-        {"signal.entry_days": 60},
-        {"signal.stop_n": 1.5},
-        {"signal.stop_n": 2.5},
-        {"risk.covariance": {"method": "sample", "window_days": 120}},
-        {"risk.covariance": {"method": "ewma", "half_life_days": 30}},
+        {"signal": {"entry_days": 40}},
+        {"signal": {"entry_days": 60}},
+        {"signal": {"stop_n": 1.5}},
+        {"signal": {"stop_n": 2.5}},
+        {"risk": {"asset_group_unit_cap": 5.0}},
+        {"risk": {"portfolio_unit_cap": 10.0}},
     ]
-    assert all(len(item["overrides"]) <= 1 for item in candidates)
-    assert all("rank" not in item and "score" not in item for item in candidates)
+    assert all(len(item["overrides"]) <= 1 for item in scenarios)
+    assert all("rank" not in item and "score" not in item for item in scenarios)
+
+
+def test_obsolete_challenge_analysis_plan_is_absent(repo_root: Path) -> None:
+    assert not (_research_dir(repo_root) / "challenge-analysis-plan.json").exists()
+
+
+def test_authoritative_docs_confirm_the_same_new_baseline(repo_root: Path) -> None:
+    paths = (
+        repo_root
+        / "docs/superpowers/specs/2026-07-16-turtle-full-position-redistribution-design.md",
+        repo_root / "docs/research/2026-07-13-turtle-etf-system-final-plan.md",
+        repo_root
+        / "openspec/changes/build-turtle-etf-local-research-workflow/design.md",
+        repo_root
+        / "openspec/changes/build-turtle-etf-local-research-workflow/specs/turtle-etf-local-research/spec.md",
+    )
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        assert "已确认" in text
+        assert "11 只 ETF" in text
+        assert "55/20/20" in text
+        assert "全量仓位再分配" in text
+        assert "4/6/12" in text
+        assert "180 秒" in text
