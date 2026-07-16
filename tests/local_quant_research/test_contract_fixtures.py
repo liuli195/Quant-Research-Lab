@@ -142,3 +142,23 @@ def test_analysis_plan_is_baseline_plus_six_single_factor_challenges(
 
 def test_obsolete_challenge_analysis_plan_is_absent(repo_root: Path) -> None:
     assert not (_research_dir(repo_root) / "challenge-analysis-plan.json").exists()
+
+
+def test_authoritative_docs_confirm_the_same_new_baseline(repo_root: Path) -> None:
+    paths = (
+        repo_root
+        / "docs/superpowers/specs/2026-07-16-turtle-full-position-redistribution-design.md",
+        repo_root / "docs/research/2026-07-13-turtle-etf-system-final-plan.md",
+        repo_root
+        / "openspec/changes/build-turtle-etf-local-research-workflow/design.md",
+        repo_root
+        / "openspec/changes/build-turtle-etf-local-research-workflow/specs/turtle-etf-local-research/spec.md",
+    )
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        assert "已确认" in text
+        assert "11 只 ETF" in text
+        assert "55/20/20" in text
+        assert "全量仓位再分配" in text
+        assert "4/6/12" in text
+        assert "180 秒" in text

@@ -43,7 +43,7 @@
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/result_adapter.py",
-      "sha256": "6a2e9a430393d195d1f3eb989af745071ddb7923feea988c6c5af2cc9708c928"
+      "sha256": "41f2013ea3b7cbab10167147bea9b60ccea41e63a5c6bb354338d48b9d2c6b5b"
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/single_scenario.py",
@@ -55,7 +55,7 @@
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_callbacks.py",
-      "sha256": "e3394fac66cc942473a0d28f599de7aebd8a8f3fb7efb13ee8212786a43f537d"
+      "sha256": "585246dea896f4353c3074df52fa358bc0ed73f5af22e1a217e1b8e80e63efc1"
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_cli.py",
@@ -63,15 +63,15 @@
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_delayed.py",
-      "sha256": "01d3b0b642eb7a0d528fcaeb878ace95f81438d4351b992ebc5107322ae39fe3"
+      "sha256": "1298a8d914eec26224d08f01d1cd6e348495ce0f44ecfdf327912abbf624b49c"
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_engine.py",
-      "sha256": "f59a80143ae3f0ae409c2d802e92ee72a1f818f7891562d05c53c222b11b097c"
+      "sha256": "557d3832725fc4cb0175d822e8d7fd08e620f61992bf217558004327a8356e5a"
     },
     {
       "path": "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_inputs.py",
-      "sha256": "77653b3e82ffcd48cf22aaa06ab65a0d29446281bcb58f583f0a8fbc4c6bb766"
+      "sha256": "92b0673856408f3ac23eb2236c71c8ab9afa70bfdc550b1e13bfe739765b558f"
     },
     {
       "path": "scripts/__init__.py",
