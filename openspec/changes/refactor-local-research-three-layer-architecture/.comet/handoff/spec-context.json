@@ -1,0 +1,40 @@
+{
+  "change": "refactor-local-research-three-layer-architecture",
+  "phase": "design",
+  "mode": "beta",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "9019bbd9b4e6090d0e7cd8bac63f5d774014ef46fe382907bc9acf1812428313",
+  "files": [
+    {
+      "path": "openspec/changes/refactor-local-research-three-layer-architecture/proposal.md",
+      "sha256": "d1572168930634731ac7d0794d728c6675718b33b17fb223aab4a484e2d9a3f1",
+      "role": "supporting"
+    },
+    {
+      "path": "openspec/changes/refactor-local-research-three-layer-architecture/design.md",
+      "sha256": "b30b85223a9d9b6445dd8896f5af5d99390818df3d55797feceee5a48386061e",
+      "role": "supporting"
+    },
+    {
+      "path": "openspec/changes/refactor-local-research-three-layer-architecture/tasks.md",
+      "sha256": "fe435a57fee8a18c82692445b58e22cc2dfe4027f6fb7e26c90048aa020ada95",
+      "role": "supporting"
+    },
+    {
+      "path": "openspec/changes/refactor-local-research-three-layer-architecture/specs/local-quant-research-runtime/spec.md",
+      "sha256": "4943b07f8f5449c33d44f9625cb5280e555514232b392daac2be0a0edc490bae",
+      "role": "spec"
+    },
+    {
+      "path": "openspec/changes/refactor-local-research-three-layer-architecture/specs/local-research-archive-promotion/spec.md",
+      "sha256": "5e43587054511b5a1f1b0093735b2744475aa3879c3c3a8522ba88d402934c30",
+      "role": "spec"
+    },
+    {
+      "path": "openspec/changes/refactor-local-research-three-layer-architecture/specs/local-research-result-package/spec.md",
+      "sha256": "3454fb5e60c70901b99b11692441e86127c0838e780b3de95cc6e03f52eb9fb7",
+      "role": "spec"
+    }
+  ]
+}
