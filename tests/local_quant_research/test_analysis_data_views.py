@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -316,15 +317,15 @@ def _write_result_package(root: Path) -> Path:
             ),
             code_files={"strategy.py": code},
             config_documents={
-                "scenario": {"scenario_id": "baseline"},
-                "project-run": {"schema_version": 2},
-                "code-identity": {"digest": "b" * 64},
+                "scenario.json": {"scenario_id": "baseline"},
+                "project-run.json": {"schema_version": 2},
+                "code-identity.json": {"digest": "b" * 64},
             },
             evidence_documents={
-                "market-snapshot": {"snapshot_id": "a" * 64},
-                "runtime-lock": {"python": "3.12"},
-                "performance": {"status": "pass"},
-                "environment": {"platform": "windows"},
+                "market-snapshot.json": {"snapshot_id": "a" * 64},
+                "runtime-lock.json": {"python": "3.12"},
+                "performance.json": {"status": "pass"},
+                "environment.json": {"platform": "windows"},
             },
         )
     )
@@ -363,6 +364,55 @@ def test_local_research_package_exposes_identity_core_and_named_extension(
         assert database.extension("signals").fetchall() == [("signal-1", 0.5)]
         with pytest.raises(KeyError, match="unknown"):
             database.extension("unknown")
+
+
+def test_open_analysis_source_summarizes_each_core_table_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import result_package
+
+    root = _write_result_package(tmp_path / "result")
+    names_by_fields = {
+        tuple(schema.names): name for name, schema in result_package._SCHEMAS.items()
+    }
+    summaries: Counter[str] = Counter()
+    real_summary = result_package._table_summary
+
+    def counting_summary(table: pa.Table) -> dict[str, object]:
+        name = names_by_fields.get(tuple(table.schema.names))
+        if name is not None:
+            summaries[name] += 1
+        return real_summary(table)
+
+    monkeypatch.setattr(result_package, "_table_summary", counting_summary)
+
+    open_analysis_source(root)
+
+    assert summaries == Counter(
+        {name: 1 for name in result_package.CORE_DATASETS}
+    )
+
+
+def test_local_research_rejects_noncanonical_core_path_before_query(
+    tmp_path: Path,
+) -> None:
+    root = _write_result_package(tmp_path / "result")
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    reference = manifest["datasets"]["results"]["files"][0]
+    source = root / str(reference["path"])
+    replacement = root / "data/renamed-results.parquet"
+    replacement.write_bytes(source.read_bytes())
+    reference["path"] = replacement.relative_to(root).as_posix()
+    reference["sha256"] = _sha(replacement)
+    reference["bytes"] = replacement.stat().st_size
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+    )
+
+    with pytest.raises(AnalysisManifestError, match="file identity"):
+        open_analysis_database(root)
 
 
 def test_local_research_extension_digest_is_validated_before_query(

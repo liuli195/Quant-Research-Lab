@@ -157,6 +157,13 @@ class _CoreFacts:
         return {name: getattr(self, name) for name in CORE_DATASETS}
 
 
+@dataclass(frozen=True, slots=True)
+class _FrozenInputs:
+    code: Mapping[str, bytes]
+    config: Mapping[str, object]
+    evidence: Mapping[str, object]
+
+
 def _jsonable(value: object) -> object:
     if isinstance(value, Mapping):
         result: dict[str, object] = {}
@@ -259,11 +266,13 @@ def _safe_relative(value: str, *, suffix: str | None = None) -> Path:
     return candidate
 
 
-def _validate_request_inputs(request: ResultPackageRequest) -> None:
+def _freeze_request_inputs(request: ResultPackageRequest) -> _FrozenInputs:
     _safe_segment(request.run_id, field="run_id")
     if not request.code_files:
         raise ResultContractError("archive-ready package requires strategy source code")
 
+    code: dict[str, bytes] = {}
+    documents: dict[str, dict[str, object]] = {"config": {}, "evidence": {}}
     for field, values, suffix in (
         ("code", request.code_files, None),
         ("config", request.config_documents, ".json"),
@@ -271,19 +280,33 @@ def _validate_request_inputs(request: ResultPackageRequest) -> None:
     ):
         destinations: set[str] = set()
         for name, value in values.items():
-            relative = _safe_relative(name, suffix=suffix)
+            relative = _safe_relative(name)
+            if relative.as_posix() != name or (
+                suffix is not None and relative.suffix != suffix
+            ):
+                raise ResultContractError(f"{field} package file identity is invalid")
             identity = relative.as_posix().casefold()
             if identity in destinations:
                 raise ResultContractError(f"{field} package destinations must be unique")
             destinations.add(identity)
             if field == "code":
-                if not Path(value).is_file():
+                source = Path(value)
+                if not source.is_file():
                     raise ResultContractError(f"code file is missing: {name}")
+                try:
+                    code[name] = source.read_bytes()
+                except OSError as exc:
+                    raise ResultContractError(f"code file is unreadable: {name}") from exc
             else:
-                _jsonable(value)
+                documents[field][name] = _jsonable(value)
         required = _CONFIG_FILES if field == "config" else _EVIDENCE_FILES
         if field != "code" and not required.issubset(destinations):
             raise ResultContractError(f"archive-ready package is missing {field} evidence")
+    return _FrozenInputs(
+        code=code,
+        config=documents["config"],
+        evidence=documents["evidence"],
+    )
 
 
 def _python_scalar(value: object) -> object:
@@ -526,13 +549,14 @@ def _table_summary(table: pa.Table) -> dict[str, object]:
 
 def _content_document(
     request: ResultPackageRequest,
+    inputs: _FrozenInputs,
     extensions: Mapping[str, ResultExtension],
     core_summaries: Mapping[str, Mapping[str, object]],
     extension_summaries: Mapping[str, Mapping[str, object]],
 ) -> dict[str, object]:
     code = {
-        name: hashlib.sha256(Path(path).read_bytes()).hexdigest()
-        for name, path in sorted(request.code_files.items())
+        name: hashlib.sha256(payload).hexdigest()
+        for name, payload in sorted(inputs.code.items())
     }
     return {
         "schema_version": PACKAGE_SCHEMA_VERSION,
@@ -547,8 +571,8 @@ def _content_document(
         "backend": "vectorbt",
         "formula_version": FORMULA_VERSION,
         "code": code,
-        "config": dict(request.config_documents),
-        "evidence": dict(request.evidence_documents),
+        "config": dict(inputs.config),
+        "evidence": dict(inputs.evidence),
         "datasets": {
             name: dict(summary) for name, summary in core_summaries.items()
         },
@@ -610,19 +634,16 @@ def _table_entry(
     }
 
 
-def _write_code_files(root: Path, values: Mapping[str, Path]) -> dict[str, dict[str, object]]:
+def _write_code_files(root: Path, values: Mapping[str, bytes]) -> dict[str, dict[str, object]]:
     references: dict[str, dict[str, object]] = {}
     destinations: set[Path] = set()
-    for name, source_value in sorted(values.items()):
+    for name, payload in sorted(values.items()):
         relative = _safe_relative(name)
         destination = root / "code" / relative
         if destination in destinations:
             raise ResultContractError("code file destinations must be unique")
-        source = Path(source_value)
-        if not source.is_file():
-            raise ResultContractError(f"code file is missing: {name}")
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(source.read_bytes())
+        destination.write_bytes(payload)
         references[name] = _file_ref(root, destination)
         destinations.add(destination)
     return references
@@ -663,14 +684,14 @@ def _report_payloads(
     extension_tables: Mapping[str, pa.Table],
     package_sha256: str,
 ) -> tuple[bytes, bytes]:
-    scenario = config.get("scenario")
+    scenario = config.get("scenario.json")
     parameters = (
         scenario.get("parameters", {})
         if isinstance(scenario, Mapping)
         else {}
     )
     parameters = _jsonable(parameters)
-    performance = _jsonable(evidence.get("performance"))
+    performance = _jsonable(evidence.get("performance.json"))
     time_range = _time_range(facts.results)
 
     position_times = [str(value) for value in facts.positions["time"].to_pylist()]
@@ -826,10 +847,11 @@ def _report_payloads(
 def _write_report(
     root: Path,
     request: ResultPackageRequest,
+    inputs: _FrozenInputs,
     facts: _CoreFacts,
     extension_tables: Mapping[str, pa.Table],
     package_sha256: str,
-) -> dict[str, dict[str, object]]:
+) -> tuple[dict[str, dict[str, object]], dict[str, bytes]]:
     report_dir = root / "report"
     report_dir.mkdir(parents=True, exist_ok=True)
     metrics = report_dir / "metrics.json"
@@ -841,8 +863,8 @@ def _write_report(
             "scenario_id": request.scenario_id,
             "run_id": request.run_id,
         },
-        config=request.config_documents,
-        evidence=request.evidence_documents,
+        config=inputs.config,
+        evidence=inputs.evidence,
         facts=facts,
         extension_tables=extension_tables,
         package_sha256=package_sha256,
@@ -850,10 +872,13 @@ def _write_report(
     metrics.write_bytes(metrics_bytes)
     summary = report_dir / "execution-summary.md"
     summary.write_bytes(summary_bytes)
-    return {
-        "execution-summary": _file_ref(root, summary),
-        "metrics": _file_ref(root, metrics),
-    }
+    return (
+        {
+            "execution-summary": _file_ref(root, summary),
+            "metrics": _file_ref(root, metrics),
+        },
+        {"execution-summary": summary_bytes, "metrics": metrics_bytes},
+    )
 
 
 def _readback_tables(
@@ -961,7 +986,13 @@ def _read_json(path: Path, field: str) -> object:
         raise ResultContractError(f"{field} is unreadable") from exc
 
 
-def _resolve_declared(root: Path, reference: object, field: str) -> Path:
+def _resolve_declared(
+    root: Path,
+    reference: object,
+    field: str,
+    *,
+    expected_path: str,
+) -> Path:
     if not isinstance(reference, Mapping):
         raise ResultContractError(f"{field} reference is invalid")
     if set(reference) not in ({"path", "sha256", "bytes"}, {"path", "sha256", "bytes", "rows", "format", "compression"}):
@@ -973,9 +1004,14 @@ def _resolve_declared(root: Path, reference: object, field: str) -> Path:
         raise ResultContractError(f"{field} reference identity is invalid")
     if isinstance(size, bool) or not isinstance(size, int) or size < 0:
         raise ResultContractError(f"{field} reference size is invalid")
-    candidate = Path(relative)
-    if candidate.is_absolute() or ".." in candidate.parts:
+    try:
+        candidate = _safe_relative(relative)
+    except ResultContractError as exc:
+        raise ResultContractError(f"{field} reference path is unsafe") from exc
+    if candidate.as_posix() != relative:
         raise ResultContractError(f"{field} reference path is unsafe")
+    if relative != expected_path:
+        raise ResultContractError(f"{field} file identity is invalid")
     path = (root / candidate).resolve()
     if root not in path.parents or not path.is_file():
         raise ResultContractError(f"{field} declared file is missing")
@@ -984,13 +1020,28 @@ def _resolve_declared(root: Path, reference: object, field: str) -> Path:
     return path
 
 
+def _validate_preloaded_payload(reference: object, payload: bytes, field: str) -> None:
+    if not isinstance(reference, Mapping):
+        raise ResultContractError(f"{field} reference is invalid")
+    if (
+        reference.get("bytes") != len(payload)
+        or reference.get("sha256") != hashlib.sha256(payload).hexdigest()
+    ):
+        raise ResultContractError(f"{field} preloaded payload does not match its reference")
+
+
 def _validate_table_entry(
     root: Path,
     name: str,
     entry_value: object,
     *,
     schema: pa.Schema | None,
-) -> tuple[pa.Table, tuple[str, ...]]:
+    expected_path: str,
+    extension: bool,
+    table: pa.Table | None = None,
+    summary: Mapping[str, object] | None = None,
+    physical_validated: bool = False,
+) -> tuple[pa.Table, tuple[str, ...], dict[str, object]]:
     if not isinstance(entry_value, Mapping):
         raise ResultContractError(f"{name} declaration is invalid")
     required = {
@@ -1003,8 +1054,9 @@ def _validate_table_entry(
         "files",
         "evidence",
     }
-    optional = {"schema_version", "strategy_evidence"}
-    if not required.issubset(entry_value) or set(entry_value) - required - optional:
+    if extension:
+        required |= {"schema_version", "strategy_evidence"}
+    if set(entry_value) != required:
         raise ResultContractError(f"{name} declaration fields are invalid")
     rows = entry_value["rows"]
     if (
@@ -1020,7 +1072,12 @@ def _validate_table_entry(
     if not isinstance(files, list) or len(files) != 1:
         raise ResultContractError(f"{name} must declare one Parquet file")
     reference = files[0]
-    path = _resolve_declared(root, reference, name)
+    path = _resolve_declared(
+        root,
+        reference,
+        name,
+        expected_path=expected_path,
+    )
     if (
         not isinstance(reference, Mapping)
         or reference.get("rows") != rows
@@ -1028,11 +1085,13 @@ def _validate_table_entry(
         or reference.get("compression") != "snappy"
     ):
         raise ResultContractError(f"{name} Parquet declaration is invalid")
-    _validate_physical_snappy(path, name)
-    try:
-        table = pq.read_table(path)
-    except Exception as exc:
-        raise ResultContractError(f"{name} Parquet readback failed") from exc
+    if not physical_validated:
+        _validate_physical_snappy(path, name)
+    if table is None:
+        try:
+            table = pq.read_table(path)
+        except Exception as exc:
+            raise ResultContractError(f"{name} Parquet readback failed") from exc
     if table.num_rows != rows:
         raise ResultContractError(f"{name} row count mismatch")
     declared_schema = entry_value["schema"]
@@ -1046,15 +1105,29 @@ def _validate_table_entry(
     if evidence["fields"] != table.schema.names or not isinstance(evidence["unique_key"], list):
         raise ResultContractError(f"{name} evidence fields are invalid")
     unique_key = tuple(evidence["unique_key"])
-    _validate_unique_key(table, unique_key, name)
+    materialized_summary = (
+        _table_summary(table) if summary is None else dict(summary)
+    )
+    logical_rows = materialized_summary.get("rows")
+    if not isinstance(logical_rows, list):
+        raise ResultContractError(f"{name} logical rows are invalid")
+    _validate_unique_key(table, unique_key, name, rows=logical_rows)
     if entry_value["time_range"] != _time_range(table):
         raise ResultContractError(f"{name} time range mismatch")
-    return table, unique_key
+    return table, unique_key, materialized_summary
 
 
-def validate_result_package(path: Path) -> Mapping[str, object]:
-    root = Path(path).resolve()
-    document = _read_json(root / "manifest.json", "manifest")
+def _validate_result_package_document(
+    root: Path,
+    document: object,
+    *,
+    preloaded_core: Mapping[str, pa.Table] | None = None,
+    preloaded_extensions: Mapping[str, pa.Table] | None = None,
+    preloaded_core_summaries: Mapping[str, Mapping[str, object]] | None = None,
+    preloaded_extension_summaries: Mapping[str, Mapping[str, object]] | None = None,
+    preloaded_inputs: _FrozenInputs | None = None,
+    preloaded_reports: Mapping[str, bytes] | None = None,
+) -> Mapping[str, object]:
     if not isinstance(document, dict):
         raise ResultContractError("manifest must be an object")
     required = {
@@ -1088,6 +1161,7 @@ def validate_result_package(path: Path) -> Mapping[str, object]:
         or _SHA256.fullmatch(document["package_sha256"]) is None
     ):
         raise ResultContractError("result package identity is invalid")
+    _safe_segment(str(identity["run_id"]), field="run_id")
     gate = document["gate"]
     if (
         not isinstance(gate, Mapping)
@@ -1099,21 +1173,106 @@ def validate_result_package(path: Path) -> Mapping[str, object]:
     ):
         raise ResultContractError("result package gate did not pass")
 
+    section_values: dict[str, Mapping[str, object]] = {}
+    resolved_sections: dict[str, dict[str, Path]] = {}
+    for section in ("code", "config", "evidence"):
+        values = document[section]
+        if not isinstance(values, Mapping) or any(
+            not isinstance(name, str) for name in values
+        ):
+            raise ResultContractError(f"{section} declaration is invalid")
+        if section == "code" and not values:
+            raise ResultContractError("archive-ready package requires strategy source code")
+        required_files = (
+            _CONFIG_FILES
+            if section == "config"
+            else _EVIDENCE_FILES if section == "evidence" else set()
+        )
+        if not required_files.issubset(values):
+            raise ResultContractError(
+                f"archive-ready package is missing {section} evidence"
+            )
+        resolved: dict[str, Path] = {}
+        for name, reference in values.items():
+            relative = _safe_relative(name)
+            if relative.as_posix() != name or (
+                section in {"config", "evidence"} and relative.suffix != ".json"
+            ):
+                raise ResultContractError(f"{section} file identity is invalid")
+            resolved[name] = _resolve_declared(
+                root,
+                reference,
+                f"{section}.{name}",
+                expected_path=f"{section}/{name}",
+            )
+        section_values[section] = values
+        resolved_sections[section] = resolved
+
+    reports = document["reports"]
+    if not isinstance(reports, Mapping) or set(reports) != {
+        "execution-summary",
+        "metrics",
+    }:
+        raise ResultContractError("reports declaration is incomplete")
+    report_paths = {
+        "execution-summary": "report/execution-summary.md",
+        "metrics": "report/metrics.json",
+    }
+    resolved_sections["reports"] = {
+        name: _resolve_declared(
+            root,
+            reports[name],
+            f"reports.{name}",
+            expected_path=report_paths[name],
+        )
+        for name in report_paths
+    }
+
     datasets = document["datasets"]
     if not isinstance(datasets, Mapping) or set(datasets) != set(CORE_DATASETS):
         raise ResultContractError("result package datasets are invalid")
+    if preloaded_core is not None and set(preloaded_core) != set(CORE_DATASETS):
+        raise ResultContractError("preloaded core tables are incomplete")
+    if preloaded_core_summaries is not None and set(preloaded_core_summaries) != set(
+        CORE_DATASETS
+    ):
+        raise ResultContractError("preloaded core summaries are incomplete")
     core_tables: dict[str, pa.Table] = {}
+    core_summaries: dict[str, dict[str, object]] = {}
     for name in CORE_DATASETS:
-        table, key = _validate_table_entry(root, name, datasets[name], schema=_SCHEMAS[name])
+        table, key, summary = _validate_table_entry(
+            root,
+            name,
+            datasets[name],
+            schema=_SCHEMAS[name],
+            expected_path=f"data/{name}.parquet",
+            extension=False,
+            table=None if preloaded_core is None else preloaded_core[name],
+            summary=(
+                None
+                if preloaded_core_summaries is None
+                else preloaded_core_summaries[name]
+            ),
+            physical_validated=preloaded_core is not None,
+        )
         if key != _UNIQUE_KEYS[name]:
             raise ResultContractError(f"{name} unique key does not match the contract")
         core_tables[name] = table
+        core_summaries[name] = summary
     facts = _CoreFacts(**core_tables)
-    _validate_common_facts(facts)
+    core_summaries = _validate_common_facts(facts, core_summaries)
 
     extensions_value = document["extensions"]
     if not isinstance(extensions_value, Mapping):
         raise ResultContractError("extensions declaration is invalid")
+    if preloaded_extensions is not None and set(preloaded_extensions) != set(
+        extensions_value
+    ):
+        raise ResultContractError("preloaded extension tables are incomplete")
+    if preloaded_extension_summaries is not None and set(
+        preloaded_extension_summaries
+    ) != set(extensions_value):
+        raise ResultContractError("preloaded extension summaries are incomplete")
     extension_content: dict[str, object] = {}
     extension_tables: dict[str, pa.Table] = {}
     for name, entry_value in extensions_value.items():
@@ -1124,12 +1283,35 @@ def validate_result_package(path: Path) -> Mapping[str, object]:
         schema_version = entry_value.get("schema_version")
         if not isinstance(schema_version, str) or not schema_version:
             raise ResultContractError(f"extension {name} schema_version is invalid")
-        table, key = _validate_table_entry(root, name, entry_value, schema=None)
+        strategy_evidence = entry_value.get("strategy_evidence")
+        if not isinstance(strategy_evidence, Mapping):
+            raise ResultContractError(
+                f"extension {name} strategy_evidence must be an object"
+            )
+        table, key, summary = _validate_table_entry(
+            root,
+            name,
+            entry_value,
+            schema=None,
+            expected_path=f"extensions/{name}/data.parquet",
+            extension=True,
+            table=(
+                None
+                if preloaded_extensions is None
+                else preloaded_extensions[name]
+            ),
+            summary=(
+                None
+                if preloaded_extension_summaries is None
+                else preloaded_extension_summaries[name]
+            ),
+            physical_validated=preloaded_extensions is not None,
+        )
         extension_content[name] = {
             "schema_version": schema_version,
             "unique_key": list(key),
-            "evidence": entry_value.get("strategy_evidence"),
-            "table": _table_summary(table),
+            "evidence": _jsonable(strategy_evidence),
+            "table": summary,
         }
         extension_tables[name] = table
 
@@ -1139,40 +1321,63 @@ def validate_result_package(path: Path) -> Mapping[str, object]:
         "authority": document["authority"],
         "backend": document["backend"],
         "formula_version": document["formula_version"],
-        "datasets": {
-            name: _table_summary(table) for name, table in core_tables.items()
-        },
+        "datasets": core_summaries,
         "extensions": extension_content,
     }
-    resolved_sections: dict[str, dict[str, Path]] = {}
-    for section in ("code", "config", "evidence", "reports"):
-        values = document[section]
-        if not isinstance(values, Mapping) or any(not isinstance(name, str) for name in values):
-            raise ResultContractError(f"{section} declaration is invalid")
-        resolved = {
-            name: _resolve_declared(root, reference, f"{section}.{name}")
-            for name, reference in values.items()
+    if preloaded_inputs is None:
+        content["code"] = {
+            name: hashlib.sha256(file.read_bytes()).hexdigest()
+            for name, file in resolved_sections["code"].items()
         }
-        resolved_sections[section] = resolved
-        if section == "code":
-            content[section] = {
-                name: hashlib.sha256(file.read_bytes()).hexdigest()
-                for name, file in resolved.items()
-            }
-        elif section in {"config", "evidence"}:
+        for section in ("config", "evidence"):
             content[section] = {
                 name: _read_json(file, f"{section}.{name}")
-                for name, file in resolved.items()
+                for name, file in resolved_sections[section].items()
             }
-        else:
-            summary = resolved.get("execution-summary")
-            if summary is None or resolved.get("metrics") is None:
-                raise ResultContractError("reports declaration is incomplete")
-            report = summary.read_text(encoding="utf-8")
-            if any(phrase in report for phrase in FORBIDDEN_REPORT_PHRASES):
-                raise ResultContractError("execution report contains forbidden judgment")
+    else:
+        preloaded_values: dict[str, Mapping[str, object] | Mapping[str, bytes]] = {
+            "code": preloaded_inputs.code,
+            "config": preloaded_inputs.config,
+            "evidence": preloaded_inputs.evidence,
+        }
+        for section, values in preloaded_values.items():
+            if set(values) != set(section_values[section]):
+                raise ResultContractError(f"preloaded {section} files are incomplete")
+            for name, value in values.items():
+                payload = value if isinstance(value, bytes) else _json_bytes(value)
+                _validate_preloaded_payload(
+                    section_values[section][name],
+                    payload,
+                    f"{section}.{name}",
+                )
+        content["code"] = {
+            name: hashlib.sha256(payload).hexdigest()
+            for name, payload in preloaded_inputs.code.items()
+        }
+        content["config"] = dict(preloaded_inputs.config)
+        content["evidence"] = dict(preloaded_inputs.evidence)
     if _canonical_digest(content) != document["package_sha256"]:
         raise ResultContractError("result package logical digest mismatch")
+
+    if preloaded_reports is None:
+        report_payloads = {
+            name: path.read_bytes()
+            for name, path in resolved_sections["reports"].items()
+        }
+    else:
+        if set(preloaded_reports) != set(report_paths):
+            raise ResultContractError("preloaded reports are incomplete")
+        report_payloads = dict(preloaded_reports)
+        for name, payload in report_payloads.items():
+            _validate_preloaded_payload(
+                reports[name], payload, f"reports.{name}"
+            )
+    try:
+        report_text = report_payloads["execution-summary"].decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ResultContractError("execution report is unreadable") from exc
+    if any(phrase in report_text for phrase in FORBIDDEN_REPORT_PHRASES):
+        raise ResultContractError("execution report contains forbidden judgment")
     summary_bytes, metrics_bytes = _report_payloads(
         identity=identity,
         config=content["config"],
@@ -1181,13 +1386,18 @@ def validate_result_package(path: Path) -> Mapping[str, object]:
         extension_tables=extension_tables,
         package_sha256=document["package_sha256"],
     )
-    report_files = resolved_sections["reports"]
     if (
-        report_files["execution-summary"].read_bytes() != summary_bytes
-        or report_files["metrics"].read_bytes() != metrics_bytes
+        report_payloads["execution-summary"] != summary_bytes
+        or report_payloads["metrics"] != metrics_bytes
     ):
         raise ResultContractError("result package report does not match package facts")
     return document
+
+
+def validate_result_package(path: Path) -> Mapping[str, object]:
+    root = Path(path).resolve()
+    document = _read_json(root / "manifest.json", "manifest")
+    return _validate_result_package_document(root, document)
 
 
 def write_result_package(request: ResultPackageRequest) -> ResultPackage:
@@ -1196,7 +1406,7 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
         for value in (request.strategy_id, request.scenario_id, request.run_id)
     ):
         raise ResultContractError("result package identity is incomplete")
-    _validate_request_inputs(request)
+    inputs = _freeze_request_inputs(request)
     extensions, extension_summaries = _validate_extensions(request.extensions)
 
     facts = _materialize_core(request.execution)
@@ -1204,6 +1414,7 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
     package_sha256 = _canonical_digest(
         _content_document(
             request,
+            inputs,
             extensions,
             core_summaries,
             extension_summaries,
@@ -1222,9 +1433,9 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
         staging.mkdir()
         (staging / "data").mkdir()
         (staging / "extensions").mkdir()
-        code = _write_code_files(staging, request.code_files)
-        config = _write_documents(staging, "config", request.config_documents)
-        evidence = _write_documents(staging, "evidence", request.evidence_documents)
+        code = _write_code_files(staging, inputs.code)
+        config = _write_documents(staging, "config", inputs.config)
+        evidence = _write_documents(staging, "evidence", inputs.evidence)
         for name, table in facts.tables().items():
             pq.write_table(table, staging / "data" / f"{name}.parquet", compression="snappy")
         for name, extension in sorted(extensions.items()):
@@ -1234,9 +1445,10 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
         readback_facts, readback_extensions = _readback_tables(
             staging, facts, extensions
         )
-        reports = _write_report(
+        reports, report_payloads = _write_report(
             staging,
             request,
+            inputs,
             readback_facts,
             readback_extensions,
             package_sha256,
@@ -1254,6 +1466,16 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
             reports,
         )
         (staging / "manifest.json").write_bytes(_json_bytes(manifest))
+        _validate_result_package_document(
+            staging.resolve(),
+            manifest,
+            preloaded_core=readback_facts.tables(),
+            preloaded_extensions=readback_extensions,
+            preloaded_core_summaries=core_summaries,
+            preloaded_extension_summaries=extension_summaries,
+            preloaded_inputs=inputs,
+            preloaded_reports=report_payloads,
+        )
         os.replace(staging, target)
         return ResultPackage(target, manifest, package_sha256)
     except Exception as exc:

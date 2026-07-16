@@ -8,7 +8,6 @@ from .manifest import (
     ValidationResult,
     open_analysis_source,
     validate_analysis_source,
-    validate_local_research_manifest_document,
 )
 from .views import AnalysisDatabase, open_analysis_database
 
@@ -22,5 +21,4 @@ __all__ = [
     "open_analysis_database",
     "open_analysis_source",
     "validate_analysis_source",
-    "validate_local_research_manifest_document",
 ]

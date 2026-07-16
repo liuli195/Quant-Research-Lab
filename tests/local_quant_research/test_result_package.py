@@ -6,6 +6,7 @@ import os
 from collections import Counter
 from dataclasses import replace
 from pathlib import Path
+from typing import Mapping
 
 import numpy as np
 import pyarrow as pa
@@ -245,18 +246,18 @@ def package_request(
         extensions=(extension,),
         code_files={"strategy.py": code},
         config_documents={
-            "scenario": {
+            "scenario.json": {
                 "scenario_id": "baseline",
                 "parameters": {"lookback": 20},
             },
-            "project-run": {"schema_version": 2},
-            "code-identity": {"digest": "a" * 64},
+            "project-run.json": {"schema_version": 2},
+            "code-identity.json": {"digest": "a" * 64},
         },
         evidence_documents={
-            "market-snapshot": {"snapshot_id": "b" * 64},
-            "runtime-lock": {"python": "3.12"},
-            "performance": {"status": "pass", "elapsed_seconds": 0.25},
-            "environment": {"platform": "windows"},
+            "market-snapshot.json": {"snapshot_id": "b" * 64},
+            "runtime-lock.json": {"python": "3.12"},
+            "performance.json": {"status": "pass", "elapsed_seconds": 0.25},
+            "environment.json": {"platform": "windows"},
         },
     )
 
@@ -276,6 +277,26 @@ def _assert_snappy(path: Path) -> None:
     for row_group in range(metadata.num_row_groups):
         for column in range(metadata.num_columns):
             assert metadata.row_group(row_group).column(column).compression == "SNAPPY"
+
+
+def _write_manifest(path: Path, document: Mapping[str, object]) -> None:
+    path.write_text(
+        json.dumps(document, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+    )
+
+
+def _point_reference_at(
+    root: Path,
+    reference: dict[str, object],
+    source: Path,
+    relative: str,
+) -> None:
+    destination = root / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(source.read_bytes())
+    reference["path"] = relative
+    reference["sha256"] = hashlib.sha256(destination.read_bytes()).hexdigest()
+    reference["bytes"] = destination.stat().st_size
 
 
 def test_writer_materializes_one_package_without_recomputing_ledger(
@@ -321,6 +342,51 @@ def test_writer_materializes_one_package_without_recomputing_ledger(
     assert not any(phrase in report for phrase in FORBIDDEN_REPORT_PHRASES)
 
 
+def test_writer_freezes_code_before_digest_and_copy(
+    package_request: ResultPackageRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = next(iter(package_request.code_files.values())).resolve()
+    original = source.read_bytes()
+    replacement = b"VALUE = 2\n"
+    real_read_bytes = Path.read_bytes
+    source_reads = 0
+
+    def changing_read_bytes(path: Path) -> bytes:
+        nonlocal source_reads
+        payload = real_read_bytes(path)
+        if path.resolve() == source:
+            source_reads += 1
+            if source_reads == 1:
+                path.write_bytes(replacement)
+        return payload
+
+    monkeypatch.setattr(Path, "read_bytes", changing_read_bytes)
+
+    package = write_result_package(package_request)
+
+    assert source_reads == 1
+    assert source.read_bytes() == replacement
+    assert (package.path / "code/strategy.py").read_bytes() == original
+    assert validate_result_package(package.path)["package_sha256"] == package.package_sha256
+
+
+def test_writer_rejects_forbidden_report_before_publish(
+    package_request: ResultPackageRequest,
+) -> None:
+    config = dict(package_request.config_documents)
+    config["scenario.json"] = {
+        "scenario_id": "baseline",
+        "parameters": {"conclusion": "推荐"},
+    }
+
+    with pytest.raises(ResultContractError, match="forbidden"):
+        write_result_package(replace(package_request, config_documents=config))
+
+    assert not package_request.output_dir.exists()
+    assert list(package_request.output_dir.parent.glob(".run-1.*.tmp")) == []
+
+
 def test_writer_reads_each_materialized_parquet_table_only_once(
     package_request: ResultPackageRequest,
     monkeypatch: pytest.MonkeyPatch,
@@ -355,6 +421,77 @@ def test_writer_reads_each_materialized_parquet_table_only_once(
             "extensions/decision_log/data.parquet": 1,
         }
     )
+
+
+def test_validator_summarizes_each_core_table_once(
+    package_request: ResultPackageRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import result_package
+
+    package = write_result_package(package_request)
+    names_by_fields = {
+        tuple(schema.names): name for name, schema in result_package._SCHEMAS.items()
+    }
+    summaries: Counter[str] = Counter()
+    reads: Counter[Path] = Counter()
+    real_summary = result_package._table_summary
+    real_read = result_package.pq.read_table
+
+    def counting_summary(table: pa.Table) -> dict[str, object]:
+        name = names_by_fields.get(tuple(table.schema.names))
+        if name is not None:
+            summaries[name] += 1
+        return real_summary(table)
+
+    def counting_read(path: Path, *args: object, **kwargs: object) -> pa.Table:
+        reads[Path(path).resolve()] += 1
+        return real_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(result_package, "_table_summary", counting_summary)
+    monkeypatch.setattr(result_package.pq, "read_table", counting_read)
+
+    validate_result_package(package.path)
+
+    assert summaries == Counter({name: 1 for name in result_package.CORE_DATASETS})
+    assert reads == Counter(
+        {
+            (package.path / f"data/{name}.parquet").resolve(): 1
+            for name in result_package.CORE_DATASETS
+        }
+        | {
+            (package.path / "extensions/decision_log/data.parquet").resolve(): 1
+        }
+    )
+
+
+def test_writer_reuse_summarizes_new_and_existing_core_once_each(
+    package_request: ResultPackageRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import result_package
+
+    write_result_package(package_request)
+    names_by_fields = {
+        tuple(schema.names): name for name, schema in result_package._SCHEMAS.items()
+    }
+    summaries: Counter[str] = Counter()
+    real_summary = result_package._table_summary
+
+    def counting_summary(table: pa.Table) -> dict[str, object]:
+        name = names_by_fields.get(tuple(table.schema.names))
+        if name is not None:
+            summaries[name] += 1
+        return real_summary(table)
+
+    monkeypatch.setattr(result_package, "_table_summary", counting_summary)
+
+    reused = write_result_package(
+        replace(package_request, execution=_execution(CountingLedger()))
+    )
+
+    assert reused.path == package_request.output_dir.resolve()
+    assert summaries == Counter({name: 2 for name in result_package.CORE_DATASETS})
 
 
 def test_execution_report_contains_only_reproducible_package_facts(
@@ -613,13 +750,13 @@ def test_writer_rejects_unsafe_package_paths_before_reading_or_writing(
     ("field", "missing_name"),
     [
         ("code_files", None),
-        ("config_documents", "scenario"),
-        ("config_documents", "project-run"),
-        ("config_documents", "code-identity"),
-        ("evidence_documents", "market-snapshot"),
-        ("evidence_documents", "runtime-lock"),
-        ("evidence_documents", "performance"),
-        ("evidence_documents", "environment"),
+        ("config_documents", "scenario.json"),
+        ("config_documents", "project-run.json"),
+        ("config_documents", "code-identity.json"),
+        ("evidence_documents", "market-snapshot.json"),
+        ("evidence_documents", "runtime-lock.json"),
+        ("evidence_documents", "performance.json"),
+        ("evidence_documents", "environment.json"),
     ],
 )
 def test_writer_requires_archive_ready_inputs_before_reading_or_writing(
@@ -724,4 +861,113 @@ def test_validator_rejects_non_snappy_physical_compression_with_synced_digest(
     )
 
     with pytest.raises(ResultContractError, match="physical compression"):
+        validate_result_package(package.path)
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "C:scenario.json",
+        "/absolute/scenario.json",
+        "../escape/scenario.json",
+        "config/scenario.json:ads",
+    ],
+)
+def test_validator_rejects_unsafe_declared_paths(
+    package_request: ResultPackageRequest,
+    relative: str,
+) -> None:
+    package = write_result_package(package_request)
+    manifest_path = package.path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    reference = manifest["config"]["scenario.json"]
+    if relative.endswith(":ads"):
+        source = package.path / str(reference["path"])
+        _point_reference_at(package.path, reference, source, relative)
+    else:
+        reference["path"] = relative
+    _write_manifest(manifest_path, manifest)
+
+    with pytest.raises(ResultContractError, match="unsafe"):
+        validate_result_package(package.path)
+
+
+@pytest.mark.parametrize(
+    ("section", "name"),
+    [
+        ("code", "strategy.py"),
+        ("config", "scenario.json"),
+        ("config", "project-run.json"),
+        ("config", "code-identity.json"),
+        ("evidence", "market-snapshot.json"),
+        ("evidence", "runtime-lock.json"),
+        ("evidence", "performance.json"),
+        ("evidence", "environment.json"),
+    ],
+)
+def test_validator_requires_archive_ready_file_sets(
+    package_request: ResultPackageRequest,
+    section: str,
+    name: str,
+) -> None:
+    package = write_result_package(package_request)
+    manifest_path = package.path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    del manifest[section][name]
+    _write_manifest(manifest_path, manifest)
+
+    with pytest.raises(ResultContractError, match="archive-ready"):
+        validate_result_package(package.path)
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    ["code", "config", "evidence", "dataset", "extension"],
+)
+def test_validator_requires_fixed_declared_file_paths(
+    package_request: ResultPackageRequest,
+    declaration: str,
+) -> None:
+    package = write_result_package(package_request)
+    manifest_path = package.path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if declaration == "code":
+        reference = manifest["code"]["strategy.py"]
+        relative = "code/renamed-strategy.py"
+    elif declaration == "config":
+        reference = manifest["config"]["scenario.json"]
+        relative = "config/renamed-scenario.json"
+    elif declaration == "evidence":
+        reference = manifest["evidence"]["performance.json"]
+        relative = "evidence/renamed-performance.json"
+    elif declaration == "dataset":
+        reference = manifest["datasets"]["results"]["files"][0]
+        relative = "data/renamed-results.parquet"
+    else:
+        reference = manifest["extensions"]["decision_log"]["files"][0]
+        relative = "extensions/decision_log/renamed-data.parquet"
+    source = package.path / str(reference["path"])
+    _point_reference_at(package.path, reference, source, relative)
+    _write_manifest(manifest_path, manifest)
+
+    with pytest.raises(ResultContractError, match="file identity"):
+        validate_result_package(package.path)
+
+
+@pytest.mark.parametrize("strategy_evidence", [None, [], "unverified"])
+def test_validator_requires_strategy_evidence_object(
+    package_request: ResultPackageRequest,
+    strategy_evidence: object,
+) -> None:
+    package = write_result_package(package_request)
+    manifest_path = package.path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    extension = manifest["extensions"]["decision_log"]
+    if strategy_evidence is None:
+        del extension["strategy_evidence"]
+    else:
+        extension["strategy_evidence"] = strategy_evidence
+    _write_manifest(manifest_path, manifest)
+
+    with pytest.raises(ResultContractError, match="strategy_evidence"):
         validate_result_package(package.path)
