@@ -683,19 +683,10 @@ def _project_status(staging: Path) -> tuple[str, tuple[str, ...]]:
     if status == "complete" and reasons:
         raise EvidenceError("complete project status must not contain reasons")
     next_action = document.get("next_action")
-    if next_action is not None and (
-        status != "complete"
-        or next_action
-        not in {"human_confirmation_required", "return_to_caller"}
-    ):
+    expected_next_action = "return_to_caller" if status == "complete" else None
+    if next_action != expected_next_action:
         raise EvidenceError("project status next_action is invalid")
     return status, tuple(reasons)
-
-
-def _project_next_action(staging: Path) -> str | None:
-    document = json.loads((Path(staging) / "project-status.json").read_text(encoding="utf-8"))
-    value = document.get("next_action")
-    return value if isinstance(value, str) else None
 
 
 def _actual_staging_files(staging: Path) -> set[str]:
@@ -842,7 +833,7 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
             reused=True,
             reasons=(),
             stages=complete_stages,
-            next_action=_project_next_action(run_dir),
+            next_action="return_to_caller",
         )
 
     project_root.mkdir(parents=True, exist_ok=True)
@@ -1013,7 +1004,6 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
 
     try:
         project_status, reason_codes = _project_status(staging)
-        next_action = _project_next_action(staging)
     except EvidenceError:
         return _attempt_result(
             repo_root=repo_root,
@@ -1148,5 +1138,5 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
         reused=False,
         reasons=(),
         stages=tuple(StageRecord(name, "complete") for name in _COMPLETE_STAGE_NAMES),
-        next_action=next_action,
+        next_action="return_to_caller",
     )
