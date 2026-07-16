@@ -137,6 +137,7 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
         "-m",
         "pytest",
         "tests\\local_quant_research\\test_generic_e2e.py",
+        "tests\\local_quant_research\\test_turtle_e2e.py",
     ]
     required_paths = {
         ".agents/skills/run-local-quant-research/**",

@@ -336,7 +336,8 @@
           ".\\.venv\\Scripts\\python.exe",
           "-m",
           "pytest",
-          "tests\\local_quant_research\\test_generic_e2e.py"
+          "tests\\local_quant_research\\test_generic_e2e.py",
+          "tests\\local_quant_research\\test_turtle_e2e.py"
         ],
         "paths": [
           ".agents/skills/run-local-quant-research/**",

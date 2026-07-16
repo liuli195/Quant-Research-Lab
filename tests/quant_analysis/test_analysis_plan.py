@@ -41,20 +41,17 @@ def test_expands_baseline_and_six_challenges_deterministically(repo_root: Path) 
         "entry-60",
         "stop-1-5n",
         "stop-2-5n",
-        "covariance-120d",
-        "covariance-ewma-30d",
+        "group-unit-cap-5",
+        "portfolio-unit-cap-10",
     ]
     assert first["scenarios"][0]["params"]["scenario_id"] == "baseline"
     assert first["scenarios"][1]["params"]["signal"]["entry_days"] == 40
-    assert first["scenarios"][5]["params"]["risk"]["covariance"] == {
-        "method": "sample",
-        "window_days": 120,
-    }
-    assert first["scenarios"][6]["params"]["risk"]["covariance"] == {
-        "method": "ewma",
-        "window_days": 120,
-        "half_life_days": 30,
-    }
+    assert first["scenarios"][5]["params"]["risk"][
+        "asset_group_unit_cap"
+    ] == 5.0
+    assert first["scenarios"][6]["params"]["risk"][
+        "portfolio_unit_cap"
+    ] == 10.0
     assert len({item["params_sha256"] for item in first["scenarios"]}) == 7
 
 
