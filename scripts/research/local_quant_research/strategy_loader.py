@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import importlib
+import importlib.machinery
+import importlib.util
 import os
 import re
 import sys
+import threading
+import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from types import ModuleType
@@ -15,6 +19,8 @@ from .contracts import StrategyDescriptor, StrategyModule
 _STRATEGY_FIELDS = {"root", "module", "symbol"}
 _DOTTED_NAME = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
 _SYMBOL_NAME = re.compile(r"[A-Za-z_]\w*")
+_IMPORT_LOCK = threading.RLock()
+_PRIVATE_NAMESPACE_PREFIX = "_local_quant_strategy_"
 
 
 class ConfigurationError(ValueError):
@@ -29,6 +35,14 @@ class LoadedStrategy:
     root: Path
     source_paths: tuple[Path, ...]
     descriptor: StrategyDescriptor
+
+
+@dataclass(frozen=True, slots=True)
+class _ImportTarget:
+    fullname: str
+    part: str
+    origin: Path
+    package_root: Path | None
 
 
 def _inside(path: Path, root: Path) -> bool:
@@ -65,67 +79,127 @@ def _resolve_strategy_root(repo_root: Path, value: object) -> Path:
     return resolved
 
 
-def _module_in_root(module: ModuleType, strategy_root: Path) -> bool:
-    module_file = getattr(module, "__file__", None)
-    if not isinstance(module_file, (str, os.PathLike)):
-        return False
-    return _inside(Path(module_file), strategy_root)
-
-
-def _namespace_member(name: str, top_level: str) -> bool:
-    return name == top_level or name.startswith(f"{top_level}.")
-
-
-def _require_module_file(module_name: str, strategy_root: Path) -> None:
-    relative = Path(*module_name.split("."))
-    candidates = (
-        (strategy_root / relative).with_suffix(".py"),
-        strategy_root / relative / "__init__.py",
-    )
-    if not any(
-        candidate.is_file() and _inside(candidate, strategy_root)
-        for candidate in candidates
-    ):
-        raise ConfigurationError(
-            "missing_strategy_module",
-            "strategy module file must exist inside strategy_root",
+def _import_error(*, package: bool, unsafe: bool) -> ConfigurationError:
+    kind = "package" if package else "module"
+    state = "unsafe" if unsafe else "missing"
+    requirement = "be" if unsafe else "exist"
+    if package and not unsafe:
+        message = (
+            "strategy module file requires each package file to exist "
+            "inside strategy_root"
         )
+    else:
+        message = f"strategy {kind} file must {requirement} inside strategy_root"
+    return ConfigurationError(
+        f"{state}_strategy_{kind}_file",
+        message,
+    )
 
 
-def _import_isolated(module_name: str, strategy_root: Path) -> ModuleType:
-    top_level = module_name.partition(".")[0]
-    original_path = list(sys.path)
-    original_modules = dict(sys.modules)
-    for name in tuple(sys.modules):
-        if _namespace_member(name, top_level):
-            sys.modules.pop(name, None)
-    sys.path.insert(0, str(strategy_root))
-    importlib.invalidate_caches()
-    try:
-        return importlib.import_module(module_name)
-    except ModuleNotFoundError as exc:
-        if exc.name is not None and (
-            exc.name == module_name or module_name.startswith(f"{exc.name}.")
+def _resolve_import_targets(
+    module_name: str,
+    strategy_root: Path,
+    namespace: str,
+) -> tuple[_ImportTarget, ...]:
+    parts = module_name.split(".")
+    search_root = strategy_root
+    fullname = namespace
+    targets: list[_ImportTarget] = []
+    for index, part in enumerate(parts):
+        fullname = f"{fullname}.{part}"
+        parent_package = index < len(parts) - 1
+        spec = importlib.machinery.PathFinder.find_spec(
+            fullname,
+            [str(search_root)],
+        )
+        if spec is None or not isinstance(spec.origin, (str, os.PathLike)):
+            raise _import_error(package=parent_package, unsafe=False)
+        origin = Path(spec.origin).resolve()
+        if (
+            not origin.is_file()
+            or origin.suffix.lower() != ".py"
+            or not _inside(origin, strategy_root)
         ):
-            raise ConfigurationError(
-                "missing_strategy_module",
-                "strategy module could not be imported",
-            ) from exc
-        raise
-    finally:
-        for name, module in tuple(sys.modules.items()):
-            if _namespace_member(name, top_level) or (
-                isinstance(module, ModuleType) and _module_in_root(module, strategy_root)
+            raise _import_error(package=parent_package, unsafe=True)
+
+        package_root: Path | None = None
+        if spec.submodule_search_locations is not None:
+            locations = tuple(
+                Path(location).resolve()
+                for location in spec.submodule_search_locations
+            )
+            if (
+                len(locations) != 1
+                or not locations[0].is_dir()
+                or not _inside(locations[0], strategy_root)
             ):
-                if name in original_modules:
-                    sys.modules[name] = original_modules[name]
-                else:
-                    sys.modules.pop(name, None)
-        for name, module in original_modules.items():
-            if _namespace_member(name, top_level):
-                sys.modules[name] = module
-        sys.path[:] = original_path
-        importlib.invalidate_caches()
+                raise _import_error(package=parent_package, unsafe=True)
+            package_root = locations[0]
+        if parent_package and package_root is None:
+            raise _import_error(package=True, unsafe=False)
+
+        targets.append(
+            _ImportTarget(
+                fullname=fullname,
+                part=part,
+                origin=origin,
+                package_root=package_root,
+            )
+        )
+        if parent_package:
+            assert package_root is not None
+            search_root = package_root
+    return tuple(targets)
+
+
+def _register_namespace(namespace: str, strategy_root: Path) -> ModuleType:
+    spec = importlib.machinery.ModuleSpec(namespace, loader=None, is_package=True)
+    spec.submodule_search_locations = [str(strategy_root)]
+    module = ModuleType(namespace)
+    module.__package__ = namespace
+    module.__path__ = [str(strategy_root)]  # type: ignore[attr-defined]
+    module.__spec__ = spec
+    sys.modules[namespace] = module
+    return module
+
+
+def _discard_namespace(namespace: str) -> None:
+    prefix = f"{namespace}."
+    for name in tuple(sys.modules):
+        if name == namespace or name.startswith(prefix):
+            sys.modules.pop(name, None)
+
+
+def _import_private(
+    targets: tuple[_ImportTarget, ...],
+    strategy_root: Path,
+    namespace: str,
+) -> ModuleType:
+    parent = _register_namespace(namespace, strategy_root)
+    imported: ModuleType = parent
+    for target in targets:
+        locations = (
+            [str(target.package_root)]
+            if target.package_root is not None
+            else None
+        )
+        spec = importlib.util.spec_from_file_location(
+            target.fullname,
+            target.origin,
+            submodule_search_locations=locations,
+        )
+        if spec is None or spec.loader is None:
+            raise _import_error(package=target.package_root is not None, unsafe=True)
+        imported = importlib.util.module_from_spec(spec)
+        sys.modules[target.fullname] = imported
+        spec.loader.exec_module(imported)
+        if target.package_root is not None:
+            imported.__package__ = target.fullname
+            imported.__path__ = [str(target.package_root)]  # type: ignore[attr-defined]
+            imported.__spec__ = spec
+        setattr(parent, target.part, imported)
+        parent = imported
+    return imported
 
 
 def _validate_module_file(imported: ModuleType, strategy_root: Path) -> None:
@@ -233,14 +307,22 @@ def load_strategy(
     if not isinstance(symbol, str) or _SYMBOL_NAME.fullmatch(symbol) is None:
         raise ConfigurationError("invalid_strategy_symbol", "strategy symbol is invalid")
 
-    _require_module_file(module_name, root)
-    imported = _import_isolated(module_name, root)
-    _validate_module_file(imported, root)
-    module = _validate_strategy_symbol(imported, symbol)
-    descriptor = module.descriptor
-    return LoadedStrategy(
-        module=module,
-        root=root,
-        source_paths=_source_paths(descriptor, root),
-        descriptor=descriptor,
-    )
+    with _IMPORT_LOCK:
+        namespace = f"{_PRIVATE_NAMESPACE_PREFIX}{uuid.uuid4().hex}"
+        importlib.invalidate_caches()
+        targets = _resolve_import_targets(module_name, root, namespace)
+        try:
+            imported = _import_private(targets, root, namespace)
+            _validate_module_file(imported, root)
+            module = _validate_strategy_symbol(imported, symbol)
+            descriptor = module.descriptor
+            source_paths = _source_paths(descriptor, root)
+        except BaseException:
+            _discard_namespace(namespace)
+            raise
+        return LoadedStrategy(
+            module=module,
+            root=root,
+            source_paths=source_paths,
+            descriptor=descriptor,
+        )
