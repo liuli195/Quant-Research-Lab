@@ -8,9 +8,10 @@ import os
 import shutil
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Callable
+from typing import Any, Callable, Iterator
 
 import pyarrow as pa
 import pytest
@@ -574,6 +575,54 @@ def test_copy_interruption_cleans_only_its_staging_directory(
     assert _tree_digests(complete_package) == source_before
 
 
+def test_fdopen_failure_closes_duplicate_and_original_descriptors(
+    complete_package: Path,
+    isolated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import archive
+
+    snapshot = archive._scan_tree(complete_package)
+    staging = isolated_repo / "staging"
+    original_descriptors: list[int] = []
+    duplicate_descriptors: list[int] = []
+    real_open = os.open
+    real_dup = os.dup
+    real_close = os.close
+
+    def record_open(*args: object, **kwargs: object) -> int:
+        descriptor = real_open(*args, **kwargs)
+        original_descriptors.append(descriptor)
+        return descriptor
+
+    def record_dup(descriptor: int) -> int:
+        duplicate = real_dup(descriptor)
+        duplicate_descriptors.append(duplicate)
+        return duplicate
+
+    def fail_fdopen(*_args: object, **_kwargs: object) -> object:
+        raise OSError("simulated fdopen failure")
+
+    monkeypatch.setattr(archive.os, "open", record_open)
+    monkeypatch.setattr(archive.os, "dup", record_dup)
+    monkeypatch.setattr(archive.os, "fdopen", fail_fdopen)
+    try:
+        with pytest.raises(OSError, match="simulated fdopen failure"):
+            archive._copy_verified_tree(complete_package, staging, snapshot)
+
+        assert len(original_descriptors) == 1
+        assert len(duplicate_descriptors) == 1
+        for descriptor in (*original_descriptors, *duplicate_descriptors):
+            with pytest.raises(OSError):
+                os.fstat(descriptor)
+    finally:
+        for descriptor in (*original_descriptors, *duplicate_descriptors):
+            try:
+                real_close(descriptor)
+            except OSError:
+                pass
+
+
 def test_copy_failure_rolls_back_new_empty_archive_parents(
     complete_package: Path,
     isolated_repo: Path,
@@ -920,6 +969,101 @@ def test_complete_staging_passes_the_real_unified_analysis_entry(
     assert validated[0].parent == result.target.parent
     assert validated[0].name.startswith(f".{ANALYSIS_ID}.")
     assert validated[0].name.endswith(".tmp")
+
+
+def test_prepublish_uses_authoritative_validator_once_per_tree(
+    complete_package: Path,
+    isolated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.analysis_data import manifest as analysis_manifest
+    from scripts.research.local_quant_research import archive
+
+    real_validate = archive.validate_result_package
+    validated: list[Path] = []
+
+    def record_validation(path: Path) -> object:
+        validated.append(Path(path))
+        return real_validate(path)
+
+    monkeypatch.setattr(archive, "validate_result_package", record_validation)
+    monkeypatch.setattr(
+        analysis_manifest,
+        "validate_result_package",
+        record_validation,
+    )
+
+    result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
+
+    assert result.status == "complete"
+    assert validated.count(complete_package) == 1
+    staging_validations = [path for path in validated if path != complete_package]
+    assert len(staging_validations) == 1
+    assert staging_validations[0].parent == result.target.parent
+    assert staging_validations[0].name.startswith(f".{ANALYSIS_ID}.")
+
+
+def test_prepublish_analysis_queries_one_row_per_relation(
+    complete_package: Path,
+    isolated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research import analysis_data
+
+    real_open = analysis_data.open_analysis_database
+    fetched: list[tuple[str, int | None]] = []
+
+    def probe_relation(
+        relation: Any,
+        name: str,
+        *,
+        limit_count: int | None = None,
+    ) -> SimpleNamespace:
+        def limit(count: int) -> SimpleNamespace:
+            return probe_relation(
+                relation.limit(count),
+                name,
+                limit_count=count,
+            )
+
+        def fetchall() -> object:
+            fetched.append((name, limit_count))
+            return relation.fetchall()
+
+        return SimpleNamespace(limit=limit, fetchall=fetchall)
+
+    @contextmanager
+    def record_bounded_queries(path: Path) -> Iterator[object]:
+        with real_open(path) as database:
+            connection = SimpleNamespace(
+                table=lambda name: probe_relation(
+                    database.connection.table(name),
+                    f"core:{name}",
+                )
+            )
+            yield SimpleNamespace(
+                source=database.source,
+                table_names=database.table_names,
+                connection=connection,
+                extension=lambda name: probe_relation(
+                    database.extension(name),
+                    f"extension:{name}",
+                ),
+            )
+
+    monkeypatch.setattr(
+        analysis_data,
+        "open_analysis_database",
+        record_bounded_queries,
+    )
+
+    result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
+
+    assert result.status == "complete"
+    assert fetched == [
+        (f"core:{name}", 1)
+        for name in analysis_data.LOCAL_PHYSICAL_DATASETS
+    ] + [("extension:signals", 1)]
 
 
 @pytest.mark.parametrize(

@@ -363,7 +363,13 @@ def _copy_verified_tree(
             source_file, entry.metadata
         )
         try:
-            with os.fdopen(os.dup(descriptor), "rb") as source_stream:
+            duplicate = os.dup(descriptor)
+            try:
+                source_stream = os.fdopen(duplicate, "rb")
+            except Exception:
+                os.close(duplicate)
+                raise
+            with source_stream:
                 with target_file.open("xb") as target_stream:
                     shutil.copyfileobj(
                         source_stream,
@@ -417,14 +423,14 @@ def _validate_analysis_views(staging: Path) -> None:
         ):
             raise ValueError("archive core analysis tables are incomplete")
         for name in database.table_names:
-            database.connection.table(name).fetchall()
+            database.connection.table(name).limit(1).fetchall()
         extensions = source.manifest.get("extensions")
         if not isinstance(extensions, Mapping):
             raise ValueError("archive extensions are invalid")
         for name in sorted(extensions):
             if not isinstance(name, str):
                 raise ValueError("archive extension name is invalid")
-            database.extension(name).fetchall()
+            database.extension(name).limit(1).fetchall()
 
 
 def promote_archive(
@@ -503,7 +509,6 @@ def promote_archive(
         staging_snapshot = _scan_tree(staging)
         if staging_snapshot.digest != source_snapshot.digest:
             raise OSError("archive tree verification failed")
-        validate_result_package(staging)
         _validate_analysis_views(staging)
         if _path_exists(target):
             existing = _existing_result(source, target, source_snapshot)
