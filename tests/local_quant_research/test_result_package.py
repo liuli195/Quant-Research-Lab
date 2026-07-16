@@ -328,6 +328,19 @@ def test_writer_materializes_one_package_without_recomputing_ledger(
         ("orders.parquet", "snappy"),
         ("data.parquet", "snappy"),
     ]
+    assert set(package.writer_stages) == {
+        "core_facts",
+        "parquet_materialize",
+        "readback_validate",
+        "report_and_manifest",
+    }
+    assert all(seconds > 0 for seconds in package.writer_stages.values())
+    performance = json.loads(
+        (package.path / "evidence/performance.json").read_text(encoding="utf-8")
+    )
+    assert {
+        name: performance["stages"][name] for name in package.writer_stages
+    } == dict(package.writer_stages)
     assert len(package.package_sha256) == 64
     for name in manifest["datasets"]:
         reference = manifest["datasets"][name]["files"][0]
@@ -538,7 +551,14 @@ def test_execution_report_contains_only_reproducible_package_facts(
     assert metrics["positions"]["latest_market_value"] == 660.0
     assert metrics["net_value"]["start_total_value"] == 1000.0
     assert metrics["net_value"]["end_total_value"] == 1050.0
-    assert metrics["performance"] == {"status": "pass", "elapsed_seconds": 0.25}
+    assert metrics["performance"]["status"] == "pass"
+    assert metrics["performance"]["elapsed_seconds"] == 0.25
+    assert set(metrics["performance"]["stages"]) == {
+        "core_facts",
+        "parquet_materialize",
+        "readback_validate",
+        "report_and_manifest",
+    }
     assert metrics["integrity_gate"]["status"] == "pass"
 
 

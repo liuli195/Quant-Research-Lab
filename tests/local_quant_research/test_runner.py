@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import gc
 import json
 import os
 import shutil
 import subprocess
+import uuid
+import weakref
 from pathlib import Path
 from typing import Callable
 
@@ -131,6 +134,10 @@ def _build_repo(tmp_path: Path, source_repo: Path) -> tuple[Path, Path, dict[str
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(source_repo / relative, target)
+    for relative in (Path("scripts/__init__.py"), Path("scripts/research/__init__.py")):
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_repo / relative, target)
 
     fixture = (
         source_repo
@@ -791,6 +798,7 @@ def test_adapter_guard_allows_staging_writes_and_blocks_external_writes(
     adapter.write_text(
         "from pathlib import Path\n"
         "import os\n"
+        "import subprocess\n"
         "import sys\n"
         "with open(os.devnull, 'r+b'):\n"
         "    pass\n"
@@ -802,7 +810,9 @@ def test_adapter_guard_allows_staging_writes_and_blocks_external_writes(
         "if len(sys.argv) > 3 and sys.argv[2] == 'write':\n"
         "    Path(sys.argv[3]).write_text('escaped', encoding='utf-8')\n"
         "if len(sys.argv) > 3 and sys.argv[2] == 'read':\n"
-        "    Path(sys.argv[3]).read_text(encoding='utf-8')\n",
+        "    Path(sys.argv[3]).read_text(encoding='utf-8')\n"
+        "if len(sys.argv) > 2 and sys.argv[2] == 'process':\n"
+        "    subprocess.run([sys.executable, '-c', 'pass'], check=True)\n",
         encoding="utf-8",
     )
     output_dir = tmp_path / "output"
@@ -865,6 +875,17 @@ def test_adapter_guard_allows_staging_writes_and_blocks_external_writes(
         check=False,
     )
     assert blocked_read.returncode != 0
+
+    blocked_process = subprocess.run(
+        [*base_command, "process"],
+        cwd=output_dir,
+        env=environment,
+        capture_output=True,
+        text=True,
+        shell=False,
+        check=False,
+    )
+    assert blocked_process.returncode != 0
 
 
 LEGACY_RUN_FIELDS = (
@@ -954,6 +975,26 @@ def test_v2_config_rejects_each_legacy_run_field(
     assert caught.value.code == "legacy_run_field"
 
 
+@pytest.mark.parametrize("scenario_id", (None, ""), ids=("missing", "empty"))
+def test_v2_config_rejects_missing_scenario_id_before_strategy_execution(
+    scenario_id: object,
+    tmp_path: Path,
+) -> None:
+    from scripts.research.local_quant_research import runner
+
+    config_path, document = _build_v2_config(tmp_path)
+    scenario_path = tmp_path / str(document["scenario_config"])
+    scenario_document = {"schema_version": 1}
+    if scenario_id is not None:
+        scenario_document["scenario_id"] = scenario_id
+    _write_json(scenario_path, scenario_document)
+
+    with pytest.raises(runner.ConfigurationError) as caught:
+        runner.load_run_config(config_path, repo_root=tmp_path)
+
+    assert caught.value.code == "missing_scenario_id"
+
+
 def test_parent_generates_one_fixed_private_execute_command(tmp_path: Path) -> None:
     from scripts.research.local_quant_research import runner
 
@@ -975,6 +1016,337 @@ def test_parent_generates_one_fixed_private_execute_command(tmp_path: Path) -> N
         "--staging",
         staging,
     )
+
+
+def test_fixed_output_root_cannot_escape_repository_through_directory_link(
+    tmp_path: Path,
+) -> None:
+    from scripts.research.local_quant_research import runner
+
+    repository = tmp_path / "repository"
+    outside = tmp_path / "outside"
+    (repository / ".local").mkdir(parents=True)
+    outside.mkdir()
+    try:
+        (repository / ".local/quant-research").symlink_to(
+            outside,
+            target_is_directory=True,
+        )
+    except OSError as exc:
+        pytest.skip(f"directory links are unavailable: {exc}")
+
+    with pytest.raises(runner.ConfigurationError) as caught:
+        runner._resolve_output_project_root(repository, "minimal-fixture")
+
+    assert caught.value.code == "unsafe_output_root"
+
+
+def test_private_execute_rejects_staging_not_bound_to_frozen_request(
+    repo_root: Path,
+) -> None:
+    token = uuid.uuid4().hex
+    project_root = repo_root / ".local/quant-research/private-protocol-test"
+    execution_root = project_root / f".{token}.inputs"
+    repository = execution_root / "repository"
+    expected_staging = project_root / f".{token}.tmp"
+    supplied_staging = project_root / f".{token}.other.tmp"
+    try:
+        repository.mkdir(parents=True)
+        _write_json(
+            execution_root / "request.json",
+            {
+                "schema_version": 2,
+                "repository": str(repository.resolve()),
+                "market_data": str((execution_root / "market-data").resolve()),
+                "live_repository": str(repo_root.resolve()),
+                "runtime_cache": str((execution_root / "runtime-cache").resolve()),
+                "staging": str(expected_staging.resolve()),
+            },
+        )
+
+        completed = subprocess.run(
+            [
+                str(repo_root / ".venv/Scripts/python.exe"),
+                str(repo_root / "scripts/research/local_quant_research/cli.py"),
+                "_execute",
+                "--frozen-inputs",
+                str(execution_root / "request.json"),
+                "--staging",
+                str(supplied_staging),
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            shell=False,
+            check=False,
+        )
+
+        assert completed.returncode == 2
+        assert json.loads(completed.stdout) == {
+            "reasons": ["staging_mismatch"],
+            "status": "evidence_insufficient",
+        }
+        assert not supplied_staging.exists()
+    finally:
+        shutil.rmtree(project_root, ignore_errors=True)
+        try:
+            project_root.parent.rmdir()
+        except OSError:
+            pass
+
+
+def test_freezing_copies_every_captured_shared_runtime_source(
+    tmp_path: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import runner
+
+    fake_root, config_path, _ = _build_repo(tmp_path, repo_root)
+    observed: set[str] = set()
+
+    def inspect_frozen_runtime(command: list[str], **_kwargs: object):
+        request_path = Path(command[command.index("--frozen-inputs") + 1])
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+        frozen_repository = Path(request["repository"])
+        observed.update(
+            item.relative_to(frozen_repository).as_posix()
+            for item in frozen_repository.rglob("*.py")
+        )
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            stdout='{"reasons":["stop_after_inspection"],"status":"failed"}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", inspect_frozen_runtime)
+
+    result = runner.run_project(config_path, repo_root=fake_root)
+
+    assert result.status == "failed"
+    assert {
+        "scripts/__init__.py",
+        "scripts/research/__init__.py",
+        "scripts/research/local_quant_research/runner.py",
+        "scripts/research/local_quant_research/scenario.py",
+        "scripts/research/market_data/query.py",
+    }.issubset(observed)
+
+
+def test_freezing_uses_first_captured_scenario_digest_before_process(
+    tmp_path: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import runner
+
+    fake_root, config_path, _ = _build_repo(tmp_path, repo_root)
+    scenario = fake_root / "projects/generic-research/scenario.json"
+    original_copy = runner._copy_v2_inputs
+    process_calls = 0
+
+    def change_after_identity(**kwargs: object) -> None:
+        scenario.write_text(
+            '{"parameter":8,"scenario_id":"baseline","schema_version":1}\n',
+            encoding="utf-8",
+        )
+        original_copy(**kwargs)
+
+    def record_process(*_args: object, **_kwargs: object):
+        nonlocal process_calls
+        process_calls += 1
+        return subprocess.CompletedProcess([], 1, stdout="", stderr="")
+
+    monkeypatch.setattr(runner, "_copy_v2_inputs", change_after_identity)
+    monkeypatch.setattr(subprocess, "run", record_process)
+
+    result = runner.run_project(config_path, repo_root=fake_root)
+
+    assert result.status == "failed"
+    assert "changed" in " ".join(result.reasons)
+    assert process_calls == 0
+
+
+def test_private_execute_bootstrap_loads_runner_from_frozen_repository(
+    repo_root: Path,
+) -> None:
+    token = uuid.uuid4().hex
+    project_root = repo_root / ".local/quant-research/private-freeze-test"
+    execution_root = project_root / f".{token}.inputs"
+    frozen = execution_root / "repository"
+    staging = project_root / f".{token}.tmp"
+    modules = {
+        "scripts/__init__.py": "",
+        "scripts/research/__init__.py": "",
+        "scripts/research/local_quant_research/__init__.py": "",
+        "scripts/research/local_quant_research/runner.py": (
+            "from .adapter_guard import INSTALLED\n"
+            "class ConfigurationError(ValueError):\n"
+            "    def __init__(self, code, message):\n"
+            "        super().__init__(message)\n"
+            "        self.code = code\n"
+            "def execute_frozen_inputs(_request, _staging):\n"
+            "    if not INSTALLED:\n"
+            "        raise RuntimeError('guard was not installed')\n"
+            "    return {'status': 'complete', 'reasons': [], 'source': 'frozen'}\n"
+        ),
+        "scripts/research/local_quant_research/adapter_guard.py": (
+            "INSTALLED = False\n"
+            "def install_access_guard(*_args, **_kwargs):\n"
+            "    global INSTALLED\n"
+            "    INSTALLED = True\n"
+        ),
+        "scripts/research/local_quant_research/contracts.py": (
+            "class StrategyEvidenceError(RuntimeError):\n"
+            "    code = 'strategy_evidence'\n"
+        ),
+        "scripts/research/local_quant_research/performance.py": (
+            "class PerformanceGateError(RuntimeError):\n"
+            "    code = 'performance_gate'\n"
+        ),
+        "scripts/research/local_quant_research/result_package.py": (
+            "class ResultContractError(ValueError):\n"
+            "    pass\n"
+        ),
+        "scripts/research/local_quant_research/strategy_loader.py": (
+            "class ConfigurationError(ValueError):\n"
+            "    def __init__(self, code='strategy_config', message='invalid'):\n"
+            "        super().__init__(message)\n"
+            "        self.code = code\n"
+        ),
+        "scripts/research/market_data/__init__.py": "",
+        "scripts/research/market_data/storage.py": (
+            "class MarketDataError(RuntimeError):\n"
+            "    pass\n"
+        ),
+    }
+    try:
+        for relative, source in modules.items():
+            path = frozen / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(source, encoding="utf-8")
+        (execution_root / "market-data").mkdir()
+        (execution_root / "runtime-cache").mkdir()
+        _write_json(
+            execution_root / "request.json",
+            {
+                "schema_version": 2,
+                "repository": str(frozen.resolve()),
+                "market_data": str((execution_root / "market-data").resolve()),
+                "live_repository": str(repo_root.resolve()),
+                "runtime_cache": str((execution_root / "runtime-cache").resolve()),
+                "staging": str(staging.resolve()),
+            },
+        )
+
+        completed = subprocess.run(
+            [
+                str(repo_root / ".venv/Scripts/python.exe"),
+                str(repo_root / "scripts/research/local_quant_research/cli.py"),
+                "_execute",
+                "--frozen-inputs",
+                str(execution_root / "request.json"),
+                "--staging",
+                str(staging),
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            shell=False,
+            check=False,
+        )
+
+        assert completed.returncode == 0, completed.stderr + completed.stdout
+        assert json.loads(completed.stdout)["source"] == "frozen"
+    finally:
+        shutil.rmtree(project_root, ignore_errors=True)
+        try:
+            project_root.parent.rmdir()
+        except OSError:
+            pass
+
+
+def test_completed_package_reuse_binds_all_frozen_identity_documents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import result_package, runner
+    from scripts.research.local_quant_research.evidence import canonical_digest
+
+    package = tmp_path / "package"
+    project_run = {"schema_version": 2, "project_id": "minimal-fixture"}
+    scenario = {"schema_version": 1, "scenario_id": "baseline"}
+    declared_inputs = [{"path": "input.txt", "sha256": "1" * 64}]
+    code_identity = {
+        "schema_version": 1,
+        "files": [{"path": "strategy.py", "sha256": "2" * 64}],
+        "inputs": {
+            "project_run": {"path": "run.json", "sha256": "3" * 64},
+            "scenario": {"path": "scenario.json", "sha256": "4" * 64},
+            "declared_inputs": declared_inputs,
+        },
+    }
+    runtime_lock = {"schema_version": 1, "python": "3.12", "dependencies": {}}
+    market_snapshot = {"schema_version": 1, "snapshot_id": "5" * 64}
+    config_digest = canonical_digest(
+        {
+            "project_run": project_run,
+            "scenario": scenario,
+            "declared_inputs": declared_inputs,
+        }
+    )
+    code_digest = canonical_digest(
+        {
+            "code_identity": {
+                "schema_version": 1,
+                "files": code_identity["files"],
+            },
+            "runtime_lock": runtime_lock,
+        }
+    )
+    run_id = runner.compute_run_id(
+        canonical_digest(market_snapshot),
+        config_digest,
+        code_digest,
+    )
+    for relative, document in {
+        "config/project-run.json": project_run,
+        "config/scenario.json": scenario,
+        "config/code-identity.json": code_identity,
+        "evidence/market-snapshot.json": market_snapshot,
+        "evidence/runtime-lock.json": runtime_lock,
+    }.items():
+        _write_json(package / relative, document)
+    manifest = {
+        "object": {
+            "kind": "local_research",
+            "status": "complete",
+            "strategy_id": "minimal-fixture",
+            "run_id": run_id,
+        }
+    }
+    monkeypatch.setattr(result_package, "validate_result_package", lambda _path: manifest)
+    expected = {
+        "project_id": "minimal-fixture",
+        "run_id": run_id,
+        "project_run": project_run,
+        "scenario_document": scenario,
+        "code_identity": code_identity,
+        "runtime_lock": runtime_lock,
+        "market_snapshot": market_snapshot,
+        "config_sha256": config_digest,
+        "code_sha256": code_digest,
+    }
+
+    runner._package_identity(package, expected=expected)
+    _write_json(
+        package / "config/project-run.json",
+        {"schema_version": 2, "project_id": "other"},
+    )
+
+    with pytest.raises(EvidenceError, match="identity"):
+        runner._package_identity(package, expected=expected)
 
 
 def _performance_module():
@@ -1004,6 +1376,27 @@ def test_daily_performance_runs_exactly_one_cold_and_one_warm() -> None:
     assert evidence.cold.digest == evidence.warm.digest == "same"
     assert evidence.cold.seconds < 180
     assert evidence.warm.seconds < 180
+
+
+def test_daily_performance_releases_cold_outcome_before_warm() -> None:
+    performance = _performance_module()
+    references: list[weakref.ReferenceType[object]] = []
+
+    class Outcome:
+        pass
+
+    def operation() -> Outcome:
+        if references:
+            gc.collect()
+            assert references[0]() is None
+        outcome = Outcome()
+        references.append(weakref.ref(outcome))
+        return outcome
+
+    performance.run_cold_warm(
+        operation,
+        digest=lambda _value: "same",
+    )
 
 
 def test_daily_performance_rejects_full_execution_digest_mismatch() -> None:
@@ -1045,3 +1438,16 @@ def test_daily_performance_rejects_each_180_second_limit(
         performance.run_cold_warm(lambda: "same", digest=lambda value: value)
 
     assert caught.value.code == reason
+
+
+def test_daily_performance_adds_single_writer_duration_to_both_limits() -> None:
+    performance = _performance_module()
+    _, evidence = performance.run_cold_warm(
+        lambda: "same",
+        digest=lambda value: value,
+    )
+
+    with pytest.raises(performance.PerformanceGateError) as caught:
+        performance.include_shared_work(evidence, 180.0)
+
+    assert caught.value.code == "cold_performance_limit"

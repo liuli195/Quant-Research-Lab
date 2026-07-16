@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, TypeVar
 
 
@@ -62,7 +62,8 @@ def run_cold_warm(
     *,
     digest: Callable[[T], str],
 ) -> tuple[T, PerformanceEvidence]:
-    _, cold = _sample("cold", operation, digest)
+    cold_outcome, cold = _sample("cold", operation, digest)
+    del cold_outcome
     warm_outcome, warm = _sample("warm", operation, digest)
     if cold.digest != warm.digest:
         raise PerformanceGateError(
@@ -70,3 +71,21 @@ def run_cold_warm(
             "cold and warm execution digests differ",
         )
     return warm_outcome, PerformanceEvidence(cold, warm)
+
+
+def include_shared_work(
+    evidence: PerformanceEvidence,
+    seconds: float,
+) -> PerformanceEvidence:
+    shared_seconds = float(seconds)
+    if shared_seconds < 0:
+        raise ValueError("shared performance duration must be non-negative")
+    cold = replace(evidence.cold, seconds=evidence.cold.seconds + shared_seconds)
+    warm = replace(evidence.warm, seconds=evidence.warm.seconds + shared_seconds)
+    for sample in (cold, warm):
+        if sample.seconds >= PERFORMANCE_LIMIT_SECONDS:
+            raise PerformanceGateError(
+                f"{sample.name}_performance_limit",
+                f"{sample.name} execution exceeded the 180 second limit",
+            )
+    return PerformanceEvidence(cold, warm)

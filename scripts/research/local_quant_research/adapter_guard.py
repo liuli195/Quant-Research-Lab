@@ -53,9 +53,9 @@ def _inside(path: Path, root: Path) -> bool:
     return True
 
 
-def _require_staging_path(value: object, output_root: Path) -> None:
+def _require_write_path(value: object, write_roots: tuple[Path, ...]) -> None:
     path = _path_from_event(value)
-    if path is not None and not _inside(path, output_root):
+    if path is not None and not any(_inside(path, root) for root in write_roots):
         raise PermissionError("adapter write outside staging is forbidden")
 
 
@@ -84,11 +84,18 @@ def install_access_guard(
     execution_root: Path,
     repository_root: Path,
     venv_root: Path,
+    runtime_cache_root: Path | None = None,
 ) -> None:
     output_root = Path(output_dir).resolve()
     execution_root = Path(execution_root).resolve()
     repository_root = Path(repository_root).resolve()
     venv_root = Path(venv_root).resolve()
+    runtime_cache_root = (
+        output_root / ".runtime-cache"
+        if runtime_cache_root is None
+        else Path(runtime_cache_root).resolve()
+    )
+    write_roots = (output_root, runtime_cache_root)
 
     def audit(event: str, args: tuple[object, ...]) -> None:
         if (
@@ -97,7 +104,7 @@ def install_access_guard(
             and _open_is_write(args)
             and not _is_devnull(args[0])
         ):
-            _require_staging_path(args[0], output_root)
+            _require_write_path(args[0], write_roots)
         elif event == "open" and args:
             path = _path_from_event(args[0])
             if (
@@ -110,10 +117,10 @@ def install_access_guard(
             ):
                 raise PermissionError("adapter read from live repository is forbidden")
         elif event in _SINGLE_PATH_MUTATIONS and args:
-            _require_staging_path(args[0], output_root)
+            _require_write_path(args[0], write_roots)
         elif event in _TWO_PATH_MUTATIONS and len(args) >= 2:
-            _require_staging_path(args[0], output_root)
-            _require_staging_path(args[1], output_root)
+            _require_write_path(args[0], write_roots)
+            _require_write_path(args[1], write_roots)
         elif event in _PROCESS_EVENTS:
             raise PermissionError("adapter child processes are forbidden")
 

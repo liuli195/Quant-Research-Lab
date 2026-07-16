@@ -5,11 +5,12 @@ import json
 import os
 import re
 import shutil
+import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from datetime import date
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Mapping
+from typing import Callable, Mapping
 
 import numpy as np
 import pyarrow as pa
@@ -137,6 +138,8 @@ class ResultPackageRequest:
     code_files: Mapping[str, Path]
     config_documents: Mapping[str, object]
     evidence_documents: Mapping[str, object]
+    performance_finalizer: Callable[[Mapping[str, float]], Mapping[str, object]] | None = None
+    atomic_publish: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +147,8 @@ class ResultPackage:
     path: Path
     manifest: Mapping[str, object]
     package_sha256: str
+    writer_stages: Mapping[str, float] = dataclass_field(default_factory=dict)
+    writer_seconds: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +167,26 @@ class _FrozenInputs:
     code: Mapping[str, bytes]
     config: Mapping[str, object]
     evidence: Mapping[str, object]
+
+
+def _with_writer_stages(
+    inputs: _FrozenInputs,
+    stages: Mapping[str, float],
+    finalizer: Callable[[Mapping[str, float]], Mapping[str, object]] | None = None,
+) -> _FrozenInputs:
+    evidence = dict(inputs.evidence)
+    performance = evidence.get("performance.json")
+    if not isinstance(performance, Mapping):
+        raise ResultContractError("performance evidence must be an object")
+    performance_document = (
+        dict(finalizer(stages)) if finalizer is not None else dict(performance)
+    )
+    existing_stages = performance_document.get("stages")
+    stage_document = dict(existing_stages) if isinstance(existing_stages, Mapping) else {}
+    stage_document.update({name: float(seconds) for name, seconds in stages.items()})
+    performance_document["stages"] = stage_document
+    evidence["performance.json"] = performance_document
+    return _FrozenInputs(inputs.code, inputs.config, evidence)
 
 
 def _jsonable(value: object) -> object:
@@ -1401,54 +1426,161 @@ def validate_result_package(path: Path) -> Mapping[str, object]:
 
 
 def write_result_package(request: ResultPackageRequest) -> ResultPackage:
+    writer_started = time.perf_counter()
     if any(
         not isinstance(value, str) or not value
         for value in (request.strategy_id, request.scenario_id, request.run_id)
     ):
         raise ResultContractError("result package identity is incomplete")
     inputs = _freeze_request_inputs(request)
+    core_started = time.perf_counter()
     extensions, extension_summaries = _validate_extensions(request.extensions)
-
     facts = _materialize_core(request.execution)
     core_summaries = _validate_common_facts(facts)
-    package_sha256 = _canonical_digest(
-        _content_document(
-            request,
-            inputs,
-            extensions,
-            core_summaries,
-            extension_summaries,
-        )
-    )
+    writer_stages = {
+        "core_facts": time.perf_counter() - core_started,
+        "parquet_materialize": 0.0,
+        "readback_validate": 0.0,
+        "report_and_manifest": 0.0,
+    }
     target = Path(request.output_dir).resolve()
     if target.exists():
         existing = validate_result_package(target)
+        try:
+            existing_performance = _read_json(
+                target / "evidence/performance.json",
+                "performance",
+            )
+        except ResultContractError:
+            raise
+        if not isinstance(existing_performance, Mapping):
+            raise ResultContractError("result package performance evidence is invalid")
+        existing_inputs = _FrozenInputs(
+            inputs.code,
+            inputs.config,
+            {**inputs.evidence, "performance.json": dict(existing_performance)},
+        )
+        package_sha256 = _canonical_digest(
+            _content_document(
+                request,
+                existing_inputs,
+                extensions,
+                core_summaries,
+                extension_summaries,
+            )
+        )
         if existing["package_sha256"] == package_sha256:
-            return ResultPackage(target, existing, package_sha256)
+            existing_stages = existing_performance.get("stages")
+            return ResultPackage(
+                target,
+                existing,
+                package_sha256,
+                dict(existing_stages) if isinstance(existing_stages, Mapping) else {},
+                time.perf_counter() - writer_started,
+            )
         raise ResultContractError("result package digest conflict")
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    staging = target.parent / f".{request.run_id}.{uuid.uuid4().hex}.tmp"
+    if request.atomic_publish:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    elif not target.parent.is_dir():
+        raise ResultContractError("pre-staged result parent is missing")
+    staging = (
+        target.parent / f".{request.run_id}.{uuid.uuid4().hex}.tmp"
+        if request.atomic_publish
+        else target
+    )
     try:
         staging.mkdir()
         (staging / "data").mkdir()
         (staging / "extensions").mkdir()
         code = _write_code_files(staging, inputs.code)
         config = _write_documents(staging, "config", inputs.config)
-        evidence = _write_documents(staging, "evidence", inputs.evidence)
+        parquet_started = time.perf_counter()
         for name, table in facts.tables().items():
             pq.write_table(table, staging / "data" / f"{name}.parquet", compression="snappy")
         for name, extension in sorted(extensions.items()):
             directory = staging / "extensions" / name
             directory.mkdir()
             pq.write_table(extension.table, directory / "data.parquet", compression="snappy")
+        writer_stages["parquet_materialize"] = time.perf_counter() - parquet_started
+        readback_started = time.perf_counter()
         readback_facts, readback_extensions = _readback_tables(
             staging, facts, extensions
+        )
+        writer_stages["readback_validate"] = time.perf_counter() - readback_started
+
+        provisional_inputs = _with_writer_stages(
+            inputs,
+            writer_stages,
+            request.performance_finalizer,
+        )
+        report_started = time.perf_counter()
+        provisional_sha256 = _canonical_digest(
+            _content_document(
+                request,
+                provisional_inputs,
+                extensions,
+                core_summaries,
+                extension_summaries,
+            )
+        )
+        provisional_evidence = _write_documents(
+            staging,
+            "evidence",
+            provisional_inputs.evidence,
         )
         reports, report_payloads = _write_report(
             staging,
             request,
+            provisional_inputs,
+            readback_facts,
+            readback_extensions,
+            provisional_sha256,
+        )
+        manifest = _manifest(
+            staging,
+            request,
+            readback_facts,
+            extensions,
+            readback_extensions,
+            provisional_sha256,
+            code,
+            config,
+            provisional_evidence,
+            reports,
+        )
+        (staging / "manifest.json").write_bytes(_json_bytes(manifest))
+        _validate_result_package_document(
+            staging.resolve(),
+            manifest,
+            preloaded_core=readback_facts.tables(),
+            preloaded_extensions=readback_extensions,
+            preloaded_core_summaries=core_summaries,
+            preloaded_extension_summaries=extension_summaries,
+            preloaded_inputs=provisional_inputs,
+            preloaded_reports=report_payloads,
+        )
+        writer_stages["report_and_manifest"] = time.perf_counter() - report_started
+
+        final_inputs = _with_writer_stages(
             inputs,
+            writer_stages,
+            request.performance_finalizer,
+        )
+        package_sha256 = _canonical_digest(
+            _content_document(
+                request,
+                final_inputs,
+                extensions,
+                core_summaries,
+                extension_summaries,
+            )
+        )
+        evidence = _write_documents(staging, "evidence", final_inputs.evidence)
+        reports, report_payloads = _write_report(
+            staging,
+            request,
+            final_inputs,
             readback_facts,
             readback_extensions,
             package_sha256,
@@ -1473,11 +1605,18 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
             preloaded_extensions=readback_extensions,
             preloaded_core_summaries=core_summaries,
             preloaded_extension_summaries=extension_summaries,
-            preloaded_inputs=inputs,
+            preloaded_inputs=final_inputs,
             preloaded_reports=report_payloads,
         )
-        os.replace(staging, target)
-        return ResultPackage(target, manifest, package_sha256)
+        if request.atomic_publish:
+            os.replace(staging, target)
+        return ResultPackage(
+            target,
+            manifest,
+            package_sha256,
+            dict(writer_stages),
+            time.perf_counter() - writer_started,
+        )
     except Exception as exc:
         if staging.exists():
             shutil.rmtree(staging)

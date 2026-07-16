@@ -44,8 +44,9 @@ def test_local_research_skill_is_thin_and_strategy_agnostic(
         "单场景",
         "完整报告",
         "return_to_caller",
-        "必需输出",
         "archive-ready（可归档）",
+        "输出固定为唯一 archive-ready（可归档）结果包",
+        "不由配置声明",
         "正式回测",
         "JoinQuant（聚宽）",
         "Cookie（浏览器凭证）",
@@ -62,6 +63,8 @@ def test_local_research_skill_is_thin_and_strategy_agnostic(
         "required_outputs",
         "output_root",
         "stop_states",
+        "唯一必需输出",
+        "必需输出声明",
     ):
         assert forbidden not in text
 

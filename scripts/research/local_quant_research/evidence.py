@@ -46,11 +46,82 @@ def canonical_digest(value: object) -> str:
 
 
 def _array_digest(value: np.ndarray) -> dict[str, object]:
-    array = np.ascontiguousarray(np.asarray(value))
+    array = np.asarray(value)
+    if array.dtype.hasobject:
+        raise EvidenceError("execution digest does not accept object arrays")
+    digest = hashlib.sha256()
+    if array.flags.c_contiguous:
+        digest.update(memoryview(array).cast("B"))
+    else:
+        iterator = np.nditer(
+            array,
+            flags=("external_loop", "buffered"),
+            order="C",
+            buffersize=65_536,
+        )
+        for chunk in iterator:
+            digest.update(memoryview(np.asarray(chunk)).cast("B"))
     return {
         "dtype": array.dtype.descr if array.dtype.names else array.dtype.str,
         "shape": list(array.shape),
-        "sha256": hashlib.sha256(array.tobytes()).hexdigest(),
+        "sha256": digest.hexdigest(),
+    }
+
+
+def _arrow_table_digest(table: object) -> dict[str, object]:
+    schema = table.schema
+    schema_buffer = schema.serialize()
+    digest = hashlib.sha256()
+    digest.update(memoryview(schema_buffer))
+    rows = 0
+    batches = 0
+    for batch in table.to_batches(max_chunksize=65_536):
+        batches += 1
+        rows += batch.num_rows
+        digest.update(batch.num_rows.to_bytes(8, "little", signed=False))
+        for column in batch.columns:
+            digest.update(len(column).to_bytes(8, "little", signed=False))
+            digest.update(column.null_count.to_bytes(8, "little", signed=False))
+            for buffer in column.buffers():
+                if buffer is None:
+                    digest.update(b"\x00")
+                else:
+                    digest.update(b"\x01")
+                    digest.update(len(buffer).to_bytes(8, "little", signed=False))
+                    digest.update(memoryview(buffer))
+    return {
+        "schema_sha256": hashlib.sha256(memoryview(schema_buffer)).hexdigest(),
+        "rows": rows,
+        "batches": batches,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def _run_digest_document(run: object) -> dict[str, object]:
+    ledger_document: dict[str, object] = {}
+    seen_arrays: dict[int, str] = {}
+    for field in (
+        "orders",
+        "assets",
+        "cash",
+        "value",
+        "trades",
+        "positions",
+        "returns",
+    ):
+        array = np.asarray(getattr(run.ledger, field))
+        previous = seen_arrays.get(id(array))
+        if previous is None:
+            ledger_document[field] = _array_digest(array)
+            seen_arrays[id(array)] = field
+        else:
+            ledger_document[field] = {"same_as": previous}
+    return {
+        "ledger": ledger_document,
+        "trace": {
+            key: _array_digest(np.asarray(value))
+            for key, value in sorted(run.trace.items())
+        },
     }
 
 
@@ -58,36 +129,23 @@ def execution_digest(
     execution: ExecutionBundle,
     extensions: Sequence[ResultExtension] = (),
 ) -> str:
-    runs = {"primary": execution.primary, "final": execution.final}
-    document: dict[str, object] = {"stages": list(execution.stages), "runs": {}}
-    run_documents: dict[str, object] = {}
-    for name, run in runs.items():
-        run_documents[name] = {
-            "ledger": {
-                field: _array_digest(np.asarray(getattr(run.ledger, field)))
-                for field in (
-                    "orders",
-                    "assets",
-                    "cash",
-                    "value",
-                    "trades",
-                    "positions",
-                    "returns",
-                )
-            },
-            "trace": {
-                key: _array_digest(np.asarray(value))
-                for key, value in sorted(run.trace.items())
-            },
-        }
-    document["runs"] = run_documents
+    primary_document = _run_digest_document(execution.primary)
+    run_documents: dict[str, object] = {"primary": primary_document}
+    if execution.final is execution.primary:
+        run_documents["final"] = {"same_as": "primary"}
+    else:
+        run_documents["final"] = _run_digest_document(execution.final)
+    document: dict[str, object] = {
+        "stages": list(execution.stages),
+        "runs": run_documents,
+    }
     document["extensions"] = [
         {
             "name": extension.name,
             "schema_version": extension.schema_version,
             "unique_key": list(extension.unique_key),
             "evidence": dict(extension.evidence),
-            "rows": extension.table.to_pylist(),
+            "table": _arrow_table_digest(extension.table),
         }
         for extension in extensions
     ]

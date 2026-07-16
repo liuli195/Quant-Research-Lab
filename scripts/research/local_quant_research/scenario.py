@@ -9,7 +9,7 @@ from scripts.research.market_data.query import SnapshotView
 
 from .contracts import ExecutionBundle, ResultExtension
 from .evidence import execution_digest
-from .performance import PerformanceEvidence, run_cold_warm
+from .performance import PerformanceEvidence, include_shared_work, run_cold_warm
 from .result_package import ResultPackage, ResultPackageRequest, write_result_package
 from .strategy_loader import LoadedStrategy
 from .vectorbt_runtime import run_vectorbt
@@ -138,8 +138,19 @@ def execute_scenario(request: ScenarioRequest) -> ScenarioOutcome:
             "performance.json": performance_document,
             "environment.json": dict(request.environment),
         },
+        performance_finalizer=lambda writer_stages: {
+            **include_shared_work(
+                performance,
+                request.strategy_load_seconds + sum(writer_stages.values()),
+            ).to_document(),
+            "stages": {**stages, **writer_stages},
+        },
+        atomic_publish=False,
     )
-    started = time.perf_counter()
     package = write_result_package(package_request)
-    stages["parquet_materialize"] = time.perf_counter() - started
-    return ScenarioOutcome(package, performance, stages)
+    stages.update(package.writer_stages)
+    complete_performance = include_shared_work(
+        performance,
+        request.strategy_load_seconds + package.writer_seconds,
+    )
+    return ScenarioOutcome(package, complete_performance, stages)
