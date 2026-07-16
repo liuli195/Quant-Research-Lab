@@ -153,8 +153,23 @@ def _tree_directories(root: Path) -> tuple[str, ...]:
     )
 
 
+def _path_exists_for_test(path: Path) -> bool:
+    return os.path.lexists(os.fspath(path))
+
+
 @pytest.mark.parametrize(
-    "analysis_id", ("Upper", "../escape", "a/b", "", "x" * 65)
+    "analysis_id",
+    (
+        "Upper",
+        "../escape",
+        "a/b",
+        "",
+        "x" * 65,
+        "con",
+        "aux.txt",
+        "baseline-v2.",
+        "baseline-v2 ",
+    ),
 )
 def test_promote_rejects_invalid_analysis_id(
     isolated_repo: Path,
@@ -171,7 +186,18 @@ def test_promote_rejects_invalid_analysis_id(
 
 @pytest.mark.parametrize(
     "strategy_id",
-    ("Upper", "../escape", "a/b", "", "x" * 65, "strategy-999"),
+    (
+        "Upper",
+        "../escape",
+        "a/b",
+        "",
+        "x" * 65,
+        "strategy-999",
+        "con",
+        "aux.txt",
+        "strategy-003.",
+        "strategy-003 ",
+    ),
 )
 def test_promote_rejects_invalid_strategy_identity(
     isolated_repo: Path,
@@ -200,6 +226,100 @@ def test_promote_rejects_invalid_run_identity(
 
     assert result.status == "failed"
     assert result.reasons == ("invalid_run_id",)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows name matching is required")
+def test_promote_rejects_case_insensitive_strategy_directory_alias(
+    complete_package: Path,
+    isolated_repo: Path,
+) -> None:
+    strategies = isolated_repo / "joinquant/strategies"
+    exact = strategies / STRATEGY_ID
+    temporary = strategies / "strategy-rename"
+    alias = strategies / "Strategy-003"
+    exact.rename(temporary)
+    temporary.rename(alias)
+
+    result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
+
+    assert result.status == "failed"
+    assert result.reasons == ("invalid_strategy_id",)
+    assert not (alias / "research/archives" / ANALYSIS_ID).exists()
+
+
+def _replace_directory_with_link(
+    directory: Path,
+    target: Path,
+    kind: str,
+) -> None:
+    directory.rename(target)
+    if kind == "symlink":
+        try:
+            directory.symlink_to(target, target_is_directory=True)
+        except OSError as exc:
+            target.rename(directory)
+            pytest.skip(f"directory symlink is unavailable: {exc}")
+        return
+    if os.name != "nt":
+        target.rename(directory)
+        pytest.skip("junction coverage is Windows-specific")
+    completed = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(directory), str(target)],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    if completed.returncode != 0:
+        target.rename(directory)
+        pytest.skip(f"junction is unavailable: {completed.stderr}")
+
+
+def _restore_linked_directory(directory: Path, target: Path) -> None:
+    if directory.is_symlink():
+        directory.unlink()
+    else:
+        os.rmdir(directory)
+    target.rename(directory)
+
+
+@pytest.mark.parametrize("link_kind", ("symlink", "junction"))
+@pytest.mark.parametrize(
+    "relative_parent",
+    (
+        ".local",
+        ".local/quant-research",
+        f".local/quant-research/{STRATEGY_ID}",
+        f".local/quant-research/{STRATEGY_ID}/{RUN_ID}",
+        "joinquant",
+        "joinquant/strategies",
+        f"joinquant/strategies/{STRATEGY_ID}",
+        f"joinquant/strategies/{STRATEGY_ID}/research",
+        f"joinquant/strategies/{STRATEGY_ID}/research/archives",
+    ),
+)
+def test_promote_rejects_linked_fixed_parent_without_crossing_boundary(
+    complete_package: Path,
+    isolated_repo: Path,
+    relative_parent: str,
+    link_kind: str,
+) -> None:
+    (isolated_repo / f"joinquant/strategies/{STRATEGY_ID}/research/archives").mkdir(
+        parents=True
+    )
+    linked_parent = isolated_repo / relative_parent
+    outside = isolated_repo.parent / "outside-parent"
+    _replace_directory_with_link(linked_parent, outside, link_kind)
+    try:
+        result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
+
+        assert result.status == "failed"
+        assert not (
+            isolated_repo
+            / f"joinquant/strategies/{STRATEGY_ID}/research/archives"
+            / ANALYSIS_ID
+        ).exists()
+    finally:
+        _restore_linked_directory(linked_parent, outside)
 
 
 def test_promote_rejects_incomplete_source_package(
@@ -325,7 +445,7 @@ def test_promote_reuses_identical_target_without_writing(
     _guard_recomputation(monkeypatch)
     from scripts.research.local_quant_research import archive
 
-    monkeypatch.setattr(archive.shutil, "copyfile", _boom)
+    monkeypatch.setattr(archive.shutil, "copyfileobj", _boom)
     monkeypatch.setattr(archive.os, "replace", _boom)
 
     second = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
@@ -347,7 +467,7 @@ def test_promote_reports_conflict_without_changing_existing_target(
     _guard_recomputation(monkeypatch)
     from scripts.research.local_quant_research import archive
 
-    monkeypatch.setattr(archive.shutil, "copyfile", _boom)
+    monkeypatch.setattr(archive.shutil, "copyfileobj", _boom)
     monkeypatch.setattr(archive.os, "replace", _boom)
 
     result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
@@ -373,7 +493,7 @@ def test_existing_target_is_never_written(
     _guard_recomputation(monkeypatch)
     from scripts.research.local_quant_research import archive
 
-    monkeypatch.setattr(archive.shutil, "copyfile", _boom)
+    monkeypatch.setattr(archive.shutil, "copyfileobj", _boom)
     monkeypatch.setattr(archive.os, "replace", _boom)
 
     result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
@@ -381,6 +501,36 @@ def test_existing_target_is_never_written(
     assert result.status == "conflict"
     assert marker.read_bytes() == b"keep"
     assert tuple(target.iterdir()) == (marker,)
+
+
+def test_target_appearing_before_publish_does_not_leave_staging(
+    complete_package: Path,
+    isolated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import archive
+
+    target = (
+        isolated_repo
+        / f"joinquant/strategies/{STRATEGY_ID}/research/archives/{ANALYSIS_ID}"
+    )
+    real_validate_views = archive._validate_analysis_views
+
+    def publish_competing_target(staging: Path) -> None:
+        real_validate_views(staging)
+        shutil.copytree(complete_package, target)
+
+    monkeypatch.setattr(
+        archive,
+        "_validate_analysis_views",
+        publish_competing_target,
+    )
+
+    result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
+
+    assert result.status == "complete"
+    assert result.reused is True
+    assert list(target.parent.glob(f".{ANALYSIS_ID}.*.tmp")) == []
 
 
 def test_copy_interruption_cleans_only_its_staging_directory(
@@ -398,17 +548,21 @@ def test_copy_interruption_cleans_only_its_staging_directory(
     _guard_recomputation(monkeypatch)
     from scripts.research.local_quant_research import archive
 
-    real_copyfile = shutil.copyfile
+    real_copyfileobj = shutil.copyfileobj
     copies = 0
 
-    def interrupted_copy(source: Path, target: Path) -> str:
+    def interrupted_copy(
+        source: object,
+        target: object,
+        length: int = 0,
+    ) -> None:
         nonlocal copies
         copies += 1
         if copies == 2:
             raise OSError("simulated copy interruption")
-        return real_copyfile(source, target)
+        real_copyfileobj(source, target, length)
 
-    monkeypatch.setattr(archive.shutil, "copyfile", interrupted_copy)
+    monkeypatch.setattr(archive.shutil, "copyfileobj", interrupted_copy)
 
     result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
 
@@ -418,6 +572,64 @@ def test_copy_interruption_cleans_only_its_staging_directory(
     assert list(archives.glob(f".{ANALYSIS_ID}.*.tmp")) == []
     assert neighbor.read_bytes() == b"keep"
     assert _tree_digests(complete_package) == source_before
+
+
+def test_copy_failure_rolls_back_new_empty_archive_parents(
+    complete_package: Path,
+    isolated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import archive
+
+    strategy = isolated_repo / f"joinquant/strategies/{STRATEGY_ID}"
+    assert not (strategy / "research").exists()
+    _guard_recomputation(monkeypatch)
+
+    def fail_copy(*_args: object, **_kwargs: object) -> None:
+        raise OSError("simulated copy failure")
+
+    monkeypatch.setattr(archive.shutil, "copyfileobj", fail_copy)
+
+    result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
+
+    assert result.status == "failed"
+    assert result.reasons == ("copy_failed",)
+    assert not (strategy / "research").exists()
+
+
+def test_cleanup_failure_returns_stable_reason_and_preserves_existing_parent(
+    complete_package: Path,
+    isolated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import archive
+
+    archives = isolated_repo / f"joinquant/strategies/{STRATEGY_ID}/research/archives"
+    archives.mkdir(parents=True)
+    neighbor = archives / "neighbor.keep"
+    neighbor.write_bytes(b"keep")
+    _guard_recomputation(monkeypatch)
+
+    def fail_copy(*_args: object, **_kwargs: object) -> None:
+        raise OSError("simulated copy failure")
+
+    def fail_real_cleanup(
+        _path: Path,
+        *,
+        ignore_errors: bool = False,
+    ) -> None:
+        if not ignore_errors:
+            raise OSError("simulated cleanup failure")
+
+    monkeypatch.setattr(archive.shutil, "copyfileobj", fail_copy)
+    monkeypatch.setattr(archive.shutil, "rmtree", fail_real_cleanup)
+
+    result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
+
+    assert result.status == "failed"
+    assert result.reasons == ("cleanup_failed",)
+    assert neighbor.read_bytes() == b"keep"
+    assert archives.is_dir()
 
 
 def test_source_change_after_validation_is_not_published(
@@ -447,6 +659,193 @@ def test_source_change_after_validation_is_not_published(
     assert list(archives.glob(f".{ANALYSIS_ID}.*.tmp")) == []
 
 
+@pytest.mark.parametrize(
+    "mutation", ("added_file", "added_empty_directory", "deleted_file")
+)
+def test_source_tree_change_after_initial_scan_is_not_published(
+    complete_package: Path,
+    isolated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    from scripts.research.local_quant_research import archive
+
+    real_scan = archive._scan_tree
+    mutated = False
+
+    def mutate_after_scan(root: Path) -> object:
+        nonlocal mutated
+        snapshot = real_scan(root)
+        if Path(root) == complete_package and not mutated:
+            mutated = True
+            if mutation == "added_file":
+                (complete_package / "added-after-scan.bin").write_bytes(b"added")
+            elif mutation == "added_empty_directory":
+                (complete_package / "added-after-scan").mkdir()
+            else:
+                (complete_package / "evidence/raw-bytes.bin").unlink()
+        return snapshot
+
+    _guard_recomputation(monkeypatch)
+    monkeypatch.setattr(archive, "_scan_tree", mutate_after_scan)
+
+    result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
+
+    assert result.status == "failed"
+    assert not result.target.exists()
+
+
+@pytest.mark.parametrize("mutation", ("changed", "deleted"))
+def test_source_file_change_after_it_was_copied_is_not_published(
+    complete_package: Path,
+    isolated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    from scripts.research.local_quant_research import archive
+
+    first_source = complete_package / sorted(_tree_digests(complete_package))[0]
+    real_copyfileobj = shutil.copyfileobj
+    copies = 0
+
+    def mutate_after_first_copy(
+        source: object,
+        target: object,
+        length: int = 0,
+    ) -> None:
+        nonlocal copies
+        copies += 1
+        if copies == 2:
+            if mutation == "changed":
+                first_source.write_bytes(first_source.read_bytes() + b"changed")
+            else:
+                first_source.unlink()
+        real_copyfileobj(source, target, length)
+
+    _guard_recomputation(monkeypatch)
+    monkeypatch.setattr(archive.shutil, "copyfileobj", mutate_after_first_copy)
+
+    result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
+
+    assert result.status == "failed"
+    assert not result.target.exists()
+
+
+def test_source_file_inode_replacement_between_lstat_and_read_is_rejected(
+    complete_package: Path,
+    isolated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import archive
+
+    victim = complete_package / "evidence/raw-bytes.bin"
+    replacement = isolated_repo.parent / "replacement.bin"
+    replacement.write_bytes(victim.read_bytes())
+    real_identity = archive._file_identity
+    replaced = False
+
+    def replace_before_read(path: Path, *args: object, **kwargs: object) -> object:
+        nonlocal replaced
+        if Path(path) == victim and not replaced:
+            replaced = True
+            os.replace(replacement, victim)
+        return real_identity(path, *args, **kwargs)
+
+    _guard_recomputation(monkeypatch)
+    monkeypatch.setattr(archive, "_file_identity", replace_before_read)
+
+    result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
+
+    assert result.status == "failed"
+    assert result.reasons == ("unsafe_source_entry",)
+    assert not result.target.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="junction coverage is Windows-specific")
+def test_source_directory_junction_replacement_after_lstat_is_rejected(
+    complete_package: Path,
+    isolated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    victim = complete_package / "extensions/empty-evidence"
+    outside = isolated_repo.parent / "replacement-directory"
+    real_lstat = Path.lstat
+    replaced = False
+
+    def replace_after_lstat(path: Path) -> os.stat_result:
+        nonlocal replaced
+        metadata = real_lstat(path)
+        if path == victim and not replaced:
+            replaced = True
+            _replace_directory_with_link(victim, outside, "junction")
+        return metadata
+
+    _guard_recomputation(monkeypatch)
+    monkeypatch.setattr(Path, "lstat", replace_after_lstat)
+    try:
+        result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
+
+        assert result.status == "failed"
+        assert result.reasons == ("unsafe_source_entry",)
+        assert not result.target.exists()
+    finally:
+        if replaced:
+            _restore_linked_directory(victim, outside)
+
+
+@pytest.mark.parametrize("replacement_kind", ("symlink", "hardlink", "junction"))
+def test_source_entry_replaced_with_link_before_copy_is_not_published(
+    complete_package: Path,
+    isolated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    replacement_kind: str,
+) -> None:
+    from scripts.research.local_quant_research import archive
+
+    victim = (
+        complete_package / "extensions/empty-evidence"
+        if replacement_kind == "junction"
+        else complete_package / "evidence/raw-bytes.bin"
+    )
+    outside = isolated_repo.parent / "copy-replacement"
+    real_scan = archive._scan_tree
+    replaced = False
+
+    def replace_after_scan(root: Path) -> object:
+        nonlocal replaced
+        snapshot = real_scan(root)
+        if Path(root) == complete_package and not replaced:
+            replaced = True
+            if replacement_kind == "junction":
+                _replace_directory_with_link(victim, outside, "junction")
+            else:
+                victim.rename(outside)
+                if replacement_kind == "symlink":
+                    try:
+                        victim.symlink_to(outside)
+                    except OSError as exc:
+                        outside.rename(victim)
+                        pytest.skip(f"file symlink is unavailable: {exc}")
+                else:
+                    os.link(outside, victim)
+        return snapshot
+
+    _guard_recomputation(monkeypatch)
+    monkeypatch.setattr(archive, "_scan_tree", replace_after_scan)
+    try:
+        result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
+
+        assert result.status == "failed"
+        assert not result.target.exists()
+    finally:
+        if replaced and _path_exists_for_test(victim):
+            if replacement_kind == "junction":
+                _restore_linked_directory(victim, outside)
+            else:
+                victim.unlink()
+                outside.rename(victim)
+
+
 def test_promoted_archive_remains_queryable_after_local_source_is_deleted(
     complete_package: Path,
     isolated_repo: Path,
@@ -470,6 +869,57 @@ def test_promoted_archive_remains_queryable_after_local_source_is_deleted(
         assert database.extension("signals").fetchall() == [("signal-1", 0.5)]
     assert source.backend == "vectorbt"
     assert source.formula_version == "unified-strategy-analysis/1"
+
+
+def test_unified_analysis_validation_failure_prevents_publish(
+    complete_package: Path,
+    isolated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research import analysis_data
+
+    def reject_staging(_path: Path) -> object:
+        raise analysis_data.AnalysisManifestError(
+            "simulated unified analysis failure"
+        )
+
+    _guard_recomputation(monkeypatch)
+    monkeypatch.setattr(analysis_data, "open_analysis_database", reject_staging)
+
+    result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
+
+    assert result.status == "failed"
+    assert not result.target.exists()
+
+
+def test_complete_staging_passes_the_real_unified_analysis_entry(
+    complete_package: Path,
+    isolated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research import analysis_data
+
+    real_open = analysis_data.open_analysis_database
+    validated: list[Path] = []
+
+    def record_real_validation(path: Path) -> object:
+        validated.append(Path(path))
+        return real_open(path)
+
+    _guard_recomputation(monkeypatch)
+    monkeypatch.setattr(
+        analysis_data,
+        "open_analysis_database",
+        record_real_validation,
+    )
+
+    result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
+
+    assert result.status == "complete"
+    assert len(validated) == 1
+    assert validated[0].parent == result.target.parent
+    assert validated[0].name.startswith(f".{ANALYSIS_ID}.")
+    assert validated[0].name.endswith(".tmp")
 
 
 @pytest.mark.parametrize(
