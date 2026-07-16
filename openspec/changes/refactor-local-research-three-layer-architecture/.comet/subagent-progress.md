@@ -4,21 +4,21 @@
 - Plan: `docs/superpowers/plans/2026-07-17-local-research-three-layer-architecture.md`
 - Review mode: `thorough`
 - TDD mode: `tdd`
-- Current plan task: `Task 3: 抽取标准结果包与统一分析视图`
+- Current plan task: `Task 4: 实现策略目录自包含档案的原样晋升`
 - OpenSpec mappings:
-  - `3.1 先编写失败测试，把四张核心表 Schema、公共跨表校验、逻辑摘要和清单契约从海龟适配器迁入共享结果 Module`
-  - `3.2 实现版本化 ResultExtension 注入，让海龟归因保持策略私有而共享 writer 不导入海龟动作码`
-  - `3.3 实现单次 Parquet 固化、回读验证、失败清理和原子发布，并证明账本视图只惰性生成和缓存一次`
-  - `3.4 扩展 analysis_data，使新本地结果、策略扩展和既有聚宽归档通过统一视图查询且保留 backend 与公式版本`
+  - `4.1 先编写失败测试，定义档案清单、目录布局、必需代码/配置/数据/证据/报告和 analysis_id 校验`
+  - `4.2 实现独立 promote 动作，只复制已完成结果字节和策略源码，不加载策略、vectorbt 或 writer`
+  - `4.3 实现逐文件 SHA256 复核、同内容幂等复用、异内容冲突拒绝、同级暂存和原子发布`
+  - `4.4 验证删除 .local 源运行后档案仍可查询和生成报告，同时确认共享行情文件没有被复制`
 - Stage: `done`
-- Task base: `1fce9bbc76784c493b00b77901915a4a5491562d`
-- Implementer: `/root/task3_result_package`
-- Implementation commits: `40d257120dcb43c9824e6ddffcd541a53652c4a3 重构：抽取本地研究标准结果包`; `ba9d62a 修复：强化本地研究结果包契约`; `c8f1407 修复：收敛结果包发布验证`
-- Changed files: `scripts/research/local_quant_research/result_package.py`; `scripts/research/analysis_data/manifest.py`; `scripts/research/analysis_data/views.py`; `scripts/research/analysis_data/__init__.py`; `tests/local_quant_research/test_result_package.py`; `tests/local_quant_research/test_analysis_data_views.py`
-- RED evidence: `initial module missing: 2 collection errors; fix1 groups: 28 failures, Zstd 1 and analysis 5 failures, duplicate-read/report/reuse 3 failures; fix2 groups: source/report 2 failures, validator 20 failures, summary conversion/reuse 3 failures`
-- GREEN evidence: `fix2 focused 85 passed in 3.52s; full related regression 113 passed in 56.33s; Ruff and diff check passed; prior fix groups all green`
-- Risk signals: `public result package API; cross-module manifest/view compatibility; filesystem atomicity; Parquet materialization; diff expected > 200`
-- Task review: `approved after fix round 2 by /root/final_review_task3`
+- Task base: `01f734358b6ddd192a1d43e0f19b8dcac3bd4b4f`
+- Implementer: `/root/task4_archive_promotion`
+- Implementation commits: `ad5bd29 功能：支持本地研究结果原样晋升`; `5a4353a 修复：强化研究档案晋升安全`; `c785cc3 修复：消除档案晋升重复验证`
+- Changed files: `scripts/research/local_quant_research/archive.py`; `scripts/research/local_quant_research/cli.py`; `tests/local_quant_research/test_archive_promotion.py`
+- RED evidence: `archive module missing and mutation; fix1: identity/parent 15, source race 9, analysis 2, cleanup 2 failures; fix2: duplicate validation/full fetch and fd leak 3 failures`
+- GREEN evidence: `fix2 combined 133 passed; Ruff and diff check passed; all prior fix groups green`
+- Risk signals: `filesystem atomicity; untrusted identity/path input; symlink/hardlink/reparse handling; public CLI; destructive cleanup limited to own staging`
+- Task review: `approved after fix round 2 by /root/final_review_task4`
 - Review-fix round: `2/2`
-- Unresolved feedback: `none; broad trusted-directory TOCTOU, in-memory source snapshot size and old code-identity drift remain non-blocking warnings`
-- Coordinator verification: `Task 2 contracts complete; normalized ledger view resolves Task 3 inputs without trace coupling; Task 3 scoped regressions pass; old code-identity drift reproduced by implementer`
+- Unresolved feedback: `none; target no-replace/source post-rescan races and old code-identity remain non-blocking warnings`
+- Coordinator verification: `Task 3 approved and authoritative result-package validator available; Task 4 tests constrained to tmp_path; user JoinQuant parallel archive state explicitly excluded`

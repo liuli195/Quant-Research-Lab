@@ -336,7 +336,7 @@ git commit -m "重构：抽取本地研究标准结果包"
 - Consumes: `.local/quant-research/<strategy_id>/<run_id>/manifest.json` 和 CLI（命令行接口）的 `strategy_id/run_id/analysis_id`。
 - Produces: `promote_archive(repo_root, strategy_id, run_id, analysis_id) -> ArchiveResult`；目标固定为 `joinquant/strategies/<strategy_id>/research/archives/<analysis_id>/`。
 
-- [ ] **Step 1: 写布局、字节相等、幂等和冲突失败测试**
+- [x] **Step 1: 写布局、字节相等、幂等和冲突失败测试**
 
 测试必须把策略加载、vectorbt、PyArrow writer（列式写入器）替换为调用即失败对象，证明 promotion（晋升）没有重算；覆盖非法 `analysis_id`、源包不完整、同内容复用、异内容冲突、复制中断清理和删除 `.local` 后仍可查询：
 
@@ -354,7 +354,7 @@ def test_promote_preserves_every_source_byte(complete_package: Path, repo_root: 
     assert json.loads((result.target / "manifest.json").read_text(encoding="utf-8"))["run_id"] == complete_package.name
 ```
 
-- [ ] **Step 2: 运行测试并确认 archive 模块尚不存在**
+- [x] **Step 2: 运行测试并确认 archive 模块尚不存在**
 
 Run:
 
@@ -364,7 +364,7 @@ Run:
 
 Expected: FAIL，无法导入 `archive` 或 CLI 不支持 `promote`。
 
-- [ ] **Step 3: 实现独立结果和严格源/目标定位**
+- [x] **Step 3: 实现独立结果和严格源/目标定位**
 
 使用后端中立返回对象，不复用 `RunResult` 的三种研究状态：
 
@@ -380,13 +380,13 @@ class ArchiveResult:
 
 `strategy_id` 必须精确定位 `joinquant/strategies/<strategy_id>`；`run_id` 只能是 64 位小写 SHA256；`analysis_id` 必须匹配 `[a-z0-9][a-z0-9._-]{0,63}`。目标路径不得由调用者传入，也不得从未验证配置推导。
 
-- [ ] **Step 4: 实现逐文件复制、复核和原子发布**
+- [x] **Step 4: 实现逐文件复制、复核和原子发布**
 
 源包先由 `validate_result_package()` 只读验证 complete（完整）状态；遍历普通文件并拒绝 symlink（符号链接）、hardlink（硬链接）和目录连接。目标不存在时写同级 `.<analysis_id>.<uuid>.tmp`，每个文件复制后立即核对长度与 SHA256，整包再次比较 tree digest（目录摘要）后 `os.replace()`；失败只删除本次暂存目录。
 
 目标已存在时不写任何字节：tree digest 完全一致返回 `reused=True`，否则返回 `status="conflict"`。不得修改源 manifest，也不得把 `analysis_id` 注入包内文件。
 
-- [ ] **Step 5: 接入共享 promote 命令**
+- [x] **Step 5: 接入共享 promote 命令**
 
 扩展 `_parser()`，用户公开参数必须精确为：
 
@@ -399,7 +399,7 @@ promote.add_argument("--analysis-id", required=True)
 
 CLI 输出排序 JSON；complete（完整）为 0、conflict（冲突）为 1、failed（失败）为 2。`promote` 分支不得加载 `strategy_loader` 或 `vectorbt_runtime`。
 
-- [ ] **Step 6: 运行晋升、结果查询和 CLI 测试**
+- [x] **Step 6: 运行晋升、结果查询和 CLI 测试**
 
 Run:
 
@@ -409,7 +409,7 @@ Run:
 
 Expected: PASS；删除源 `.local` fixture 后，档案四表、扩展、backend（后端）和 formula version（公式版本）仍可查询。
 
-- [ ] **Step 7: 提交晋升能力**
+- [x] **Step 7: 提交晋升能力**
 
 ```powershell
 git add -- scripts/research/local_quant_research/archive.py scripts/research/local_quant_research/cli.py tests/local_quant_research/test_archive_promotion.py
