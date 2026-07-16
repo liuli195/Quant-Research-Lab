@@ -4,20 +4,21 @@
 - Plan: `docs/superpowers/plans/2026-07-17-local-research-three-layer-architecture.md`
 - Review mode: `thorough`
 - TDD mode: `tdd`
-- Current plan task: `Task 2: 建立后端中立 contracts 与安全 Strategy Module 加载器`
+- Current plan task: `Task 3: 抽取标准结果包与统一分析视图`
 - OpenSpec mappings:
-  - `2.1 先编写失败测试，定义 Strategy Module、LedgerInput、OrderProgram、ExecutionLedger、ExecutionRun 和 ResultExtension 的最小只读 Interface`
-  - `2.2 实现仓库内 Strategy Module 安全加载与配置校验，拒绝仓库外路径、未知 symbol、旧任意 command 和策略专属 project entry`
-  - `2.3 增加第二个最小测试策略 Adapter，并证明共享入口无需修改即可加载两个策略`
+  - `3.1 先编写失败测试，把四张核心表 Schema、公共跨表校验、逻辑摘要和清单契约从海龟适配器迁入共享结果 Module`
+  - `3.2 实现版本化 ResultExtension 注入，让海龟归因保持策略私有而共享 writer 不导入海龟动作码`
+  - `3.3 实现单次 Parquet 固化、回读验证、失败清理和原子发布，并证明账本视图只惰性生成和缓存一次`
+  - `3.4 扩展 analysis_data，使新本地结果、策略扩展和既有聚宽归档通过统一视图查询且保留 backend 与公式版本`
 - Stage: `done`
-- Task base: `8f057a9711db951bbad288ab62f1630b3b9fee3a`
-- Implementer: `/root/task2_strategy_contracts`
-- Implementation commits: `6c56bd9ed515f0382586e84e80ac717199ce5151 重构：建立策略模块共享契约`; `d12217cafdb169bf08494bc4e51acece766cb8ad 修复：隔离策略模块私有命名空间`
-- Changed files: `scripts/research/local_quant_research/contracts.py`; `scripts/research/local_quant_research/strategy_loader.py`; `tests/local_quant_research/test_strategy_contract.py`; `tests/local_quant_research/fixtures/minimal_strategy/strategy.py`; `tests/local_quant_research/fixtures/minimal_strategy_b/strategy.py`
-- RED evidence: 初始 contract 缺失与叶子模块执行前边界；修复轮分别复现父 package 执行前绕过、prepare 延迟相对导入 `ModuleNotFoundError`、并发双 root 串包
-- GREEN evidence: 修复三个聚焦测试各 `1 passed`; contract `27 passed`; 完整相关回归 `58 passed in 6.32s`; Ruff 与 diff check 通过
-- Risk signals: `DONE_WITH_CONCERNS`; 公共 API；跨模块；动态导入安全；共享 sys.path/sys.modules 状态；`diff > 200`
-- Task review: `approved after fix round 1 by /root/rereview_task2_contracts`
-- Review-fix round: `1/2`
-- Unresolved feedback: `none; one non-blocking test-coverage suggestion and the planned child-process lifecycle gate remain`
-- Coordinator verification: `contracts.py 已与 Design Doc 3.1–3.4 逐字段/逐类型核对一致；prepare 配置顺序与最终 vectorbt 唯一导入点属于 Task 7/8 跨任务门禁`
+- Task base: `1fce9bbc76784c493b00b77901915a4a5491562d`
+- Implementer: `/root/task3_result_package`
+- Implementation commits: `40d257120dcb43c9824e6ddffcd541a53652c4a3 重构：抽取本地研究标准结果包`; `ba9d62a 修复：强化本地研究结果包契约`; `c8f1407 修复：收敛结果包发布验证`
+- Changed files: `scripts/research/local_quant_research/result_package.py`; `scripts/research/analysis_data/manifest.py`; `scripts/research/analysis_data/views.py`; `scripts/research/analysis_data/__init__.py`; `tests/local_quant_research/test_result_package.py`; `tests/local_quant_research/test_analysis_data_views.py`
+- RED evidence: `initial module missing: 2 collection errors; fix1 groups: 28 failures, Zstd 1 and analysis 5 failures, duplicate-read/report/reuse 3 failures; fix2 groups: source/report 2 failures, validator 20 failures, summary conversion/reuse 3 failures`
+- GREEN evidence: `fix2 focused 85 passed in 3.52s; full related regression 113 passed in 56.33s; Ruff and diff check passed; prior fix groups all green`
+- Risk signals: `public result package API; cross-module manifest/view compatibility; filesystem atomicity; Parquet materialization; diff expected > 200`
+- Task review: `approved after fix round 2 by /root/final_review_task3`
+- Review-fix round: `2/2`
+- Unresolved feedback: `none; broad trusted-directory TOCTOU, in-memory source snapshot size and old code-identity drift remain non-blocking warnings`
+- Coordinator verification: `Task 2 contracts complete; normalized ledger view resolves Task 3 inputs without trace coupling; Task 3 scoped regressions pass; old code-identity drift reproduced by implementer`

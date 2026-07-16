@@ -245,7 +245,7 @@ git commit -m "重构：建立策略模块共享契约"
 - Consumes: `ExecutionBundle.final.ledger`、scenario/config/code/market/runtime evidence（证据）和 `tuple[ResultExtension, ...]`。
 - Produces: `write_result_package(request: ResultPackageRequest) -> ResultPackage`、`validate_result_package(path) -> Mapping[str, object]`，以及可查询新包、扩展和聚宽档案的 `open_analysis_source()`。
 
-- [ ] **Step 1: 写四表、扩展、报告和单次物化失败测试**
+- [x] **Step 1: 写四表、扩展、报告和单次物化失败测试**
 
 用 fake ledger（伪账本）记录 `orders/assets/cash/value` 属性访问次数；断言四张核心表、扩展表、跨表键、SHA256、机械报告禁词和回读失败清理：
 
@@ -261,7 +261,7 @@ def test_writer_materializes_one_package_without_recomputing_ledger(tmp_path: Pa
     assert not any(phrase in report for phrase in FORBIDDEN_REPORT_PHRASES)
 ```
 
-- [ ] **Step 2: 运行测试并确认共享 writer 尚不存在**
+- [x] **Step 2: 运行测试并确认共享 writer 尚不存在**
 
 Run:
 
@@ -271,7 +271,7 @@ Run:
 
 Expected: FAIL，无法导入 `result_package` 或 analysis view（分析视图）不识别 `local-research-package/2`。
 
-- [ ] **Step 3: 实现核心 Schema、扩展约束与 package request**
+- [x] **Step 3: 实现核心 Schema、扩展约束与 package request**
 
 把现有 `result_adapter.py` 中四表 schema、公共勾稽、逻辑摘要、Arrow（列式内存）构造和 manifest 引用迁入共享模块；策略 action/reason code 不能进入共享文件。固定请求对象如下：
 
@@ -297,15 +297,15 @@ class ResultPackage:
 
 每个 `ResultExtension` 的 name 必须唯一且匹配 `[a-z][a-z0-9_-]{0,63}`；writer 固定路径、Snappy（列式压缩）参数和文件名，策略无权直接写 Parquet（列式文件）。
 
-- [ ] **Step 4: 实现一次物化、回读验证与原子发布**
+- [x] **Step 4: 实现一次物化、回读验证与原子发布**
 
 先在同级 `.<run_id>.<uuid>.tmp` 写 `code/config/data/extensions/evidence/report`，每张表只调用一次 `pq.write_table()`；立刻回读 schema/行数/键/勾稽并生成 `local-research-package/2` 清单，最后 `os.replace()`。任何异常只删除本次暂存目录；若完成目录已存在，完整摘要相同则复用，冲突则失败。
 
-- [ ] **Step 5: 扩展 analysis_data 统一读取三类来源**
+- [x] **Step 5: 扩展 analysis_data 统一读取三类来源**
 
 为 `open_analysis_source()` 增加新包识别：返回 `authority=local_research`、`backend=vectorbt`、`formula_version`、四张核心表和策略扩展；既有聚宽归档读取分支保持原样。查询扩展时显式接收 extension name，不在共享层硬编码 `turtle_etf`。
 
-- [ ] **Step 6: 运行结果包、分析视图和旧适配测试**
+- [x] **Step 6: 运行结果包、分析视图和旧适配测试**
 
 Run:
 
@@ -315,7 +315,7 @@ Run:
 
 Expected: PASS；旧测试仍作为迁移期对照，标准四表与扩展读取一致。
 
-- [ ] **Step 7: 提交共享结果包**
+- [x] **Step 7: 提交共享结果包**
 
 ```powershell
 git add -- scripts/research/local_quant_research/result_package.py scripts/research/analysis_data/manifest.py scripts/research/analysis_data/views.py scripts/research/analysis_data/__init__.py tests/local_quant_research/test_result_package.py tests/local_quant_research/test_analysis_data_views.py
