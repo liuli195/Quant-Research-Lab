@@ -197,7 +197,7 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 - **THEN** 系统报告具体缺项并停止，不回退到系统 Python 或静默安装依赖
 
 ### Requirement: Skill 结构和通用性验证
-实现 SHALL（必须）使用 `init_skill.py` 初始化 `run-local-quant-research`，通过 `quick_validate.py`、仓库布局测试、确定性脚本测试、用户入口 E2E（端到端）回归和非海龟前向验证。
+实现 SHALL（必须）使用 `init_skill.py` 初始化 `run-local-quant-research`，通过 `quick_validate.py`、仓库布局测试、确定性脚本测试、用户入口 E2E（端到端）回归和非海龟前向验证。仓库 `verify --full`（全量验证）MUST 保留全部测试，只在本机进程及其子进程内执行，不得联网调用外部系统，并 MUST 在 30 秒内完成。
 
 #### Scenario: Skill 布局有效
 - **WHEN** 运行结构与布局验证
@@ -222,3 +222,7 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 公开仓库安全扫描
 - **WHEN** 运行仓库安全检查
 - **THEN** Git（版本管理）跟踪文件中不存在完整行情值、账号、Cookie（浏览器凭证）或 Token（访问令牌）
+
+#### Scenario: 全量验证性能与执行边界
+- **WHEN** 在本机从仓库入口连续执行非缓存 `verify --full`
+- **THEN** 每次运行都执行全部单元测试和 E2E 回归，不联网调用外部系统，并在 30 秒内成功结束
