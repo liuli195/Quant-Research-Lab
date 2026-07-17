@@ -2,6 +2,8 @@
 comet_change: refactor-local-research-three-layer-architecture
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-07-17-refactor-local-research-three-layer-architecture
+status: final
 ---
 
 # 本地研究三层架构技术设计

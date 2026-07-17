@@ -77,6 +77,8 @@ TDD（测试驱动开发）防回归：
 
 随后复核 Build and Verify（构建与验证）配置覆盖率，发现 `tests/quant_analysis/` 的 47 项测试只在触发范围内、未进入实际命令。现已将其加入既有 unit（单元测试）命令：配置回归测试按 TDD（测试驱动开发）先失败后通过，修改后的 unit 命令 451 项通过，Skill（技能）配置测试 9 项通过。自动 Pytest（测试框架）覆盖率由 645/693 提升至 692/693（99.86%）；剩余 1 项会操作真实 Windows Task Scheduler（Windows 任务计划程序），继续保留为人工系统测试。
 
+提交 `eb7d12f` 后再次运行完整 Build and Verify。结果：通过，耗时 202.2 秒，11/11 检查项完成；统一 unit 命令 451 项通过，真实 E2E 8 项通过，自动 Pytest 合计 692 项通过，OpenSpec 严格校验 6 项通过。仍只有 4 条来自 vectorbt 依赖的 Pandas 弃用警告。
+
 ## 残留扫描
 
 - 生产代码中 vectorbt import（导入）的唯一位置为 `scripts/research/local_quant_research/vectorbt_runtime.py`；测试 fixture 中的独立导入不属于生产路径。

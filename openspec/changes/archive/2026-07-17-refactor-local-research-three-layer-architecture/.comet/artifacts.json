@@ -4,5 +4,6 @@
   "openspec_tasks": "openspec/changes/refactor-local-research-three-layer-architecture/tasks.md",
   "openspec_delta_spec": "openspec/changes/refactor-local-research-three-layer-architecture/specs/local-quant-research-runtime/spec.md",
   "handoff_context": "openspec/changes/refactor-local-research-three-layer-architecture/.comet/handoff/spec-context.json",
-  "handoff_markdown": "openspec/changes/refactor-local-research-three-layer-architecture/.comet/handoff/spec-context.md"
+  "handoff_markdown": "openspec/changes/refactor-local-research-three-layer-architecture/.comet/handoff/spec-context.md",
+  "archive_directory": "openspec/changes/archive/2026-07-17-refactor-local-research-three-layer-architecture"
 }

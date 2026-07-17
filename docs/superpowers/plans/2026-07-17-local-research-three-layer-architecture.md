@@ -2,6 +2,7 @@
 change: refactor-local-research-three-layer-architecture
 design-doc: docs/superpowers/specs/2026-07-17-local-research-three-layer-architecture-design.md
 base-ref: ea195d36501848d3ba677b1e97c1aba667da7e1e
+archived-with: 2026-07-17-refactor-local-research-three-layer-architecture
 ---
 
 # 本地研究三层架构实施计划
