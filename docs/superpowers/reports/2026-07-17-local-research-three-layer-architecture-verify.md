@@ -6,6 +6,16 @@
 
 三层架构、结果包自包含、档案晋升、唯一 vectorbt（向量化回测）账本和公开 CLI（命令行入口）均通过完整验证。性能差异已如实列出，用户于 2026-07-18 明确确认接受；不建设自动相对门禁或专用发布性能命令。
 
+## OpenSpec 验证评分
+
+| 维度 | 结果 |
+|---|---|
+| 完整性 | 47/47 项任务完成；18/18 项 Requirement（要求）有实现证据 |
+| 正确性 | 40/40 个 Scenario（场景）有自动化测试或端到端证据 |
+| 一致性 | OpenSpec（开放规格）、技术设计和实现方向一致，无规格漂移 |
+
+未发现 CRITICAL（必须修复）、WARNING（警告）或 SUGGESTION（建议）项。
+
 ## 能力规格覆盖
 
 ### local-quant-research-runtime（本地量化研究运行时）
@@ -63,7 +73,9 @@ TDD（测试驱动开发）防回归：
 .\.venv\Scripts\python.exe .build-and-verify\runtime\build_and_verify.py verify --project . --full
 ```
 
-结果：通过，耗时 197.1 秒，11/11 检查项完成；本地研究单元测试 404 项通过，4 条来自 vectorbt 依赖的 Pandas 弃用警告；真实 E2E 8 项通过；OpenSpec（开放规格）严格校验 6 项通过。
+2026-07-18 进入 Comet verify（变更验证）阶段后重新完整运行。结果：通过，耗时 191.7 秒，11/11 检查项完成；本地研究单元测试 404 项通过，4 条来自 vectorbt 依赖的 Pandas（数据分析库）弃用警告；真实 E2E 8 项通过；OpenSpec（开放规格）严格校验 6 项通过。
+
+随后复核 Build and Verify（构建与验证）配置覆盖率，发现 `tests/quant_analysis/` 的 47 项测试只在触发范围内、未进入实际命令。现已将其加入既有 unit（单元测试）命令：配置回归测试按 TDD（测试驱动开发）先失败后通过，修改后的 unit 命令 451 项通过，Skill（技能）配置测试 9 项通过。自动 Pytest（测试框架）覆盖率由 645/693 提升至 692/693（99.86%）；剩余 1 项会操作真实 Windows Task Scheduler（Windows 任务计划程序），继续保留为人工系统测试。
 
 ## 残留扫描
 

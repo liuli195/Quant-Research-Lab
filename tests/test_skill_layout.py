@@ -129,6 +129,7 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
         "-m",
         "pytest",
         "tests\\local_quant_research",
+        "tests\\quant_analysis",
         "--ignore=tests\\local_quant_research\\test_generic_e2e.py",
         "--ignore=tests\\local_quant_research\\test_turtle_e2e.py",
         "--ignore=tests\\local_quant_research\\test_local_research_v2_e2e.py",
