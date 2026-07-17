@@ -189,3 +189,42 @@ STATUS: DONE_WITH_CONCERNS
 
 - 旧 `test_turtle_e2e.py` 的 v1 配置仍属于 Task 7/8 迁移项，本轮没有扩围。
 - 最终性能数字的小型元数据写回仍是明确记录的 observer overhead（观测开销）；摘要、事实转换、Parquet、回读、报告与完整校验均已计入门禁，writer 返回前的实际墙钟时间仍决定最终状态。
+
+## Fix Round 3（用户授权例外）
+
+### RED/GREEN 证据
+
+RED（失败）命令：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\local_quant_research\test_evidence.py::test_arrow_digest_uses_decoded_values_across_dictionary_chunk_encodings tests\local_quant_research\test_evidence.py::test_arrow_digest_normalizes_dictionary_inside_nested_struct -q
+```
+
+结果：`2 failed in 0.83s`。两个失败都是预期断言失败：逻辑值相同的顶层 dictionary（字典）和 nested struct child dictionary（嵌套结构体子字典）使用不同 dictionary order/indices（字典顺序/索引）及 chunk split（分块方式）时，旧摘要仍不同。
+
+GREEN（通过）命令同上，结果：`2 passed in 0.42s`。同一测试同时确认不同解码逻辑值仍产生不同摘要。
+
+### 实现说明
+
+- 根因是固定窗口 `combine_chunks()` 后直接写 Arrow IPC（进程间格式），IPC 仍绑定由首个 chunk（分块）决定的物理字典顺序和索引。
+- 现在先递归生成去 dictionary（字典）的逻辑 schema（结构），再仅对当前固定 65,536 行窗口使用 PyArrow（列式库）向量化 `cast()` 解码，之后才合并该窗口的 chunk 并写入 canonical IPC（规范进程间格式）。
+- 递归覆盖顶层 dictionary 以及 list/large-list/fixed-size-list/struct/map（列表/大列表/定长列表/结构体/映射）中的 dictionary；普通无字典 schema 保留原对象并跳过 cast。
+- 没有整表 `combine_chunks()`、没有任何 `to_pylist()`、没有 Python（编程语言）逐值循环，也没有新增第二套摘要或账本路径。
+
+### 完整验证
+
+- `tests/local_quant_research/test_evidence.py`：`12 passed in 0.46s`。
+- Task 5 七文件新鲜完整回归：`193 passed in 72.38s`。
+- Ruff（代码检查）覆盖两个允许 Python 文件：`All checks passed!`。
+- `git diff --check`：通过。
+
+### Fix Round 3 变更文件
+
+- `scripts/research/local_quant_research/evidence.py`
+- `tests/local_quant_research/test_evidence.py`
+- `.superpowers/sdd/task-5-report.md`
+
+### 风险信号
+
+- 固定 65,536 行窗口约束保持不变；dictionary 解码只在含 dictionary 的 schema 上执行，普通扩展表不增加 cast 工作。
+- 未触碰 vectorbt runtime（向量化回测运行时）、结果包协议、性能门禁、JoinQuant（聚宽）并行状态或协调文件；旧 turtle E2E（海龟端到端）v1 迁移仍属于 Task 7/8。

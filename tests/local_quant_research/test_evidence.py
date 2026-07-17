@@ -200,6 +200,84 @@ def test_arrow_digest_binds_dictionary_values() -> None:
     assert evidence._arrow_table_digest(first)["sha256"] != evidence._arrow_table_digest(second)["sha256"]
 
 
+def test_arrow_digest_uses_decoded_values_across_dictionary_chunk_encodings() -> None:
+    def dictionary_array(
+        indices: list[int],
+        dictionary: list[str],
+    ) -> pa.DictionaryArray:
+        return pa.DictionaryArray.from_arrays(
+            pa.array(indices, type=pa.int8()),
+            pa.array(dictionary),
+        )
+
+    single = pa.table(
+        {"value": dictionary_array([0, 1, 0], ["a", "b"])}
+    )
+    chunked = pa.Table.from_arrays(
+        [
+            pa.chunked_array(
+                [
+                    dictionary_array([1], ["b", "a"]),
+                    dictionary_array([1, 0], ["a", "b"]),
+                ]
+            )
+        ],
+        names=["value"],
+    )
+    different = pa.table(
+        {"value": dictionary_array([0, 1, 1], ["a", "b"])}
+    )
+
+    single_digest = evidence._arrow_table_digest(single)["sha256"]
+    assert single_digest == evidence._arrow_table_digest(chunked)["sha256"]
+    assert single_digest != evidence._arrow_table_digest(different)["sha256"]
+
+
+def test_arrow_digest_normalizes_dictionary_inside_nested_struct() -> None:
+    def dictionary_array(
+        indices: list[int],
+        dictionary: list[str],
+    ) -> pa.DictionaryArray:
+        return pa.DictionaryArray.from_arrays(
+            pa.array(indices, type=pa.int8()),
+            pa.array(dictionary),
+        )
+
+    def struct_array(
+        labels: pa.DictionaryArray,
+        scores: list[int],
+    ) -> pa.StructArray:
+        return pa.StructArray.from_arrays(
+            [labels, pa.array(scores, type=pa.int64())],
+            names=["label", "score"],
+        )
+
+    single = pa.table(
+        {
+            "nested": struct_array(
+                dictionary_array([0, 1, 0], ["a", "b"]),
+                [1, 2, 3],
+            )
+        }
+    )
+    chunked = pa.Table.from_arrays(
+        [
+            pa.chunked_array(
+                [
+                    struct_array(dictionary_array([1], ["b", "a"]), [1]),
+                    struct_array(
+                        dictionary_array([1, 0], ["a", "b"]),
+                        [2, 3],
+                    ),
+                ]
+            )
+        ],
+        names=["nested"],
+    )
+
+    assert evidence._arrow_table_digest(single)["sha256"] == evidence._arrow_table_digest(chunked)["sha256"]
+
+
 def test_arrow_digest_is_chunk_independent_for_nested_null_and_nan_values() -> None:
     nested_type = pa.struct(
         [

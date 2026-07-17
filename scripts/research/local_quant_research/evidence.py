@@ -68,8 +68,49 @@ def _array_digest(value: np.ndarray) -> dict[str, object]:
     }
 
 
+def _decoded_arrow_field(field: pa.Field) -> pa.Field:
+    decoded_type = _decoded_arrow_type(field.type)
+    if decoded_type == field.type:
+        return field
+    return pa.field(
+        field.name,
+        decoded_type,
+        nullable=field.nullable,
+        metadata=field.metadata,
+    )
+
+
+def _decoded_arrow_type(data_type: pa.DataType) -> pa.DataType:
+    if pa.types.is_dictionary(data_type):
+        return _decoded_arrow_type(data_type.value_type)
+    if pa.types.is_list(data_type):
+        return pa.list_(_decoded_arrow_field(data_type.value_field))
+    if pa.types.is_large_list(data_type):
+        return pa.large_list(_decoded_arrow_field(data_type.value_field))
+    if pa.types.is_fixed_size_list(data_type):
+        return pa.list_(
+            _decoded_arrow_field(data_type.value_field),
+            data_type.list_size,
+        )
+    if pa.types.is_struct(data_type):
+        return pa.struct([_decoded_arrow_field(field) for field in data_type])
+    if pa.types.is_map(data_type):
+        return pa.map_(
+            _decoded_arrow_type(data_type.key_type),
+            _decoded_arrow_type(data_type.item_type),
+            keys_sorted=data_type.keys_sorted,
+        )
+    return data_type
+
+
 def _arrow_table_digest(table: object) -> dict[str, object]:
-    schema = table.schema
+    source_schema = table.schema
+    decoded_fields = [_decoded_arrow_field(field) for field in source_schema]
+    schema = (
+        source_schema
+        if all(decoded is source for decoded, source in zip(decoded_fields, source_schema))
+        else pa.schema(decoded_fields, metadata=source_schema.metadata)
+    )
     schema_buffer = schema.serialize()
     digest = hashlib.sha256()
     digest.update(memoryview(schema_buffer))
@@ -77,7 +118,10 @@ def _arrow_table_digest(table: object) -> dict[str, object]:
     windows = 0
     for offset in range(0, rows, 65_536):
         length = min(65_536, rows - offset)
-        window = table.slice(offset, length).combine_chunks()
+        window = table.slice(offset, length)
+        if schema != source_schema:
+            window = window.cast(schema, safe=True)
+        window = window.combine_chunks()
         sink = pa.BufferOutputStream()
         with pa.ipc.new_stream(sink, schema) as writer:
             writer.write_table(window, max_chunksize=length)
