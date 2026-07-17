@@ -200,8 +200,7 @@ def _with_writer_stages(
     if not isinstance(performance, Mapping):
         raise ResultContractError("performance evidence must be an object")
     measurement = {
-        "first_full_pass_seconds": 0.0,
-        "gate_measured_seconds": 0.0,
+        "prefinalization_seconds": 0.0,
         **({} if writer_measurement is None else writer_measurement),
     }
     performance_document = (
@@ -214,13 +213,12 @@ def _with_writer_stages(
     stage_document.update({name: float(seconds) for name, seconds in stages.items()})
     performance_document["stages"] = stage_document
     performance_document["writer"] = {
-        name: float(measurement[name])
-        for name in ("first_full_pass_seconds", "gate_measured_seconds")
+        "prefinalization_seconds": float(measurement["prefinalization_seconds"])
     }
     performance_document["measurement_scope"] = {
         "actual_gate_basis": "returned_writer_seconds_through_writer_return",
-        "first_full_pass": "writer_start_through_first_complete_report_manifest_validation",
-        "observer_overhead": "final_fixed_metadata_rewrite_excluded_from_persisted_gate_measurement_but_included_in_actual_gate",
+        "persisted_writer_measurement": "writer_start_through_prefinalization_before_final_evidence_report_manifest_write",
+        "persisted_measurement_excludes": "final_evidence_report_manifest_write_and_atomic_publish",
     }
     evidence["performance.json"] = performance_document
     return _FrozenInputs(inputs.code, inputs.config, evidence)
@@ -1174,6 +1172,11 @@ def _validate_table_entry(
         table = pq.read_table(path)
     except Exception as exc:
         raise ResultContractError(f"{name} Parquet readback failed") from exc
+    if extension:
+        try:
+            validate_extension_table(table)
+        except EvidenceError as exc:
+            raise ResultContractError(str(exc)) from exc
     if table.num_rows != rows:
         raise ResultContractError(f"{name} row count mismatch")
     declared_schema = entry_value["schema"]
@@ -1543,13 +1546,13 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
             readback_extensions,
         )
         writer_stages["report_and_manifest"] = time.perf_counter() - report_started
+        prefinalization_seconds = time.perf_counter() - writer_started
         final_inputs = _with_writer_stages(
             inputs,
             writer_stages,
             request.performance_finalizer,
             writer_measurement={
-                "first_full_pass_seconds": time.perf_counter() - writer_started,
-                "gate_measured_seconds": time.perf_counter() - writer_started,
+                "prefinalization_seconds": prefinalization_seconds,
             },
         )
         package_sha256 = _canonical_digest(
@@ -1582,12 +1585,14 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
         (staging / "manifest.json").write_bytes(_json_bytes(manifest))
         if request.atomic_publish:
             os.replace(staging, target)
+        writer_finished = time.perf_counter()
+        writer_stages["report_and_manifest"] = writer_finished - report_started
         return ResultPackage(
             target,
             manifest,
             package_sha256,
             dict(writer_stages),
-            time.perf_counter() - writer_started,
+            writer_finished - writer_started,
         )
     except Exception as exc:
         if staging.exists():

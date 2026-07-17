@@ -479,10 +479,19 @@ def test_same_complete_identity_is_revalidated_and_reused_without_execution(
     assert _tree_digests(second.run_path) == before
 
 
+@pytest.mark.parametrize(
+    "invalid_array_expression",
+    (
+        "pa.array([{'child': 1}], type=pa.struct([('child', pa.int64())]))",
+        "pa.array([float('nan')], type=pa.float64())",
+    ),
+    ids=("struct", "nan"),
+)
 def test_invalid_extension_type_fails_before_cold_warm_comparison(
     repo_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    invalid_array_expression: str,
 ) -> None:
     fake_root, config_path, _ = _build_repo(tmp_path, repo_root)
     strategy = fake_root / "projects/generic-research/strategy.py"
@@ -495,7 +504,7 @@ def test_invalid_extension_type_fails_before_cold_warm_comparison(
             "return (ResultExtension(\n"
             "    name=\"invalid\",\n"
             "    schema_version=\"invalid/1\",\n"
-            "    table=pa.table({\"value\": pa.array([[\"nested\"]])}),\n"
+            f"    table=pa.table({{'value': {invalid_array_expression}}}),\n"
             "    unique_key=(\"value\",),\n"
             "    evidence={},\n"
             "),)",

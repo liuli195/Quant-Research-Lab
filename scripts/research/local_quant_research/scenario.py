@@ -167,7 +167,7 @@ def execute_scenario(request: ScenarioRequest) -> ScenarioOutcome:
             **include_shared_work(
                 performance,
                 request.strategy_load_seconds
-                + writer_measurement["gate_measured_seconds"],
+                + writer_measurement["prefinalization_seconds"],
             ).to_document(),
             "stages": {**stages, **writer_stages},
         },

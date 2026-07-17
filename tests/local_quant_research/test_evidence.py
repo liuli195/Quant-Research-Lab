@@ -150,6 +150,40 @@ def test_execution_digest_scans_shared_run_and_arrays_once(
                 )
             }
         ),
+        pa.table(
+            {
+                "value": pa.array(
+                    [{"child": 1}],
+                    type=pa.struct([("child", pa.int64())]),
+                )
+            }
+        ),
+        pa.table(
+            {
+                "value": pa.array(
+                    [[("key", 1)]],
+                    type=pa.map_(pa.string(), pa.int64()),
+                )
+            }
+        ),
+        pa.table(
+            {
+                "value": pa.UnionArray.from_sparse(
+                    pa.array([5], type=pa.int8()),
+                    [pa.array(["value"]), pa.array([1])],
+                    field_names=["text", "number"],
+                    type_codes=[5, 7],
+                )
+            }
+        ),
+        pa.table(
+            {
+                "value": pa.RunEndEncodedArray.from_arrays(
+                    pa.array([1], type=pa.int16()),
+                    pa.array(["value"]),
+                )
+            }
+        ),
     ),
 )
 def test_extension_table_rejects_non_flat_or_nan_values(table: pa.Table) -> None:

@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from collections import Counter
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Mapping
 
 import numpy as np
@@ -299,6 +301,28 @@ def _point_reference_at(
     reference["bytes"] = destination.stat().st_size
 
 
+def _replace_persisted_extension_table(package: Path, table: pa.Table) -> None:
+    """Keep the disk declaration self-consistent up to logical package identity."""
+    from scripts.research.local_quant_research import result_package
+
+    data_path = package / "extensions/decision_log/data.parquet"
+    pq.write_table(table, data_path, compression="snappy")
+    persisted = pq.read_table(data_path)
+    manifest_path = package / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    entry = manifest["extensions"]["decision_log"]
+    reference = entry["files"][0]
+    reference["sha256"] = hashlib.sha256(data_path.read_bytes()).hexdigest()
+    reference["bytes"] = data_path.stat().st_size
+    reference["rows"] = table.num_rows
+    entry["rows"] = table.num_rows
+    entry["verified_empty"] = table.num_rows == 0
+    entry["schema"] = result_package._schema_document(persisted.schema)
+    entry["time_range"] = result_package._time_range(persisted)
+    entry["evidence"]["fields"] = persisted.schema.names
+    _write_manifest(manifest_path, manifest)
+
+
 def test_writer_materializes_one_package_without_recomputing_ledger(
     package_request: ResultPackageRequest,
     counting_ledger: CountingLedger,
@@ -338,9 +362,12 @@ def test_writer_materializes_one_package_without_recomputing_ledger(
     performance = json.loads(
         (package.path / "evidence/performance.json").read_text(encoding="utf-8")
     )
-    assert {
-        name: performance["stages"][name] for name in package.writer_stages
-    } == dict(package.writer_stages)
+    for name in ("core_facts", "parquet_materialize", "readback_validate"):
+        assert performance["stages"][name] == package.writer_stages[name]
+    assert (
+        performance["stages"]["report_and_manifest"]
+        <= package.writer_stages["report_and_manifest"]
+    )
     assert len(package.package_sha256) == 64
     for name in manifest["datasets"]:
         reference = manifest["datasets"][name]["files"][0]
@@ -451,23 +478,107 @@ def test_writer_uses_its_single_readback_without_calling_disk_validator(
     write_result_package(package_request)
 
 
-def test_writer_persists_first_full_pass_and_gate_measurement_scope(
+def test_writer_distinguishes_persisted_prefinalization_from_returned_full_duration(
     package_request: ResultPackageRequest,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from scripts.research.local_quant_research import result_package
+
+    delay_seconds = 0.05
+    real_write_documents = result_package._write_documents
+
+    def delayed_write_documents(
+        root: Path,
+        directory: str,
+        documents: Mapping[str, object],
+    ) -> dict[str, dict[str, object]]:
+        if directory == "evidence":
+            time.sleep(delay_seconds)
+        return real_write_documents(root, directory, documents)
+
+    monkeypatch.setattr(result_package, "_write_documents", delayed_write_documents)
     package = write_result_package(package_request)
     performance = json.loads(
         (package.path / "evidence/performance.json").read_text(encoding="utf-8")
     )
 
     writer = performance["writer"]
-    assert writer["first_full_pass_seconds"] > 0
-    assert writer["gate_measured_seconds"] >= writer["first_full_pass_seconds"]
-    assert package.writer_seconds >= writer["gate_measured_seconds"]
+    assert set(writer) == {"prefinalization_seconds"}
+    assert writer["prefinalization_seconds"] > 0
+    assert package.writer_seconds - writer["prefinalization_seconds"] >= (
+        delay_seconds * 0.8
+    )
+    assert package.writer_stages["report_and_manifest"] >= delay_seconds * 0.8
     assert performance["measurement_scope"] == {
         "actual_gate_basis": "returned_writer_seconds_through_writer_return",
-        "first_full_pass": "writer_start_through_first_complete_report_manifest_validation",
-        "observer_overhead": "final_fixed_metadata_rewrite_excluded_from_persisted_gate_measurement_but_included_in_actual_gate",
+        "persisted_writer_measurement": "writer_start_through_prefinalization_before_final_evidence_report_manifest_write",
+        "persisted_measurement_excludes": "final_evidence_report_manifest_write_and_atomic_publish",
     }
+
+
+def test_scenario_gate_uses_writer_duration_through_delayed_return(
+    package_request: ResultPackageRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import performance, scenario
+    from scripts.research.local_quant_research.performance import (
+        PerformanceEvidence,
+        PerformanceGateError,
+        PerformanceSample,
+    )
+    from scripts.research.local_quant_research.result_package import ResultPackage
+
+    code_path = next(iter(package_request.code_files.values()))
+    loaded_strategy = SimpleNamespace(
+        root=code_path.parent,
+        source_paths=(code_path,),
+        descriptor=SimpleNamespace(strategy_id=package_request.strategy_id),
+    )
+    warm = SimpleNamespace(
+        execution=package_request.execution,
+        extensions=package_request.extensions,
+        stages={},
+    )
+    samples = PerformanceEvidence(
+        cold=PerformanceSample("cold", 0.0, "same"),
+        warm=PerformanceSample("warm", 0.0, "same"),
+    )
+    monkeypatch.setattr(
+        scenario,
+        "run_cold_warm",
+        lambda _operation, *, digest: (warm, samples),
+    )
+
+    def delayed_writer(_request: ResultPackageRequest) -> ResultPackage:
+        started = time.perf_counter()
+        time.sleep(0.05)
+        return ResultPackage(
+            path=package_request.output_dir,
+            manifest={},
+            package_sha256="a" * 64,
+            writer_stages={},
+            writer_seconds=time.perf_counter() - started,
+        )
+
+    monkeypatch.setattr(scenario, "write_result_package", delayed_writer)
+    monkeypatch.setattr(performance, "PERFORMANCE_LIMIT_SECONDS", 0.04)
+    request = scenario.ScenarioRequest(
+        loaded_strategy=loaded_strategy,
+        snapshot=SimpleNamespace(),
+        scenario={"scenario_id": package_request.scenario_id},
+        project_document={},
+        run_id=package_request.run_id,
+        output_dir=package_request.output_dir,
+        code_identity={},
+        market_snapshot={},
+        runtime_lock={},
+        environment={},
+    )
+
+    with pytest.raises(PerformanceGateError) as caught:
+        scenario.execute_scenario(request)
+
+    assert caught.value.code == "cold_performance_limit"
 
 
 def test_validator_summarizes_each_core_table_once(
@@ -929,6 +1040,27 @@ def test_validator_rejects_tampered_materialized_table(
     results.write_bytes(results.read_bytes() + b"tampered")
 
     with pytest.raises(ResultContractError, match="digest"):
+        validate_result_package(package.path)
+
+
+@pytest.mark.parametrize(
+    "invalid_value",
+    (
+        pa.array([["nested"]], type=pa.list_(pa.string())),
+        pa.array([1], type=pa.int32()),
+    ),
+)
+def test_disk_validator_rejects_extension_types_outside_flat_contract(
+    package_request: ResultPackageRequest,
+    invalid_value: pa.Array,
+) -> None:
+    package = write_result_package(package_request)
+    _replace_persisted_extension_table(
+        package.path,
+        pa.table({"event_id": ["event-1"], "value": invalid_value}),
+    )
+
+    with pytest.raises(ResultContractError, match="flat string/bool/int64/float64"):
         validate_result_package(package.path)
 
 
