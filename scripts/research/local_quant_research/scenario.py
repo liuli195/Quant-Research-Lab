@@ -108,7 +108,7 @@ def execute_scenario(request: ScenarioRequest) -> ScenarioOutcome:
         ),
     )
     scenario_id = request.scenario.get("scenario_id")
-    if not isinstance(scenario_id, str) or not scenario_id:
+    if not isinstance(scenario_id, str) or not scenario_id.strip():
         raise ValueError("scenario_id is missing or invalid")
     stages = {name: 0.0 for name in SCENARIO_STAGES}
     stages["strategy_load"] = request.strategy_load_seconds
@@ -138,10 +138,11 @@ def execute_scenario(request: ScenarioRequest) -> ScenarioOutcome:
             "performance.json": performance_document,
             "environment.json": dict(request.environment),
         },
-        performance_finalizer=lambda writer_stages: {
+        performance_finalizer=lambda writer_stages, writer_measurement: {
             **include_shared_work(
                 performance,
-                request.strategy_load_seconds + sum(writer_stages.values()),
+                request.strategy_load_seconds
+                + writer_measurement["gate_measured_seconds"],
             ).to_document(),
             "stages": {**stages, **writer_stages},
         },

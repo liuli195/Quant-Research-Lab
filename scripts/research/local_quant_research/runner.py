@@ -5,6 +5,7 @@ import hashlib
 import os
 import re
 import shutil
+import stat
 import subprocess
 import time
 import uuid
@@ -67,6 +68,7 @@ _COMPLETE_STAGE_NAMES = (
     "output_validation",
     "evidence_finalization",
 )
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x0400
 
 
 class ConfigurationError(ValueError):
@@ -325,14 +327,27 @@ def _attempt_result(
     stages: Sequence[StageRecord],
     staging: Path | None = None,
 ) -> RunResult:
-    if staging is not None and staging.exists():
-        shutil.rmtree(staging)
     attempt_id = uuid.uuid4().hex
-    attempts_root = (
-        repo_root / ".local" / "quant-research" / project_id / ".attempts"
-    )
     final_status = status if status in {"evidence_insufficient", "failed"} else "failed"
     try:
+        project_root = _resolve_output_project_root(repo_root, project_id)
+        attempts_root = _resolve_plain_output_directory(
+            project_root / ".attempts",
+            repo_root=repo_root,
+            allow_missing=True,
+        )
+        if staging is not None and staging.exists():
+            safe_staging = _resolve_plain_output_directory(
+                staging,
+                repo_root=repo_root,
+                allow_missing=False,
+            )
+            if safe_staging.parent != project_root:
+                raise ConfigurationError(
+                    "unsafe_output_root",
+                    "staging is outside the fixed project output root",
+                )
+            shutil.rmtree(safe_staging)
         record_attempt(
             attempts_root=attempts_root,
             attempt_id=attempt_id,
@@ -342,6 +357,8 @@ def _attempt_result(
             stage=stage,
             reason_codes=(code,),
         )
+    except ConfigurationError:
+        attempt_id = None
     except (OSError, EvidenceError):
         final_status = "failed"
         code = "attempt_record_failed"
@@ -1165,32 +1182,100 @@ _LEGACY_RUN_FIELDS = {
 
 
 def _is_directory_link(path: Path) -> bool:
-    return path.is_symlink() or bool(
-        getattr(os.path, "isjunction", lambda _value: False)(path)
+    try:
+        details = os.lstat(path)
+    except OSError:
+        return False
+    return (
+        stat.S_ISLNK(details.st_mode)
+        or bool(
+            getattr(details, "st_file_attributes", 0)
+            & _FILE_ATTRIBUTE_REPARSE_POINT
+        )
+        or bool(getattr(os.path, "isjunction", lambda _value: False)(path))
     )
+
+
+def _resolve_plain_output_directory(
+    path: Path,
+    *,
+    repo_root: Path,
+    allow_missing: bool,
+) -> Path:
+    repository = Path(repo_root).resolve()
+    unresolved = Path(os.path.abspath(path))
+    try:
+        relative = unresolved.relative_to(repository)
+    except ValueError as exc:
+        raise ConfigurationError(
+            "unsafe_output_root",
+            "output path must remain inside the repository",
+        ) from exc
+    current = repository
+    for index, part in enumerate(relative.parts):
+        current /= part
+        final = index == len(relative.parts) - 1
+        try:
+            details = os.lstat(current)
+        except FileNotFoundError:
+            if allow_missing:
+                continue
+            raise ConfigurationError(
+                "unsafe_output_root",
+                "required output directory is missing",
+            ) from None
+        except OSError as exc:
+            raise ConfigurationError(
+                "unsafe_output_root",
+                "output directory cannot be inspected",
+            ) from exc
+        if _is_directory_link(current) or not stat.S_ISDIR(details.st_mode):
+            raise ConfigurationError(
+                "unsafe_output_root",
+                "output path must contain only ordinary directories",
+            )
+        if final and not stat.S_ISDIR(details.st_mode):
+            raise ConfigurationError(
+                "unsafe_output_root",
+                "output path must be an ordinary directory",
+            )
+    return unresolved
 
 
 def _resolve_output_project_root(repo_root: Path, project_id: str) -> Path:
     from .contracts import RUN_OUTPUT_ROOT
 
     repository = Path(repo_root).resolve()
-    unresolved_root = repository / RUN_OUTPUT_ROOT
-    current = repository
-    for part in RUN_OUTPUT_ROOT.parts:
-        current /= part
-        if current.exists() and _is_directory_link(current):
-            raise ConfigurationError(
-                "unsafe_output_root",
-                "fixed output root must not contain a directory link",
-            )
-    output_root = unresolved_root.resolve()
-    project_root = (output_root / project_id).resolve()
-    if not _inside(output_root, repository) or not _inside(project_root, output_root):
+    if project_id != "_invalid" and _PROJECT_ID_PATTERN.fullmatch(project_id) is None:
         raise ConfigurationError(
             "unsafe_output_root",
-            "fixed output root must remain inside the repository",
+            "project output identity is unsafe",
         )
-    return project_root
+    output_root = _resolve_plain_output_directory(
+        repository / RUN_OUTPUT_ROOT,
+        repo_root=repository,
+        allow_missing=True,
+    )
+    return _resolve_plain_output_directory(
+        output_root / project_id,
+        repo_root=repository,
+        allow_missing=True,
+    )
+
+
+def _resolve_output_run_dir(
+    repo_root: Path,
+    project_id: str,
+    run_id: str,
+) -> Path:
+    if _SHA256_PATTERN.fullmatch(run_id) is None:
+        raise ConfigurationError("unsafe_output_root", "run output identity is unsafe")
+    project_root = _resolve_output_project_root(repo_root, project_id)
+    return _resolve_plain_output_directory(
+        project_root / run_id,
+        repo_root=repo_root,
+        allow_missing=True,
+    )
 
 
 def load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
@@ -1255,7 +1340,7 @@ def load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
     ):
         raise ConfigurationError("invalid_scenario_config", "scenario config is invalid")
     scenario_id = scenario_document.get("scenario_id")
-    if not isinstance(scenario_id, str) or not scenario_id:
+    if not isinstance(scenario_id, str) or not scenario_id.strip():
         raise ConfigurationError(
             "missing_scenario_id",
             "scenario_id is missing or invalid",
@@ -1353,22 +1438,17 @@ def _v2_identity(
     config_path: Path,
 ) -> tuple[object, str, str, dict[str, object], dict[str, object], dict[str, object]]:
     from .strategy_loader import ConfigurationError as StrategyConfigurationError
-    from .strategy_loader import load_strategy
+    from .strategy_loader import discover_strategy_sources
 
     strategy_document = config.document["strategy"]
     try:
-        loaded = load_strategy(repo_root, strategy_document)
+        discovered = discover_strategy_sources(repo_root, strategy_document)
     except StrategyConfigurationError as exc:
         raise ConfigurationError(exc.code, str(exc)) from exc
-    if loaded.descriptor.strategy_id != config.project_id:
-        raise ConfigurationError(
-            "strategy_identity_mismatch",
-            "project_id must match the loaded strategy descriptor",
-        )
     runtime_lock, runtime_sources = _runtime_lock(repo_root)
     code_sources = tuple(
         sorted(
-            {*loaded.source_paths, *runtime_sources},
+            {*discovered.source_paths, *runtime_sources},
             key=lambda item: item.relative_to(repo_root).as_posix(),
         )
     )
@@ -1444,14 +1524,14 @@ def _v2_identity(
         "project_run": dict(config.document),
         "scenario_document": dict(scenario_document),
     }
-    return loaded, config_digest, code_digest, evidence, code_identity, runtime_lock
+    return discovered, config_digest, code_digest, evidence, code_identity, runtime_lock
 
 
 def _copy_v2_inputs(
     *,
     config_path: Path,
     config: RunConfig,
-    loaded: object,
+    discovered: object,
     repo_root: Path,
     market_root: Path,
     snapshot_document: Mapping[str, object],
@@ -1461,11 +1541,12 @@ def _copy_v2_inputs(
     runtime_lock: Mapping[str, object],
     execution_root: Path,
     staging: Path,
+    attempt_id: str,
 ) -> None:
-    from .strategy_loader import LoadedStrategy
+    from .strategy_loader import DiscoveredStrategySources
 
-    if not isinstance(loaded, LoadedStrategy):
-        raise InputIntegrityError("invalid_strategy", "loaded strategy is invalid")
+    if not isinstance(discovered, DiscoveredStrategySources):
+        raise InputIntegrityError("invalid_strategy", "discovered strategy is invalid")
     frozen_repo = execution_root / "repository"
     frozen_market = execution_root / "market-data"
     try:
@@ -1523,13 +1604,16 @@ def _copy_v2_inputs(
                 )
         request = {
             "schema_version": 2,
+            "project_id": str(identity["project_id"]),
+            "run_id": str(identity["run_id"]),
+            "attempt_id": attempt_id,
+            "output_root": str((repo_root / ".local/quant-research").resolve()),
             "repository": str(frozen_repo.resolve()),
             "market_data": str(frozen_market.resolve()),
             "live_repository": str(repo_root.resolve()),
             "runtime_cache": str((execution_root / "runtime-cache").resolve()),
             "staging": str(Path(staging).resolve()),
             "config": config_path.resolve().relative_to(repo_root).as_posix(),
-            "run_id": str(identity["run_id"]),
             "code_identity": dict(code_identity),
             "runtime_lock": dict(runtime_lock),
             "market_snapshot": dict(snapshot_document),
@@ -1582,10 +1666,17 @@ def _package_identity(
     identity = document.get("object")
     project_id = expected.get("project_id")
     run_id = expected.get("run_id")
+    expected_scenario = expected.get("scenario_document")
+    expected_scenario_id = (
+        expected_scenario.get("scenario_id")
+        if isinstance(expected_scenario, Mapping)
+        else None
+    )
     if not isinstance(identity, Mapping) or (
         identity.get("kind") != "local_research"
         or identity.get("status") != "complete"
         or identity.get("strategy_id") != project_id
+        or identity.get("scenario_id") != expected_scenario_id
         or identity.get("run_id") != run_id
     ):
         raise EvidenceError("completed result package identity is invalid")
@@ -1723,6 +1814,11 @@ def execute_frozen_inputs(frozen_inputs: Path, staging: Path) -> dict[str, objec
     config = load_run_config(config_path, repo_root=repository)
     started = time.perf_counter()
     loaded = load_strategy(repository, config.document["strategy"])
+    if loaded.descriptor.strategy_id != config.project_id:
+        raise ConfigurationError(
+            "strategy_identity_mismatch",
+            "project_id must match the loaded strategy descriptor",
+        )
     strategy_load_seconds = time.perf_counter() - started
     snapshot = open_snapshot(config.snapshot_id, root=market_data)
     try:
@@ -1819,7 +1915,7 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
         )
     stages.append(StageRecord("snapshot_validation", "complete"))
     try:
-        loaded, config_digest, code_digest, inputs, code_identity, runtime_lock = (
+        discovered, config_digest, code_digest, inputs, code_identity, runtime_lock = (
             _v2_identity(
                 config,
                 repo_root=repo_root,
@@ -1863,7 +1959,20 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
             stages=(StageRecord("config_validation", "evidence_insufficient"),),
             next_action=None,
         )
-    run_dir = project_root / run_id
+    try:
+        run_dir = _resolve_output_run_dir(repo_root, project_id, run_id)
+    except ConfigurationError as exc:
+        return RunResult(
+            status="evidence_insufficient",
+            project_id=project_id,
+            run_id=run_id,
+            run_path=None,
+            attempt_id=None,
+            reused=False,
+            reasons=(exc.code,),
+            stages=(*stages, StageRecord("config_validation", "evidence_insufficient")),
+            next_action=None,
+        )
     if run_dir.exists():
         try:
             _package_identity(run_dir, expected=identity)
@@ -1897,7 +2006,7 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
         _copy_v2_inputs(
             config_path=Path(config_path).resolve(),
             config=config,
-            loaded=loaded,
+            discovered=discovered,
             repo_root=repo_root,
             market_root=market_root,
             snapshot_document=snapshot_document,
@@ -1907,6 +2016,7 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
             runtime_lock=runtime_lock,
             execution_root=execution_root,
             staging=staging,
+            attempt_id=attempt_id,
         )
     except InputIntegrityError as exc:
         return _attempt_result(

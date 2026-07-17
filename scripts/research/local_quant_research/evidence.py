@@ -73,26 +73,23 @@ def _arrow_table_digest(table: object) -> dict[str, object]:
     schema_buffer = schema.serialize()
     digest = hashlib.sha256()
     digest.update(memoryview(schema_buffer))
-    rows = 0
-    batches = 0
-    for batch in table.to_batches(max_chunksize=65_536):
-        batches += 1
-        rows += batch.num_rows
-        digest.update(batch.num_rows.to_bytes(8, "little", signed=False))
-        for column in batch.columns:
-            digest.update(len(column).to_bytes(8, "little", signed=False))
-            digest.update(column.null_count.to_bytes(8, "little", signed=False))
-            for buffer in column.buffers():
-                if buffer is None:
-                    digest.update(b"\x00")
-                else:
-                    digest.update(b"\x01")
-                    digest.update(len(buffer).to_bytes(8, "little", signed=False))
-                    digest.update(memoryview(buffer))
+    rows = int(table.num_rows)
+    windows = 0
+    for offset in range(0, rows, 65_536):
+        length = min(65_536, rows - offset)
+        window = table.slice(offset, length).combine_chunks()
+        sink = pa.BufferOutputStream()
+        with pa.ipc.new_stream(sink, schema) as writer:
+            writer.write_table(window, max_chunksize=length)
+        payload = sink.getvalue()
+        digest.update(length.to_bytes(8, "little", signed=False))
+        digest.update(len(payload).to_bytes(8, "little", signed=False))
+        digest.update(memoryview(payload))
+        windows += 1
     return {
         "schema_sha256": hashlib.sha256(memoryview(schema_buffer)).hexdigest(),
         "rows": rows,
-        "batches": batches,
+        "windows": windows,
         "sha256": digest.hexdigest(),
     }
 

@@ -15,6 +15,7 @@ import numpy as np
 import pyarrow as pa
 import pytest
 
+from scripts.research.local_quant_research import strategy_loader
 from scripts.research.local_quant_research.contracts import (
     FILL_ACCEPTED,
     FILL_IGNORED,
@@ -283,6 +284,62 @@ def test_shared_loader_accepts_two_strategy_modules(repo_root: Path) -> None:
     assert first.root != second.root
     assert first.source_paths == (first.root / "strategy.py",)
     assert second.source_paths == (second.root / "strategy.py",)
+
+
+def test_static_source_discovery_does_not_execute_strategy_and_captures_all_python(
+    repo_root: Path,
+    temporary_strategy_root: Path,
+) -> None:
+    marker = temporary_strategy_root / "executed"
+    helper = temporary_strategy_root / "helper.py"
+    helper.write_text("VALUE = 1\n", encoding="utf-8")
+    (temporary_strategy_root / "strategy.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('executed', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+
+    discovered = strategy_loader.discover_strategy_sources(
+        repo_root,
+        {
+            "root": _relative_to_repo(temporary_strategy_root, repo_root),
+            "module": "strategy",
+            "symbol": "MODULE",
+        },
+    )
+
+    assert discovered.root == temporary_strategy_root.resolve()
+    assert discovered.source_paths == (helper.resolve(), (temporary_strategy_root / "strategy.py").resolve())
+    assert not marker.exists()
+
+
+def test_static_source_discovery_rejects_linked_python_source(
+    repo_root: Path,
+    temporary_strategy_root: Path,
+) -> None:
+    (temporary_strategy_root / "strategy.py").write_text("MODULE = object()\n", encoding="utf-8")
+    external = temporary_strategy_root.parent / f"{uuid.uuid4().hex}.py"
+    external.write_text("VALUE = 1\n", encoding="utf-8")
+    linked = temporary_strategy_root / "linked.py"
+    try:
+        linked.symlink_to(external)
+    except OSError as exc:
+        external.unlink(missing_ok=True)
+        pytest.skip(f"file links are unavailable: {exc}")
+    try:
+        with pytest.raises(ConfigurationError) as caught:
+            strategy_loader.discover_strategy_sources(
+                repo_root,
+                {
+                    "root": _relative_to_repo(temporary_strategy_root, repo_root),
+                    "module": "strategy",
+                    "symbol": "MODULE",
+                },
+            )
+        assert caught.value.code == "unsafe_strategy_source_tree"
+    finally:
+        linked.unlink(missing_ok=True)
+        external.unlink(missing_ok=True)
 
 
 def test_loader_restores_sys_path_and_conflicting_module_cache(repo_root: Path) -> None:

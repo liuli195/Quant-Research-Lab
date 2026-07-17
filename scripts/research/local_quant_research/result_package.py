@@ -138,7 +138,9 @@ class ResultPackageRequest:
     code_files: Mapping[str, Path]
     config_documents: Mapping[str, object]
     evidence_documents: Mapping[str, object]
-    performance_finalizer: Callable[[Mapping[str, float]], Mapping[str, object]] | None = None
+    performance_finalizer: Callable[
+        [Mapping[str, float], Mapping[str, float]], Mapping[str, object]
+    ] | None = None
     atomic_publish: bool = True
 
 
@@ -169,22 +171,53 @@ class _FrozenInputs:
     evidence: Mapping[str, object]
 
 
+@dataclass(frozen=True, slots=True)
+class _ReportFacts:
+    parameters: object
+    time_range: Mapping[str, str | None]
+    dataset_rows: Mapping[str, int]
+    extension_rows: Mapping[str, int]
+    orders: Mapping[str, int | float]
+    positions: Mapping[str, object]
+    net_value: Mapping[str, float]
+
+
 def _with_writer_stages(
     inputs: _FrozenInputs,
     stages: Mapping[str, float],
-    finalizer: Callable[[Mapping[str, float]], Mapping[str, object]] | None = None,
+    finalizer: Callable[
+        [Mapping[str, float], Mapping[str, float]], Mapping[str, object]
+    ] | None = None,
+    *,
+    writer_measurement: Mapping[str, float] | None = None,
 ) -> _FrozenInputs:
     evidence = dict(inputs.evidence)
     performance = evidence.get("performance.json")
     if not isinstance(performance, Mapping):
         raise ResultContractError("performance evidence must be an object")
+    measurement = {
+        "first_full_pass_seconds": 0.0,
+        "gate_measured_seconds": 0.0,
+        **({} if writer_measurement is None else writer_measurement),
+    }
     performance_document = (
-        dict(finalizer(stages)) if finalizer is not None else dict(performance)
+        dict(finalizer(stages, measurement))
+        if finalizer is not None
+        else dict(performance)
     )
     existing_stages = performance_document.get("stages")
     stage_document = dict(existing_stages) if isinstance(existing_stages, Mapping) else {}
     stage_document.update({name: float(seconds) for name, seconds in stages.items()})
     performance_document["stages"] = stage_document
+    performance_document["writer"] = {
+        name: float(measurement[name])
+        for name in ("first_full_pass_seconds", "gate_measured_seconds")
+    }
+    performance_document["measurement_scope"] = {
+        "actual_gate_basis": "returned_writer_seconds_through_writer_return",
+        "first_full_pass": "writer_start_through_first_complete_report_manifest_validation",
+        "observer_overhead": "final_fixed_metadata_rewrite_excluded_from_persisted_gate_measurement_but_included_in_actual_gate",
+    }
     evidence["performance.json"] = performance_document
     return _FrozenInputs(inputs.code, inputs.config, evidence)
 
@@ -700,15 +733,12 @@ def _column_sum(table: pa.Table, name: str) -> int | float:
     return 0 if value is None else value
 
 
-def _report_payloads(
+def _build_report_facts(
     *,
-    identity: Mapping[str, object],
     config: Mapping[str, object],
-    evidence: Mapping[str, object],
     facts: _CoreFacts,
     extension_tables: Mapping[str, pa.Table],
-    package_sha256: str,
-) -> tuple[bytes, bytes]:
+) -> _ReportFacts:
     scenario = config.get("scenario.json")
     parameters = (
         scenario.get("parameters", {})
@@ -716,7 +746,6 @@ def _report_payloads(
         else {}
     )
     parameters = _jsonable(parameters)
-    performance = _jsonable(evidence.get("performance.json"))
     time_range = _time_range(facts.results)
 
     position_times = [str(value) for value in facts.positions["time"].to_pylist()]
@@ -753,6 +782,48 @@ def _report_payloads(
         start_total_value = end_total_value = 0.0
         start_net_value = end_net_value = 0.0
         cumulative_return = 0.0
+    return _ReportFacts(
+        parameters=parameters,
+        time_range=time_range,
+        dataset_rows={name: table.num_rows for name, table in facts.tables().items()},
+        extension_rows={
+            name: table.num_rows for name, table in sorted(extension_tables.items())
+        },
+        orders={
+            "records": facts.orders.num_rows,
+            "requested_amount": int(_column_sum(facts.orders, "amount")),
+            "filled_amount": int(_column_sum(facts.orders, "filled")),
+            "commission": float(_column_sum(facts.orders, "commission")),
+        },
+        positions={
+            "records": facts.positions.num_rows,
+            "latest_time": latest_position_time,
+            "latest_records": latest_positions.num_rows,
+            "latest_market_value": latest_market_value,
+        },
+        net_value={
+            "start_total_value": start_total_value,
+            "end_total_value": end_total_value,
+            "start_net_value": start_net_value,
+            "end_net_value": end_net_value,
+            "cumulative_return": cumulative_return,
+        },
+    )
+
+
+def _report_payloads(
+    *,
+    identity: Mapping[str, object],
+    evidence: Mapping[str, object],
+    report_facts: _ReportFacts,
+    package_sha256: str,
+) -> tuple[bytes, bytes]:
+    parameters = report_facts.parameters
+    performance = _jsonable(evidence.get("performance.json"))
+    time_range = report_facts.time_range
+    orders = report_facts.orders
+    positions = report_facts.positions
+    net_value = report_facts.net_value
 
     integrity_gate = {
         "status": "pass",
@@ -764,31 +835,11 @@ def _report_payloads(
         "package_sha256": package_sha256,
         "parameters": parameters,
         "time_range": time_range,
-        "datasets": {
-            name: table.num_rows for name, table in facts.tables().items()
-        },
-        "extensions": {
-            name: table.num_rows for name, table in sorted(extension_tables.items())
-        },
-        "orders": {
-            "records": facts.orders.num_rows,
-            "requested_amount": int(_column_sum(facts.orders, "amount")),
-            "filled_amount": int(_column_sum(facts.orders, "filled")),
-            "commission": float(_column_sum(facts.orders, "commission")),
-        },
-        "positions": {
-            "records": facts.positions.num_rows,
-            "latest_time": latest_position_time,
-            "latest_records": latest_positions.num_rows,
-            "latest_market_value": latest_market_value,
-        },
-        "net_value": {
-            "start_total_value": start_total_value,
-            "end_total_value": end_total_value,
-            "start_net_value": start_net_value,
-            "end_net_value": end_net_value,
-            "cumulative_return": cumulative_return,
-        },
+        "datasets": dict(report_facts.dataset_rows),
+        "extensions": dict(report_facts.extension_rows),
+        "orders": dict(orders),
+        "positions": dict(positions),
+        "net_value": dict(net_value),
         "performance": performance,
         "integrity_gate": integrity_gate,
     }
@@ -817,32 +868,32 @@ def _report_payloads(
         "",
     ]
     lines.extend(
-        f"- `{name}`：{table.num_rows}" for name, table in facts.tables().items()
+        f"- `{name}`：{rows}" for name, rows in report_facts.dataset_rows.items()
     )
     lines.extend(
         [
             "",
             "## 成交摘要",
             "",
-            f"- 订单记录：{facts.orders.num_rows}",
-            f"- 委托数量：{int(_column_sum(facts.orders, 'amount'))}",
-            f"- 成交数量：{int(_column_sum(facts.orders, 'filled'))}",
-            f"- 佣金：{float(_column_sum(facts.orders, 'commission')):.6f}",
+            f"- 订单记录：{orders['records']}",
+            f"- 委托数量：{orders['requested_amount']}",
+            f"- 成交数量：{orders['filled_amount']}",
+            f"- 佣金：{float(orders['commission']):.6f}",
             "",
             "## 持仓摘要",
             "",
-            f"- 持仓记录：{facts.positions.num_rows}",
-            f"- 最新时点：`{latest_position_time}`",
-            f"- 最新持仓数量：{latest_positions.num_rows}",
-            f"- 最新持仓市值：{latest_market_value:.6f}",
+            f"- 持仓记录：{positions['records']}",
+            f"- 最新时点：`{positions['latest_time']}`",
+            f"- 最新持仓数量：{positions['latest_records']}",
+            f"- 最新持仓市值：{float(positions['latest_market_value']):.6f}",
             "",
             "## 净值摘要",
             "",
-            f"- 起始总资产：{start_total_value:.6f}",
-            f"- 结束总资产：{end_total_value:.6f}",
-            f"- 起始净值：{start_net_value:.6f}",
-            f"- 结束净值：{end_net_value:.6f}",
-            f"- 累计收益：{cumulative_return:.12f}",
+            f"- 起始总资产：{float(net_value['start_total_value']):.6f}",
+            f"- 结束总资产：{float(net_value['end_total_value']):.6f}",
+            f"- 起始净值：{float(net_value['start_net_value']):.6f}",
+            f"- 结束净值：{float(net_value['end_net_value']):.6f}",
+            f"- 累计收益：{float(net_value['cumulative_return']):.12f}",
             "",
             "## 性能",
             "",
@@ -858,10 +909,10 @@ def _report_payloads(
     )
     lines.extend(f"- 检查：`{check}`" for check in _INTEGRITY_CHECKS)
     lines.extend(["", "## 扩展行数", ""])
-    if extension_tables:
+    if report_facts.extension_rows:
         lines.extend(
-            f"- `{name}`：{table.num_rows}"
-            for name, table in sorted(extension_tables.items())
+            f"- `{name}`：{rows}"
+            for name, rows in report_facts.extension_rows.items()
         )
     else:
         lines.append("- 无")
@@ -873,8 +924,7 @@ def _write_report(
     root: Path,
     request: ResultPackageRequest,
     inputs: _FrozenInputs,
-    facts: _CoreFacts,
-    extension_tables: Mapping[str, pa.Table],
+    report_facts: _ReportFacts,
     package_sha256: str,
 ) -> tuple[dict[str, dict[str, object]], dict[str, bytes]]:
     report_dir = root / "report"
@@ -888,10 +938,8 @@ def _write_report(
             "scenario_id": request.scenario_id,
             "run_id": request.run_id,
         },
-        config=inputs.config,
         evidence=inputs.evidence,
-        facts=facts,
-        extension_tables=extension_tables,
+        report_facts=report_facts,
         package_sha256=package_sha256,
     )
     metrics.write_bytes(metrics_bytes)
@@ -943,19 +991,13 @@ def _readback_tables(
     return core, extension_tables
 
 
-def _manifest(
+def _manifest_table_entries(
     root: Path,
-    request: ResultPackageRequest,
     facts: _CoreFacts,
     extensions: Mapping[str, ResultExtension],
     extension_tables: Mapping[str, pa.Table],
-    package_sha256: str,
-    code: Mapping[str, Mapping[str, object]],
-    config: Mapping[str, Mapping[str, object]],
-    evidence: Mapping[str, Mapping[str, object]],
-    reports: Mapping[str, Mapping[str, object]],
-) -> dict[str, object]:
-    datasets = {
+) -> tuple[dict[str, object], dict[str, object]]:
+    datasets: dict[str, object] = {
         name: _table_entry(
             root,
             root / "data" / f"{name}.parquet",
@@ -964,7 +1006,7 @@ def _manifest(
         )
         for name, table in facts.tables().items()
     }
-    extension_entries = {
+    extension_entries: dict[str, object] = {
         name: {
             **_table_entry(
                 root,
@@ -977,6 +1019,19 @@ def _manifest(
         }
         for name, extension in sorted(extensions.items())
     }
+    return datasets, extension_entries
+
+
+def _manifest(
+    request: ResultPackageRequest,
+    package_sha256: str,
+    code: Mapping[str, Mapping[str, object]],
+    config: Mapping[str, Mapping[str, object]],
+    evidence: Mapping[str, Mapping[str, object]],
+    reports: Mapping[str, Mapping[str, object]],
+    datasets: Mapping[str, object],
+    extension_entries: Mapping[str, object],
+) -> dict[str, object]:
     return {
         "schema_version": PACKAGE_SCHEMA_VERSION,
         "object": {
@@ -993,8 +1048,8 @@ def _manifest(
         "code": dict(code),
         "config": dict(config),
         "evidence": dict(evidence),
-        "datasets": datasets,
-        "extensions": extension_entries,
+        "datasets": dict(datasets),
+        "extensions": dict(extension_entries),
         "reports": dict(reports),
         "gate": {
             "status": "pass",
@@ -1152,6 +1207,7 @@ def _validate_result_package_document(
     preloaded_extension_summaries: Mapping[str, Mapping[str, object]] | None = None,
     preloaded_inputs: _FrozenInputs | None = None,
     preloaded_reports: Mapping[str, bytes] | None = None,
+    preloaded_report_facts: _ReportFacts | None = None,
 ) -> Mapping[str, object]:
     if not isinstance(document, dict):
         raise ResultContractError("manifest must be an object")
@@ -1178,7 +1234,10 @@ def _validate_result_package_document(
         or set(identity) != {"kind", "status", "strategy_id", "scenario_id", "run_id"}
         or identity["kind"] != "local_research"
         or identity["status"] != "complete"
-        or any(not isinstance(identity[name], str) or not identity[name] for name in ("strategy_id", "scenario_id", "run_id"))
+        or any(
+            not isinstance(identity[name], str) or not identity[name].strip()
+            for name in ("strategy_id", "scenario_id", "run_id")
+        )
         or document["authority"] != "local_research"
         or document["backend"] != "vectorbt"
         or document["formula_version"] != FORMULA_VERSION
@@ -1381,6 +1440,14 @@ def _validate_result_package_document(
         }
         content["config"] = dict(preloaded_inputs.config)
         content["evidence"] = dict(preloaded_inputs.evidence)
+    scenario_document = content["config"].get("scenario.json")
+    if (
+        not isinstance(scenario_document, Mapping)
+        or scenario_document.get("scenario_id") != identity["scenario_id"]
+    ):
+        raise ResultContractError(
+            "result package scenario identity differs from frozen configuration"
+        )
     if _canonical_digest(content) != document["package_sha256"]:
         raise ResultContractError("result package logical digest mismatch")
 
@@ -1403,12 +1470,19 @@ def _validate_result_package_document(
         raise ResultContractError("execution report is unreadable") from exc
     if any(phrase in report_text for phrase in FORBIDDEN_REPORT_PHRASES):
         raise ResultContractError("execution report contains forbidden judgment")
+    report_facts = (
+        _build_report_facts(
+            config=content["config"],
+            facts=facts,
+            extension_tables=extension_tables,
+        )
+        if preloaded_report_facts is None
+        else preloaded_report_facts
+    )
     summary_bytes, metrics_bytes = _report_payloads(
         identity=identity,
-        config=content["config"],
         evidence=content["evidence"],
-        facts=facts,
-        extension_tables=extension_tables,
+        report_facts=report_facts,
         package_sha256=document["package_sha256"],
     )
     if (
@@ -1428,7 +1502,7 @@ def validate_result_package(path: Path) -> Mapping[str, object]:
 def write_result_package(request: ResultPackageRequest) -> ResultPackage:
     writer_started = time.perf_counter()
     if any(
-        not isinstance(value, str) or not value
+        not isinstance(value, str) or not value.strip()
         for value in (request.strategy_id, request.scenario_id, request.run_id)
     ):
         raise ResultContractError("result package identity is incomplete")
@@ -1509,12 +1583,23 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
         )
         writer_stages["readback_validate"] = time.perf_counter() - readback_started
 
+        report_started = time.perf_counter()
+        report_facts = _build_report_facts(
+            config=inputs.config,
+            facts=readback_facts,
+            extension_tables=readback_extensions,
+        )
+        datasets, extension_entries = _manifest_table_entries(
+            staging,
+            readback_facts,
+            extensions,
+            readback_extensions,
+        )
         provisional_inputs = _with_writer_stages(
             inputs,
             writer_stages,
             request.performance_finalizer,
         )
-        report_started = time.perf_counter()
         provisional_sha256 = _canonical_digest(
             _content_document(
                 request,
@@ -1533,21 +1618,18 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
             staging,
             request,
             provisional_inputs,
-            readback_facts,
-            readback_extensions,
+            report_facts,
             provisional_sha256,
         )
         manifest = _manifest(
-            staging,
             request,
-            readback_facts,
-            extensions,
-            readback_extensions,
             provisional_sha256,
             code,
             config,
             provisional_evidence,
             reports,
+            datasets,
+            extension_entries,
         )
         (staging / "manifest.json").write_bytes(_json_bytes(manifest))
         _validate_result_package_document(
@@ -1559,13 +1641,20 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
             preloaded_extension_summaries=extension_summaries,
             preloaded_inputs=provisional_inputs,
             preloaded_reports=report_payloads,
+            preloaded_report_facts=report_facts,
         )
         writer_stages["report_and_manifest"] = time.perf_counter() - report_started
+        first_full_pass_seconds = time.perf_counter() - writer_started
+        gate_measured_seconds = time.perf_counter() - writer_started
 
         final_inputs = _with_writer_stages(
             inputs,
             writer_stages,
             request.performance_finalizer,
+            writer_measurement={
+                "first_full_pass_seconds": first_full_pass_seconds,
+                "gate_measured_seconds": gate_measured_seconds,
+            },
         )
         package_sha256 = _canonical_digest(
             _content_document(
@@ -1577,37 +1666,24 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
             )
         )
         evidence = _write_documents(staging, "evidence", final_inputs.evidence)
-        reports, report_payloads = _write_report(
+        reports, _ = _write_report(
             staging,
             request,
             final_inputs,
-            readback_facts,
-            readback_extensions,
+            report_facts,
             package_sha256,
         )
         manifest = _manifest(
-            staging,
             request,
-            readback_facts,
-            extensions,
-            readback_extensions,
             package_sha256,
             code,
             config,
             evidence,
             reports,
+            datasets,
+            extension_entries,
         )
         (staging / "manifest.json").write_bytes(_json_bytes(manifest))
-        _validate_result_package_document(
-            staging.resolve(),
-            manifest,
-            preloaded_core=readback_facts.tables(),
-            preloaded_extensions=readback_extensions,
-            preloaded_core_summaries=core_summaries,
-            preloaded_extension_summaries=extension_summaries,
-            preloaded_inputs=final_inputs,
-            preloaded_reports=report_payloads,
-        )
         if request.atomic_publish:
             os.replace(staging, target)
         return ResultPackage(

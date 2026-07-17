@@ -48,13 +48,14 @@ def _sample(
 ) -> tuple[T, PerformanceSample]:
     started = time.perf_counter()
     outcome = operation()
+    outcome_digest = str(digest(outcome))
     seconds = time.perf_counter() - started
     if seconds >= PERFORMANCE_LIMIT_SECONDS:
         raise PerformanceGateError(
             f"{name}_performance_limit",
             f"{name} execution exceeded the 180 second limit",
         )
-    return outcome, PerformanceSample(name, seconds, str(digest(outcome)))
+    return outcome, PerformanceSample(name, seconds, outcome_digest)
 
 
 def run_cold_warm(

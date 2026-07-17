@@ -5,6 +5,7 @@ import importlib.machinery
 import importlib.util
 import os
 import re
+import stat
 import sys
 import threading
 import uuid
@@ -21,6 +22,17 @@ _DOTTED_NAME = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
 _SYMBOL_NAME = re.compile(r"[A-Za-z_]\w*")
 _IMPORT_LOCK = threading.RLock()
 _PRIVATE_NAMESPACE_PREFIX = "_local_quant_strategy_"
+_IGNORED_SOURCE_DIRECTORIES = {
+    ".git",
+    ".local",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "__pycache__",
+    "build",
+    "dist",
+}
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x0400
 
 
 class ConfigurationError(ValueError):
@@ -35,6 +47,12 @@ class LoadedStrategy:
     root: Path
     source_paths: tuple[Path, ...]
     descriptor: StrategyDescriptor
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveredStrategySources:
+    root: Path
+    source_paths: tuple[Path, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +71,32 @@ def _inside(path: Path, root: Path) -> bool:
     return True
 
 
+def _is_reparse_point(path: Path, metadata: os.stat_result | None = None) -> bool:
+    try:
+        details = os.lstat(path) if metadata is None else metadata
+    except OSError:
+        return False
+    return (
+        stat.S_ISLNK(details.st_mode)
+        or bool(
+            getattr(details, "st_file_attributes", 0)
+            & _FILE_ATTRIBUTE_REPARSE_POINT
+        )
+        or bool(getattr(os.path, "isjunction", lambda _path: False)(path))
+    )
+
+
+def _reject_reparse_components(path: Path, root: Path) -> None:
+    current = root
+    for part in path.relative_to(root).parts:
+        current /= part
+        if current.exists() and _is_reparse_point(current):
+            raise ConfigurationError(
+                "unsafe_strategy_root",
+                "strategy_root must not contain a reparse point",
+            )
+
+
 def _resolve_strategy_root(repo_root: Path, value: object) -> Path:
     if not isinstance(value, str) or not value:
         raise ConfigurationError(
@@ -65,7 +109,16 @@ def _resolve_strategy_root(repo_root: Path, value: object) -> Path:
             "unsafe_strategy_root",
             "strategy_root must be a repository-relative path without '..'",
         )
-    resolved = (repo_root / candidate).resolve()
+    unresolved = repo_root / candidate
+    try:
+        unresolved.relative_to(repo_root)
+    except ValueError as exc:
+        raise ConfigurationError(
+            "unsafe_strategy_root",
+            "strategy_root escapes the repository",
+        ) from exc
+    _reject_reparse_components(unresolved, repo_root)
+    resolved = unresolved.resolve()
     if not _inside(resolved, repo_root):
         raise ConfigurationError(
             "unsafe_strategy_root",
@@ -77,6 +130,43 @@ def _resolve_strategy_root(repo_root: Path, value: object) -> Path:
             "strategy_root must be an existing directory",
         )
     return resolved
+
+
+def _plain_python_sources(strategy_root: Path) -> tuple[Path, ...]:
+    sources: list[Path] = []
+    pending = [strategy_root]
+    while pending:
+        directory = pending.pop()
+        try:
+            entries = sorted(os.scandir(directory), key=lambda item: item.name)
+        except OSError as exc:
+            raise ConfigurationError(
+                "invalid_strategy_source_tree",
+                "strategy source tree cannot be inspected",
+            ) from exc
+        for entry in entries:
+            path = Path(entry.path)
+            try:
+                metadata = entry.stat(follow_symlinks=False)
+            except OSError as exc:
+                raise ConfigurationError(
+                    "invalid_strategy_source_tree",
+                    "strategy source entry cannot be inspected",
+                ) from exc
+            if _is_reparse_point(path, metadata):
+                raise ConfigurationError(
+                    "unsafe_strategy_source_tree",
+                    "strategy source tree must not contain a reparse point",
+                )
+            if stat.S_ISDIR(metadata.st_mode):
+                if entry.name not in _IGNORED_SOURCE_DIRECTORIES:
+                    pending.append(path)
+                continue
+            if stat.S_ISREG(metadata.st_mode) and path.suffix.lower() == ".py":
+                sources.append(path.resolve())
+    return tuple(
+        sorted(sources, key=lambda path: path.relative_to(strategy_root).as_posix())
+    )
 
 
 def _import_error(*, package: bool, unsafe: bool) -> ConfigurationError:
@@ -288,6 +378,42 @@ def _source_paths(
             )
         paths.append(resolved)
     return tuple(paths)
+
+
+def discover_strategy_sources(
+    repo_root: Path,
+    config: Mapping[str, object],
+) -> DiscoveredStrategySources:
+    if not isinstance(config, Mapping) or set(config) != _STRATEGY_FIELDS:
+        raise ConfigurationError(
+            "invalid_strategy_fields",
+            "strategy fields must be exactly root, module, and symbol",
+        )
+    root = _resolve_strategy_root(Path(repo_root).resolve(), config["root"])
+    module_name = config["module"]
+    symbol = config["symbol"]
+    if not isinstance(module_name, str) or _DOTTED_NAME.fullmatch(module_name) is None:
+        raise ConfigurationError("invalid_strategy_module", "strategy module is invalid")
+    if not isinstance(symbol, str) or _SYMBOL_NAME.fullmatch(symbol) is None:
+        raise ConfigurationError("invalid_strategy_symbol", "strategy symbol is invalid")
+    sources = _plain_python_sources(root)
+    if not sources:
+        raise ConfigurationError(
+            "missing_strategy_source",
+            "strategy_root must contain a Python source file",
+        )
+    namespace = f"{_PRIVATE_NAMESPACE_PREFIX}{uuid.uuid4().hex}"
+    targets = _resolve_import_targets(module_name, root, namespace)
+    source_identities = {os.path.normcase(str(path)) for path in sources}
+    if any(
+        os.path.normcase(str(target.origin)) not in source_identities
+        for target in targets
+    ):
+        raise ConfigurationError(
+            "unsafe_strategy_module_file",
+            "strategy module file must be an ordinary source inside strategy_root",
+        )
+    return DiscoveredStrategySources(root=root, source_paths=sources)
 
 
 def load_strategy(

@@ -975,7 +975,11 @@ def test_v2_config_rejects_each_legacy_run_field(
     assert caught.value.code == "legacy_run_field"
 
 
-@pytest.mark.parametrize("scenario_id", (None, ""), ids=("missing", "empty"))
+@pytest.mark.parametrize(
+    "scenario_id",
+    (None, "", "   ", 7),
+    ids=("missing", "empty", "whitespace", "non-string"),
+)
 def test_v2_config_rejects_missing_scenario_id_before_strategy_execution(
     scenario_id: object,
     tmp_path: Path,
@@ -1018,6 +1022,39 @@ def test_parent_generates_one_fixed_private_execute_command(tmp_path: Path) -> N
     )
 
 
+def test_parent_request_binds_project_run_attempt_and_derived_directories(
+    tmp_path: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import runner
+
+    fake_root, config_path, _ = _build_repo(tmp_path, repo_root)
+
+    def inspect_request(command: list[str], **_kwargs: object):
+        request_path = Path(command[command.index("--frozen-inputs") + 1])
+        request = json.loads(request_path.read_text(encoding="utf-8"))
+        project_id = request["project_id"]
+        run_id = request["run_id"]
+        attempt_id = request["attempt_id"]
+        project_root = fake_root / ".local/quant-research" / project_id
+        assert request_path.parent == project_root / f".{run_id}.{attempt_id}.inputs"
+        assert Path(request["staging"]) == project_root / f".{run_id}.{attempt_id}.tmp"
+        assert Path(request["output_root"]) == fake_root / ".local/quant-research"
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            stdout='{"reasons":["stop_after_inspection"],"status":"failed"}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", inspect_request)
+
+    result = runner.run_project(config_path, repo_root=fake_root)
+
+    assert result.status == "failed"
+
+
 def test_fixed_output_root_cannot_escape_repository_through_directory_link(
     tmp_path: Path,
 ) -> None:
@@ -1037,6 +1074,132 @@ def test_fixed_output_root_cannot_escape_repository_through_directory_link(
 
     with pytest.raises(runner.ConfigurationError) as caught:
         runner._resolve_output_project_root(repository, "minimal-fixture")
+
+    assert caught.value.code == "unsafe_output_root"
+
+
+def _make_directory_link(link: Path, target: Path, kind: str) -> None:
+    if kind == "symlink":
+        link.symlink_to(target, target_is_directory=True)
+        return
+    completed = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+        text=True,
+        shell=False,
+        check=False,
+    )
+    if completed.returncode != 0:
+        pytest.skip(f"junctions are unavailable: {completed.stderr or completed.stdout}")
+
+
+@pytest.mark.parametrize("field", ("repository", "market_data", "runtime_cache"))
+@pytest.mark.parametrize("kind", ("symlink", "junction"))
+def test_private_bootstrap_rejects_linked_frozen_roots_before_import(
+    repo_root: Path,
+    tmp_path: Path,
+    field: str,
+    kind: str,
+) -> None:
+    from scripts.research.local_quant_research import cli
+
+    project_id = "bootstrap-link-test"
+    run_id = "a" * 64
+    attempt_id = uuid.uuid4().hex
+    project_root = repo_root / ".local/quant-research" / project_id
+    execution_root = project_root / f".{run_id}.{attempt_id}.inputs"
+    staging = project_root / f".{run_id}.{attempt_id}.tmp"
+    targets = {
+        "repository": execution_root / "repository",
+        "market_data": execution_root / "market-data",
+        "runtime_cache": execution_root / "runtime-cache",
+    }
+    outside = tmp_path / f"outside-{field}-{kind}"
+    outside.mkdir()
+    execution_root.mkdir(parents=True)
+    for name, path in targets.items():
+        if name == field:
+            try:
+                _make_directory_link(path, outside, kind)
+            except OSError as exc:
+                pytest.skip(f"directory links are unavailable: {exc}")
+        else:
+            path.mkdir()
+    _write_json(
+        execution_root / "request.json",
+        {
+            "schema_version": 2,
+            "project_id": project_id,
+            "run_id": run_id,
+            "attempt_id": attempt_id,
+            "output_root": str((repo_root / ".local/quant-research").resolve()),
+            "repository": str(targets["repository"]),
+            "market_data": str(targets["market_data"]),
+            "live_repository": str(repo_root.resolve()),
+            "runtime_cache": str(targets["runtime_cache"]),
+            "staging": str(staging),
+        },
+    )
+
+    try:
+        with pytest.raises(cli._BootstrapError) as caught:
+            cli._bootstrap_request(execution_root / "request.json", staging)
+        assert caught.value.code == "unsafe_frozen_inputs"
+    finally:
+        linked = targets[field]
+        if linked.is_symlink():
+            linked.unlink()
+        elif bool(getattr(os.path, "isjunction", lambda _value: False)(linked)):
+            linked.rmdir()
+        shutil.rmtree(project_root, ignore_errors=True)
+        for parent in (project_root.parent, project_root.parent.parent):
+            try:
+                parent.rmdir()
+            except OSError:
+                pass
+
+
+def test_early_attempt_refuses_linked_attempts_directory(
+    tmp_path: Path,
+) -> None:
+    from scripts.research.local_quant_research import runner
+
+    repo = tmp_path / "repo"
+    attempts = repo / ".local/quant-research/_invalid/.attempts"
+    outside = tmp_path / "outside-attempts"
+    attempts.parent.mkdir(parents=True)
+    outside.mkdir()
+    try:
+        attempts.symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory links are unavailable: {exc}")
+
+    result = runner.run_project(repo / "missing.json", repo_root=repo)
+
+    assert result.status == "evidence_insufficient"
+    assert result.attempt_id is None
+    assert list(outside.iterdir()) == []
+
+
+def test_output_run_directory_rejects_existing_directory_link(
+    tmp_path: Path,
+) -> None:
+    from scripts.research.local_quant_research import runner
+
+    repo = tmp_path / "repo"
+    project_root = repo / ".local/quant-research/minimal-fixture"
+    run_id = "b" * 64
+    linked_run = project_root / run_id
+    outside = tmp_path / "outside-run"
+    project_root.mkdir(parents=True)
+    outside.mkdir()
+    try:
+        linked_run.symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory links are unavailable: {exc}")
+
+    with pytest.raises(runner.ConfigurationError) as caught:
+        runner._resolve_output_run_dir(repo, "minimal-fixture", run_id)
 
     assert caught.value.code == "unsafe_output_root"
 
@@ -1095,6 +1258,227 @@ def test_private_execute_rejects_staging_not_bound_to_frozen_request(
             pass
 
 
+def _build_private_bootstrap_layout(
+    repo_root: Path,
+    project_id: str,
+) -> tuple[Path, Path, Path, Path]:
+    run_id = "d" * 64
+    attempt_id = uuid.uuid4().hex
+    project_root = repo_root / ".local/quant-research" / project_id
+    execution_root = project_root / f".{run_id}.{attempt_id}.inputs"
+    frozen = execution_root / "repository"
+    staging = project_root / f".{run_id}.{attempt_id}.tmp"
+    (frozen / "scripts/research/local_quant_research").mkdir(parents=True)
+    (execution_root / "market-data").mkdir()
+    (execution_root / "runtime-cache").mkdir()
+    _write_json(
+        execution_root / "request.json",
+        {
+            "schema_version": 2,
+            "project_id": project_id,
+            "run_id": run_id,
+            "attempt_id": attempt_id,
+            "output_root": str((repo_root / ".local/quant-research").resolve()),
+            "repository": str(frozen.resolve()),
+            "market_data": str((execution_root / "market-data").resolve()),
+            "live_repository": str(repo_root.resolve()),
+            "runtime_cache": str((execution_root / "runtime-cache").resolve()),
+            "staging": str(staging.resolve()),
+        },
+    )
+    return project_root, execution_root, frozen, staging
+
+
+def test_private_execute_maps_guard_import_failure_without_traceback(
+    repo_root: Path,
+) -> None:
+    project_root, execution_root, frozen, staging = _build_private_bootstrap_layout(
+        repo_root,
+        "private-guard-error-test",
+    )
+    guard = frozen / "scripts/research/local_quant_research/adapter_guard.py"
+    guard.write_text("raise RuntimeError('sensitive guard detail')\n", encoding="utf-8")
+    try:
+        completed = subprocess.run(
+            [
+                str(repo_root / ".venv/Scripts/python.exe"),
+                str(repo_root / "scripts/research/local_quant_research/cli.py"),
+                "_execute",
+                "--frozen-inputs",
+                str(execution_root / "request.json"),
+                "--staging",
+                str(staging),
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            shell=False,
+            check=False,
+        )
+
+        assert completed.returncode == 1
+        assert json.loads(completed.stdout) == {
+            "reasons": ["frozen_bootstrap_failed"],
+            "status": "failed",
+        }
+        assert completed.stderr == ""
+        assert "Traceback" not in completed.stdout
+        assert "sensitive guard detail" not in completed.stdout
+    finally:
+        shutil.rmtree(project_root, ignore_errors=True)
+
+
+def test_private_execute_rejects_linked_guard_before_top_level_execution(
+    repo_root: Path,
+    tmp_path: Path,
+) -> None:
+    project_root, execution_root, frozen, staging = _build_private_bootstrap_layout(
+        repo_root,
+        "private-linked-guard-test",
+    )
+    marker = tmp_path / "linked-guard-executed"
+    external = tmp_path / "external-guard.py"
+    external.write_text(
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('executed', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    guard = frozen / "scripts/research/local_quant_research/adapter_guard.py"
+    try:
+        guard.symlink_to(external)
+    except OSError as exc:
+        shutil.rmtree(project_root, ignore_errors=True)
+        pytest.skip(f"file links are unavailable: {exc}")
+    try:
+        completed = subprocess.run(
+            [
+                str(repo_root / ".venv/Scripts/python.exe"),
+                str(repo_root / "scripts/research/local_quant_research/cli.py"),
+                "_execute",
+                "--frozen-inputs",
+                str(execution_root / "request.json"),
+                "--staging",
+                str(staging),
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            shell=False,
+            check=False,
+        )
+
+        assert completed.returncode == 2
+        assert json.loads(completed.stdout) == {
+            "reasons": ["unsafe_frozen_inputs"],
+            "status": "evidence_insufficient",
+        }
+        assert completed.stderr == ""
+        assert not marker.exists()
+    finally:
+        guard.unlink(missing_ok=True)
+        shutil.rmtree(project_root, ignore_errors=True)
+
+
+@pytest.mark.parametrize("action", ("write", "process"))
+def test_frozen_child_guards_strategy_top_level_before_execution(
+    repo_root: Path,
+    tmp_path: Path,
+    action: str,
+) -> None:
+    project_root, execution_root, frozen, staging = _build_private_bootstrap_layout(
+        repo_root,
+        f"private-strategy-{action}-test",
+    )
+    for relative in (
+        Path("scripts/__init__.py"),
+        Path("scripts/research/__init__.py"),
+    ):
+        destination = frozen / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(repo_root / relative, destination)
+    for relative in (
+        Path("scripts/research/local_quant_research"),
+        Path("scripts/research/market_data"),
+    ):
+        shutil.copytree(repo_root / relative, frozen / relative, dirs_exist_ok=True)
+    strategy_root = frozen / "projects/malicious"
+    strategy_root.mkdir(parents=True)
+    marker = tmp_path / f"strategy-{action}-escaped"
+    entered = execution_root / "runtime-cache" / f"entered-{action}.txt"
+    caught = execution_root / "runtime-cache" / f"caught-{action}.txt"
+    side_effect = (
+        f"Path({str(marker)!r}).write_text('escaped', encoding='utf-8')"
+        if action == "write"
+        else "subprocess.run([sys.executable, '-c', 'pass'], check=True)"
+    )
+    (strategy_root / "strategy.py").write_text(
+        "from pathlib import Path\n"
+        "import subprocess\n"
+        "import sys\n"
+        f"Path({str(entered)!r}).write_text('entered', encoding='utf-8')\n"
+        "try:\n"
+        f"    {side_effect}\n"
+        "except BaseException as exc:\n"
+        f"    Path({str(caught)!r}).write_text(type(exc).__name__, encoding='utf-8')\n"
+        "    raise\n"
+        "MODULE = object()\n",
+        encoding="utf-8",
+    )
+    _write_json(strategy_root / "scenario.json", {"scenario_id": "baseline"})
+    _write_json(
+        strategy_root / "run.json",
+        {
+            "schema_version": 2,
+            "project_id": f"private-strategy-{action}-test",
+            "strategy": {
+                "root": "projects/malicious",
+                "module": "strategy",
+                "symbol": "MODULE",
+            },
+            "snapshot_id": "e" * 64,
+            "snapshot_requirements": {},
+            "scenario_config": "projects/malicious/scenario.json",
+            "declared_inputs": [],
+        },
+    )
+    request_path = execution_root / "request.json"
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    request["config"] = "projects/malicious/run.json"
+    _write_json(request_path, request)
+    environment = dict(os.environ)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    try:
+        completed = subprocess.run(
+            [
+                str(repo_root / ".venv/Scripts/python.exe"),
+                str(repo_root / "scripts/research/local_quant_research/cli.py"),
+                "_execute",
+                "--frozen-inputs",
+                str(request_path),
+                "--staging",
+                str(staging),
+            ],
+            cwd=repo_root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            shell=False,
+            check=False,
+        )
+
+        assert completed.returncode == 1, completed.stderr + completed.stdout
+        assert json.loads(completed.stdout) == {
+            "reasons": ["access_guard_violation"],
+            "status": "failed",
+        }
+        assert completed.stderr == ""
+        assert entered.read_text(encoding="utf-8") == "entered"
+        assert caught.read_text(encoding="utf-8") == "PermissionError"
+        assert not marker.exists()
+    finally:
+        shutil.rmtree(project_root, ignore_errors=True)
+
+
 def test_freezing_copies_every_captured_shared_runtime_source(
     tmp_path: Path,
     repo_root: Path,
@@ -1134,6 +1518,48 @@ def test_freezing_copies_every_captured_shared_runtime_source(
     }.issubset(observed)
 
 
+def test_parent_runner_never_executes_strategy_top_level_before_frozen_child(
+    tmp_path: Path,
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import runner
+
+    fake_root, config_path, _ = _build_repo(tmp_path, repo_root)
+    strategy = fake_root / "projects/generic-research/strategy.py"
+    marker = fake_root.parent / "parent-strategy-executed"
+    source = strategy.read_text(encoding="utf-8")
+    strategy.write_text(
+        source.replace(
+            "from __future__ import annotations\n",
+            "from __future__ import annotations\n"
+            "from pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text('executed', encoding='utf-8')\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    process_calls = 0
+
+    def stop_at_child(command: list[str], **_kwargs: object):
+        nonlocal process_calls
+        process_calls += 1
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            stdout='{"reasons":["stop_at_child"],"status":"failed"}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", stop_at_child)
+
+    result = runner.run_project(config_path, repo_root=fake_root)
+
+    assert result.status == "failed"
+    assert process_calls == 1
+    assert not marker.exists()
+
+
 def test_freezing_uses_first_captured_scenario_digest_before_process(
     tmp_path: Path,
     repo_root: Path,
@@ -1171,11 +1597,12 @@ def test_freezing_uses_first_captured_scenario_digest_before_process(
 def test_private_execute_bootstrap_loads_runner_from_frozen_repository(
     repo_root: Path,
 ) -> None:
-    token = uuid.uuid4().hex
+    run_id = "c" * 64
+    attempt_id = uuid.uuid4().hex
     project_root = repo_root / ".local/quant-research/private-freeze-test"
-    execution_root = project_root / f".{token}.inputs"
+    execution_root = project_root / f".{run_id}.{attempt_id}.inputs"
     frozen = execution_root / "repository"
-    staging = project_root / f".{token}.tmp"
+    staging = project_root / f".{run_id}.{attempt_id}.tmp"
     modules = {
         "scripts/__init__.py": "",
         "scripts/research/__init__.py": "",
@@ -1230,9 +1657,13 @@ def test_private_execute_bootstrap_loads_runner_from_frozen_repository(
         (execution_root / "runtime-cache").mkdir()
         _write_json(
             execution_root / "request.json",
-            {
-                "schema_version": 2,
-                "repository": str(frozen.resolve()),
+                {
+                    "schema_version": 2,
+                    "project_id": "private-freeze-test",
+                    "run_id": run_id,
+                    "attempt_id": attempt_id,
+                    "output_root": str((repo_root / ".local/quant-research").resolve()),
+                    "repository": str(frozen.resolve()),
                 "market_data": str((execution_root / "market-data").resolve()),
                 "live_repository": str(repo_root.resolve()),
                 "runtime_cache": str((execution_root / "runtime-cache").resolve()),
@@ -1323,6 +1754,7 @@ def test_completed_package_reuse_binds_all_frozen_identity_documents(
             "kind": "local_research",
             "status": "complete",
             "strategy_id": "minimal-fixture",
+            "scenario_id": "baseline",
             "run_id": run_id,
         }
     }
@@ -1340,6 +1772,10 @@ def test_completed_package_reuse_binds_all_frozen_identity_documents(
     }
 
     runner._package_identity(package, expected=expected)
+    manifest["object"]["scenario_id"] = "other"
+    with pytest.raises(EvidenceError, match="identity"):
+        runner._package_identity(package, expected=expected)
+    manifest["object"]["scenario_id"] = "baseline"
     _write_json(
         package / "config/project-run.json",
         {"schema_version": 2, "project_id": "other"},
@@ -1416,6 +1852,28 @@ def test_daily_performance_rejects_full_execution_digest_mismatch() -> None:
 
     assert caught.value.code == "execution_digest_mismatch"
     assert calls == 2
+
+
+def test_daily_performance_counts_digest_time_in_each_180_second_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    performance = _performance_module()
+    clock = 0.0
+
+    def now() -> float:
+        return clock
+
+    def slow_digest(value: str) -> str:
+        nonlocal clock
+        clock = 180.0
+        return value
+
+    monkeypatch.setattr(performance.time, "perf_counter", now)
+
+    with pytest.raises(performance.PerformanceGateError) as caught:
+        performance.run_cold_warm(lambda: "same", digest=slow_digest)
+
+    assert caught.value.code == "cold_performance_limit"
 
 
 @pytest.mark.parametrize(

@@ -436,6 +436,70 @@ def test_writer_reads_each_materialized_parquet_table_only_once(
     )
 
 
+def test_writer_finalize_never_repeats_full_table_work_or_full_validator(
+    package_request: ResultPackageRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import result_package
+
+    full_pass_finished = False
+    validation_calls = 0
+    real_validate = result_package._validate_result_package_document
+    real_time_range = result_package._time_range
+    real_column_sum = result_package._column_sum
+    real_common = result_package._validate_common_facts
+
+    def validating(*args: object, **kwargs: object):
+        nonlocal full_pass_finished, validation_calls
+        validation_calls += 1
+        value = real_validate(*args, **kwargs)
+        full_pass_finished = True
+        return value
+
+    def no_late_time_range(*args: object, **kwargs: object):
+        if full_pass_finished:
+            pytest.fail("finalize repeated an O(N) table time-range scan")
+        return real_time_range(*args, **kwargs)
+
+    def no_late_column_sum(*args: object, **kwargs: object):
+        if full_pass_finished:
+            pytest.fail("finalize repeated an O(N) report aggregation")
+        return real_column_sum(*args, **kwargs)
+
+    def no_late_common(*args: object, **kwargs: object):
+        if full_pass_finished:
+            pytest.fail("finalize repeated common facts validation")
+        return real_common(*args, **kwargs)
+
+    monkeypatch.setattr(result_package, "_validate_result_package_document", validating)
+    monkeypatch.setattr(result_package, "_time_range", no_late_time_range)
+    monkeypatch.setattr(result_package, "_column_sum", no_late_column_sum)
+    monkeypatch.setattr(result_package, "_validate_common_facts", no_late_common)
+
+    write_result_package(package_request)
+
+    assert validation_calls == 1
+
+
+def test_writer_persists_first_full_pass_and_gate_measurement_scope(
+    package_request: ResultPackageRequest,
+) -> None:
+    package = write_result_package(package_request)
+    performance = json.loads(
+        (package.path / "evidence/performance.json").read_text(encoding="utf-8")
+    )
+
+    writer = performance["writer"]
+    assert writer["first_full_pass_seconds"] > 0
+    assert writer["gate_measured_seconds"] >= writer["first_full_pass_seconds"]
+    assert package.writer_seconds >= writer["gate_measured_seconds"]
+    assert performance["measurement_scope"] == {
+        "actual_gate_basis": "returned_writer_seconds_through_writer_return",
+        "first_full_pass": "writer_start_through_first_complete_report_manifest_validation",
+        "observer_overhead": "final_fixed_metadata_rewrite_excluded_from_persisted_gate_measurement_but_included_in_actual_gate",
+    }
+
+
 def test_validator_summarizes_each_core_table_once(
     package_request: ResultPackageRequest,
     monkeypatch: pytest.MonkeyPatch,
@@ -608,6 +672,21 @@ def test_writer_reuses_equal_package_and_rejects_digest_conflict(
     assert _tree_digest(first.path) == before
 
 
+def test_validator_rejects_manifest_scenario_different_from_frozen_config(
+    package_request: ResultPackageRequest,
+) -> None:
+    mismatched = replace(
+        package_request,
+        scenario_id="different-scenario",
+        output_dir=package_request.output_dir.parent / "scenario-mismatch",
+    )
+
+    with pytest.raises(ResultContractError, match="scenario identity"):
+        write_result_package(mismatched)
+
+    assert not mismatched.output_dir.exists()
+
+
 def test_writer_refuses_reuse_when_report_and_manifest_reference_are_tampered(
     package_request: ResultPackageRequest,
 ) -> None:
@@ -717,6 +796,25 @@ def test_writer_rejects_unsafe_run_id_before_reading_or_writing(
     assert counting_ledger.calls == {"orders": 0, "assets": 0, "cash": 0, "value": 0}
     assert marker.read_text(encoding="utf-8") == "unchanged"
     assert not output_dir.parent.exists()
+
+
+def test_writer_rejects_blank_scenario_identity_before_reading_or_writing(
+    package_request: ResultPackageRequest,
+    counting_ledger: CountingLedger,
+) -> None:
+    config = dict(package_request.config_documents)
+    config["scenario.json"] = {"scenario_id": "   "}
+
+    with pytest.raises(ResultContractError, match="identity"):
+        write_result_package(
+            replace(
+                package_request,
+                scenario_id="   ",
+                config_documents=config,
+            )
+        )
+
+    assert counting_ledger.calls == {"orders": 0, "assets": 0, "cash": 0, "value": 0}
 
 
 @pytest.mark.parametrize(

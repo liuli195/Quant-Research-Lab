@@ -4,7 +4,11 @@ import argparse
 import importlib
 import importlib.util
 import json
+import os
+import re
+import stat
 import sys
+import tempfile
 from pathlib import Path
 from typing import Mapping
 
@@ -19,6 +23,12 @@ class _BootstrapError(ValueError):
         self.code = code
 
 
+_PROJECT_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+_RUN_ID = re.compile(r"[0-9a-f]{64}")
+_ATTEMPT_ID = re.compile(r"[0-9a-f]{32}")
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x0400
+
+
 def _inside(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root)
@@ -27,8 +37,63 @@ def _inside(path: Path, root: Path) -> bool:
     return True
 
 
+def _absolute_path(value: object) -> Path:
+    if not isinstance(value, (str, os.PathLike)):
+        raise _BootstrapError("unsafe_frozen_inputs")
+    path = Path(value)
+    if not path.is_absolute():
+        raise _BootstrapError("unsafe_frozen_inputs")
+    return Path(os.path.abspath(path))
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    return os.path.normcase(str(left)) == os.path.normcase(str(right))
+
+
+def _is_reparse(path: Path, details: os.stat_result) -> bool:
+    return (
+        stat.S_ISLNK(details.st_mode)
+        or bool(
+            getattr(details, "st_file_attributes", 0)
+            & _FILE_ATTRIBUTE_REPARSE_POINT
+        )
+        or bool(getattr(os.path, "isjunction", lambda _path: False)(path))
+    )
+
+
+def _require_plain_path(
+    path: Path,
+    *,
+    kind: str,
+    allow_missing: bool = False,
+) -> None:
+    current = Path(path.anchor)
+    parts = path.parts[1:]
+    for index, part in enumerate(parts):
+        current /= part
+        final = index == len(parts) - 1
+        try:
+            details = os.lstat(current)
+        except FileNotFoundError:
+            if allow_missing and final:
+                return
+            raise _BootstrapError("unsafe_frozen_inputs") from None
+        except OSError as exc:
+            raise _BootstrapError("unsafe_frozen_inputs") from exc
+        if _is_reparse(current, details):
+            raise _BootstrapError("unsafe_frozen_inputs")
+        if not final and not stat.S_ISDIR(details.st_mode):
+            raise _BootstrapError("unsafe_frozen_inputs")
+        if final and (
+            (kind == "directory" and not stat.S_ISDIR(details.st_mode))
+            or (kind == "file" and not stat.S_ISREG(details.st_mode))
+        ):
+            raise _BootstrapError("unsafe_frozen_inputs")
+
+
 def _bootstrap_request(frozen_inputs: Path, staging: Path) -> Mapping[str, object]:
-    request_path = Path(frozen_inputs).resolve()
+    request_path = _absolute_path(frozen_inputs)
+    _require_plain_path(request_path, kind="file")
     execution_root = request_path.parent
     try:
         request = json.loads(request_path.read_text(encoding="utf-8"))
@@ -36,23 +101,52 @@ def _bootstrap_request(frozen_inputs: Path, staging: Path) -> Mapping[str, objec
         raise _BootstrapError("invalid_frozen_inputs") from exc
     if not isinstance(request, Mapping) or request.get("schema_version") != 2:
         raise _BootstrapError("invalid_frozen_inputs")
-    expected_staging = Path(str(request.get("staging", ""))).resolve()
-    if Path(staging).resolve() != expected_staging:
+    expected_staging = _absolute_path(request.get("staging", ""))
+    supplied_staging = _absolute_path(staging)
+    if not _same_path(supplied_staging, expected_staging):
         raise _BootstrapError("staging_mismatch")
-    output_root = (REPO_ROOT / ".local/quant-research").resolve()
-    repository = Path(str(request.get("repository", ""))).resolve()
-    market_data = Path(str(request.get("market_data", ""))).resolve()
-    runtime_cache = Path(str(request.get("runtime_cache", ""))).resolve()
-    live_repository = Path(str(request.get("live_repository", ""))).resolve()
+    project_id = request.get("project_id")
+    run_id = request.get("run_id")
+    attempt_id = request.get("attempt_id")
     if (
-        live_repository != REPO_ROOT
-        or not _inside(execution_root, output_root)
-        or not _inside(expected_staging, output_root)
-        or repository != (execution_root / "repository").resolve()
-        or market_data != (execution_root / "market-data").resolve()
-        or runtime_cache != (execution_root / "runtime-cache").resolve()
+        not isinstance(project_id, str)
+        or _PROJECT_ID.fullmatch(project_id) is None
+        or not isinstance(run_id, str)
+        or _RUN_ID.fullmatch(run_id) is None
+        or not isinstance(attempt_id, str)
+        or _ATTEMPT_ID.fullmatch(attempt_id) is None
     ):
         raise _BootstrapError("unsafe_frozen_inputs")
+    output_root = Path(os.path.abspath(REPO_ROOT / ".local/quant-research"))
+    project_root = output_root / project_id
+    expected_execution = project_root / f".{run_id}.{attempt_id}.inputs"
+    expected_staging_name = project_root / f".{run_id}.{attempt_id}.tmp"
+    repository = _absolute_path(request.get("repository", ""))
+    market_data = _absolute_path(request.get("market_data", ""))
+    runtime_cache = _absolute_path(request.get("runtime_cache", ""))
+    live_repository = _absolute_path(request.get("live_repository", ""))
+    declared_output = _absolute_path(request.get("output_root", ""))
+    if (
+        not _same_path(live_repository, REPO_ROOT)
+        or not _same_path(declared_output, output_root)
+        or not _same_path(execution_root, expected_execution)
+        or request_path.name != "request.json"
+        or not _same_path(expected_staging, expected_staging_name)
+        or not _same_path(repository, execution_root / "repository")
+        or not _same_path(market_data, execution_root / "market-data")
+        or not _same_path(runtime_cache, execution_root / "runtime-cache")
+    ):
+        raise _BootstrapError("unsafe_frozen_inputs")
+    for path in (
+        output_root,
+        project_root,
+        execution_root,
+        repository,
+        market_data,
+        runtime_cache,
+    ):
+        _require_plain_path(path, kind="directory")
+    _require_plain_path(expected_staging, kind="directory", allow_missing=True)
     return request
 
 
@@ -91,6 +185,55 @@ def _private_execute(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     try:
         bootstrap = _bootstrap_request(args.frozen_inputs, args.staging)
+        frozen_repository = _absolute_path(bootstrap["repository"])
+        runtime_cache = _absolute_path(bootstrap["runtime_cache"])
+        numba_cache = runtime_cache / "numba"
+        matplotlib_cache = runtime_cache / "matplotlib"
+        numba_cache.mkdir()
+        matplotlib_cache.mkdir()
+        for name in ("TMP", "TEMP", "TMPDIR"):
+            os.environ[name] = str(runtime_cache)
+        os.environ["NUMBA_CACHE_DIR"] = str(numba_cache)
+        os.environ["MPLCONFIGDIR"] = str(matplotlib_cache)
+        os.environ["XDG_CACHE_HOME"] = str(runtime_cache)
+        tempfile.tempdir = str(runtime_cache)
+        for name in tuple(sys.modules):
+            if name == "scripts" or name.startswith("scripts."):
+                del sys.modules[name]
+        guard_path = (
+            frozen_repository
+            / "scripts/research/local_quant_research/adapter_guard.py"
+        )
+        _require_plain_path(guard_path, kind="file")
+        guard_spec = importlib.util.spec_from_file_location(
+            "_frozen_local_quant_research_adapter_guard",
+            guard_path,
+        )
+        if guard_spec is None or guard_spec.loader is None:
+            raise _BootstrapError("invalid_frozen_inputs")
+        guard = importlib.util.module_from_spec(guard_spec)
+        guard_spec.loader.exec_module(guard)
+        sys.modules["scripts.research.local_quant_research.adapter_guard"] = guard
+        guard.install_access_guard(
+            args.staging,
+            execution_root=_absolute_path(args.frozen_inputs).parent,
+            repository_root=REPO_ROOT,
+            venv_root=REPO_ROOT / ".venv",
+            runtime_cache_root=runtime_cache,
+        )
+        sys.path.insert(0, str(frozen_repository))
+        importlib.invalidate_caches()
+        from scripts.research.local_quant_research.contracts import StrategyEvidenceError
+        from scripts.research.local_quant_research.performance import PerformanceGateError
+        from scripts.research.local_quant_research.result_package import ResultContractError
+        from scripts.research.local_quant_research.runner import (
+            ConfigurationError,
+            execute_frozen_inputs,
+        )
+        from scripts.research.local_quant_research.strategy_loader import (
+            ConfigurationError as StrategyConfigurationError,
+        )
+        from scripts.research.market_data.storage import MarketDataError
     except _BootstrapError as exc:
         print(
             json.dumps(
@@ -100,50 +243,15 @@ def _private_execute(argv: list[str]) -> int:
             )
         )
         return 2
-    frozen_repository = Path(str(bootstrap["repository"])).resolve()
-    for name in tuple(sys.modules):
-        if name == "scripts" or name.startswith("scripts."):
-            del sys.modules[name]
-    guard_path = (
-        frozen_repository
-        / "scripts/research/local_quant_research/adapter_guard.py"
-    )
-    guard_spec = importlib.util.spec_from_file_location(
-        "_frozen_local_quant_research_adapter_guard",
-        guard_path,
-    )
-    if guard_spec is None or guard_spec.loader is None:
+    except Exception:
         print(
             json.dumps(
-                {"status": "evidence_insufficient", "reasons": ["invalid_frozen_inputs"]},
+                {"status": "failed", "reasons": ["frozen_bootstrap_failed"]},
                 ensure_ascii=False,
                 sort_keys=True,
             )
         )
-        return 2
-    guard = importlib.util.module_from_spec(guard_spec)
-    guard_spec.loader.exec_module(guard)
-    sys.modules["scripts.research.local_quant_research.adapter_guard"] = guard
-    guard.install_access_guard(
-        args.staging,
-        execution_root=args.frozen_inputs.resolve().parent,
-        repository_root=REPO_ROOT,
-        venv_root=REPO_ROOT / ".venv",
-        runtime_cache_root=Path(str(bootstrap["runtime_cache"])),
-    )
-    sys.path.insert(0, str(frozen_repository))
-    importlib.invalidate_caches()
-    from scripts.research.local_quant_research.contracts import StrategyEvidenceError
-    from scripts.research.local_quant_research.performance import PerformanceGateError
-    from scripts.research.local_quant_research.result_package import ResultContractError
-    from scripts.research.local_quant_research.runner import (
-        ConfigurationError,
-        execute_frozen_inputs,
-    )
-    from scripts.research.local_quant_research.strategy_loader import (
-        ConfigurationError as StrategyConfigurationError,
-    )
-    from scripts.research.market_data.storage import MarketDataError
+        return 1
 
     try:
         document = execute_frozen_inputs(args.frozen_inputs, args.staging)

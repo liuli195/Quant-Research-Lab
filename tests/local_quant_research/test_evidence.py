@@ -20,6 +20,7 @@ from scripts.research.local_quant_research.evidence import (
     compute_run_id,
     execution_digest,
 )
+from scripts.research.local_quant_research import evidence
 
 
 def test_run_id_is_stable_and_binds_all_three_input_digests() -> None:
@@ -138,19 +139,18 @@ def test_execution_digest_scans_shared_run_and_arrays_once(
 
 def test_execution_digest_streams_arrow_extension_without_to_pylist() -> None:
     class StreamingTable:
-        schema = pa.schema([pa.field("value", pa.float64(), nullable=True)])
+        def __init__(self) -> None:
+            self._table = pa.table(
+                {"value": pa.array([1.0, None, float("nan")])}
+            )
+            self.schema = self._table.schema
+            self.num_rows = self._table.num_rows
 
         def to_pylist(self) -> list[object]:
             pytest.fail("extension digest must not Python-materialize all rows")
 
-        def to_batches(self, *, max_chunksize: int) -> list[pa.RecordBatch]:
-            assert max_chunksize > 0
-            return [
-                pa.record_batch(
-                    [pa.array([1.0, None, float("nan")])],
-                    schema=self.schema,
-                )
-            ]
+        def slice(self, offset: int, length: int) -> pa.Table:
+            return self._table.slice(offset, length)
 
     empty = np.empty(0, dtype=[("value", "i8")])
 
@@ -167,3 +167,87 @@ def test_execution_digest_streams_arrow_extension_without_to_pylist() -> None:
     )
 
     assert len(execution_digest(ExecutionBundle(run, run, ("primary",)), (extension,))) == 64
+
+
+def test_arrow_digest_distinguishes_equal_length_slices_with_different_values() -> None:
+    base = pa.table({"value": pa.array([1, 2, 3], type=pa.int64())})
+
+    first = evidence._arrow_table_digest(base.slice(0, 2))
+    second = evidence._arrow_table_digest(base.slice(1, 2))
+
+    assert first["sha256"] != second["sha256"]
+
+
+def test_arrow_digest_binds_dictionary_values() -> None:
+    indices = pa.array([0, 1, 0], type=pa.int8())
+    first = pa.table(
+        {
+            "value": pa.DictionaryArray.from_arrays(
+                indices,
+                pa.array(["a", "b"]),
+            )
+        }
+    )
+    second = pa.table(
+        {
+            "value": pa.DictionaryArray.from_arrays(
+                indices,
+                pa.array(["x", "y"]),
+            )
+        }
+    )
+
+    assert evidence._arrow_table_digest(first)["sha256"] != evidence._arrow_table_digest(second)["sha256"]
+
+
+def test_arrow_digest_is_chunk_independent_for_nested_null_and_nan_values() -> None:
+    nested_type = pa.struct(
+        [
+            pa.field("items", pa.list_(pa.float64())),
+            pa.field("label", pa.string()),
+        ]
+    )
+    values = [
+        {"items": [1.0, None, float("nan")], "label": "a"},
+        None,
+        {"items": [], "label": "b"},
+    ]
+    single = pa.table({"nested": pa.array(values, type=nested_type)})
+    chunked = pa.Table.from_arrays(
+        [
+            pa.chunked_array(
+                [
+                    pa.array(values[:1], type=nested_type),
+                    pa.array(values[1:], type=nested_type),
+                ]
+            )
+        ],
+        names=["nested"],
+    )
+
+    assert evidence._arrow_table_digest(single)["sha256"] == evidence._arrow_table_digest(chunked)["sha256"]
+
+
+def test_arrow_digest_binds_field_order_and_null_nan_distinction() -> None:
+    first = pa.table(
+        {
+            "left": pa.array([None], type=pa.float64()),
+            "right": pa.array([float("nan")], type=pa.float64()),
+        }
+    )
+    reordered = pa.table(
+        {
+            "right": pa.array([float("nan")], type=pa.float64()),
+            "left": pa.array([None], type=pa.float64()),
+        }
+    )
+    swapped = pa.table(
+        {
+            "left": pa.array([float("nan")], type=pa.float64()),
+            "right": pa.array([None], type=pa.float64()),
+        }
+    )
+
+    first_digest = evidence._arrow_table_digest(first)["sha256"]
+    assert first_digest != evidence._arrow_table_digest(reordered)["sha256"]
+    assert first_digest != evidence._arrow_table_digest(swapped)["sha256"]
