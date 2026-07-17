@@ -28,6 +28,8 @@
 - 不把本地研究结果声明为聚宽正式回测或模拟交易结果。
 - 不复制 vectorbt、共享 Skill 实现、Python 环境或共享行情文件到每个档案。
 - 不引入新的回测框架、策略 DSL、Rust 执行内核或多场景批处理器。
+- 不支持完整 Arrow 类型体系，不为 dictionary/nested/union/run-end encoded（字典/嵌套/联合/游程编码）编写规范化解释器。
+- 不把本地同一用户仓库当作敌对文件系统，不实现扫描后并发替换防御状态机。
 - 不保留旧 CLI、旧结果 writer 或旧延迟账本作为兼容生产路径。
 
 ## Decisions
@@ -85,11 +87,17 @@ turtle_etf/
 
 公开 Module 负责配置校验、输入准备、订单程序构造和归因扩展。私有 `_kernel.py` 保存模块级固定 Numba 函数，禁止根据配置动态创建闭包或 lambda，避免增加编译特化。`_delayed.py` 先保留海龟专属的冻结语义；出现第二个真实复用实例前不把它强行泛化。
 
+父进程先在受限策略根内解析 module，再以其顶层包目录（单文件 module 则为文件所在目录）为源码边界，静态发现并排序全部普通 `.py` 文件。该集合同时驱动运行身份和档案 `code/`，不得越界扫描 `research/archives/` 或相邻目录，`StrategyDescriptor` 不再声明第二份 `source_files`。每次 `_execute` 是只加载一个策略的全新子进程，因此子进程只需把冻结策略根放到 `sys.path` 首位并调用标准 `importlib.import_module()`；不建立 UUID 命名空间、全局导入锁或手工模块缓存生命周期。
+
 把全部策略逻辑合并为一个物理文件会形成约 150 KB 大文件、扩大导入和代码身份变化面，因此拒绝。
 
 ### 5. 公共结果包后端中立，策略证据作为扩展注入
 
 共享结果包定义结果、资金、持仓和订单四张核心表，归因等策略证据通过版本化 `ResultExtension` 注入。公共 writer 负责 Schema、跨表校验、Parquet、逻辑摘要、清单、回读验证、暂存清理和原子发布；不得导入海龟动作码。
+
+`ResultExtension.table` 只接受扁平 `string/bool/int64/float64` 列；浮点缺失使用 Arrow null，NaN 和任何其他类型在冷/热比较前固定返回 `result_contract_failed`。共享层使用 PyArrow `Table.validate(full=True)` 与 `Table.equals(check_metadata=True)`，完成文件使用 SHA256；不实现递归 Arrow 类型解码或任意类型逻辑摘要。
+
+writer 只物化一次、回读一次，并直接复用该次回读事实完成内部校验、报告和最终清单。公开 validator 只从文件读取，供复用、晋升和外部查询；writer 不通过 `preloaded_*` 参数调用它，也不写 provisional/final 两套完整包。
 
 `ExecutionLedger` 的 orders、assets、cash 和 value 按需生成一次并缓存；公共事实只物化一次。策略轨迹只分配其声明字段，不用全量 vectorbt logs 替代轻量拒单和归因状态。
 
@@ -111,15 +119,15 @@ joinquant/strategies/<strategy_id>/research/archives/<analysis_id>/
 
 档案包含完整策略源码、运行配置、代码身份、四张核心表、策略扩展、性能与环境证据、行情快照身份和报告。共享运行时代码、第三方依赖和行情文件只通过版本、Git 提交、文件摘要和 snapshot_id 锁定，不逐档案复制。
 
-晋升把源文件复制到目标同级暂存目录，逐文件复核 SHA256 后使用 `os.replace` 原子发布。目标不存在时发布；目标内容完全相同时返回复用；同一 analysis_id 内容不同时失败且不覆盖。晋升不得调用策略、vectorbt、事实转换或 Parquet writer。
+晋升先扫描源树并拒绝链接、目录连接和非普通文件，使用标准 `shutil.copy2` 复制到目标同级暂存目录，逐文件复核 SHA256 后使用 `os.replace` 原子发布。目标不存在时发布；目标内容完全相同时返回复用；同一 analysis_id 内容不同时失败且不覆盖。晋升不得调用策略、vectorbt、事实转换或 Parquet writer，也不防御同一用户在扫描后敌对替换源树。
 
 ### 7. 正确性零容忍，性能门禁区分目标与测量噪声
 
 重构前在固定环境建立 3,432 日 × 11 ETF 主场景基线，并覆盖 17 ETF 扩展场景和 `additional_delay_days=1` 延迟场景。重构后 Schema、行数、成交、净值和逻辑摘要必须完全一致。
 
-性能目标为零退化。冷启动使用三个新进程中位数，预热使用五次中位数，时间、峰值内存和同逻辑结果包体积允许最多 5% 测量噪声；任何超过噪声带的变化阻断完成。现有冷/热各 180 秒绝对门禁继续保留。完整 CLI 启动、策略准备、vectorbt、公共事实、策略归因、Parquet 和晋升分别计时，避免移动计时边界隐藏退化。
+性能目标为零退化。冷启动使用三个新进程中位数，预热使用五次中位数，时间、峰值内存和同逻辑核心/扩展 Parquet payload 体积允许最多 5% 测量噪声；固定代码、配置、证据和报告开销单独报告，不与旧 v1 整包直接比较。任何超过噪声带的变化阻断完成。现有冷/热各 180 秒绝对门禁继续保留。完整 CLI 启动、策略准备、vectorbt、公共事实、策略归因、Parquet 和晋升分别计时，避免移动计时边界隐藏退化。
 
-`max_logs=0`、关闭未使用的持仓周期跟踪和回调缓冲预分配属于候选优化，只有结果摘要完全一致且真实基准不退化时才保留。
+`max_logs=0` 和回调缓冲预分配属于候选优化，只有结果摘要完全一致且真实基准不退化时才保留。保留 vectorbt 默认持仓记录并直接复用其 trades/positions accessor；没有实测瓶颈时不关闭记录，也不在共享层重建交易或持仓。
 
 ## Risks / Trade-offs
 
@@ -135,11 +143,14 @@ joinquant/strategies/<strategy_id>/research/archives/<analysis_id>/
 1. 冻结当前主场景、扩展场景和延迟场景的结果、时间、内存及体积基线，增加分阶段计时。
 2. 抽取共享结果包和晋升能力，先让现有海龟执行结果通过新 writer 和归档端到端测试。
 3. 定义 Strategy Module 与执行 contracts，并用一个最小测试策略证明第二个 Adapter。
-4. 抽取共享单场景、性能和 CLI，切换项目配置到固定共享入口。
-5. 建立 vectorbt 底层并迁移即时路径；摘要和性能门禁通过后删除旧即时入口。
-6. 将延迟语义迁入第二个 `from_order_func()` 程序；逐笔一致后删除手工账本。
-7. 收敛海龟策略公开 Module，更新测试、代码身份、Skill 文档和旧 OpenSpec 约束，删除所有旧生产文件。
-8. 运行共享 CLI → vectorbt → 标准结果包 → 自包含档案的完整端到端回归和真实规模性能验证。
+4. 抽取共享单场景、性能和 CLI，仅让测试配置走新入口，生产配置留到单次切换任务。
+5. 收窄扩展表并把 writer 收敛为单次回读事实链，删除自定义递归 Arrow 解释器和内部 validator 双路径。
+6. 统一静态源码身份并改用标准 importlib，删除 descriptor 源码清单、UUID 命名空间和重复测试夹具内容。
+7. 把晋升收敛为扫描、标准复制、摘要复核和原子发布，删除敌对并发树状态机。
+8. 建立通用 vectorbt 唯一账本 runtime，只用通用 primary/follow-up fixture 证明共享接线。
+9. 在海龟 Strategy Module 内同时迁移即时与延迟 OrderProgram，逐笔一致后删除手工账本。
+10. 单次切换生产配置，更新测试、代码身份、Skill 文档和旧 OpenSpec 约束，删除所有旧生产文件。
+11. 运行共享 CLI → vectorbt → 标准结果包 → 自包含档案的完整端到端回归和真实规模性能验证。
 
 回滚以任务提交为单位进行：在旧生产入口尚未删除前，可回退最近迁移提交；删除旧入口后只允许整体回退到最后一个已验证提交，不提供运行时双路径开关。
 

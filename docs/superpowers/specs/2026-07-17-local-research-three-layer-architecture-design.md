@@ -55,7 +55,6 @@ vectorbt.Portfolio.from_order_func
 
 ```python
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Mapping, Protocol
 
 
@@ -63,7 +62,6 @@ from typing import Mapping, Protocol
 class StrategyDescriptor:
     strategy_id: str
     contract_version: str
-    source_files: tuple[Path, ...]
     extension_names: tuple[str, ...]
     accounting: Mapping[str, object]
 
@@ -99,11 +97,13 @@ class StrategyModule(Protocol):
 
 不提供独立 `validate_config()`。`prepare()` 必须先完成纯配置校验，只有通过后才能读取行情数组或分配大型矩阵。缺少声明证据时抛出显式 `StrategyEvidenceError(code, message)`；普通 `ValueError` 不得自动映射为证据不足，以免掩盖实现缺陷。
 
-`source_files` 使用相对 `strategy_root` 的 POSIX（可移植路径）路径。loader（加载器）必须拒绝绝对路径、`..`、目录逃逸、重复路径和缺失文件。该列表同时驱动：
+父进程先在受限 `strategy_root` 内解析声明的 module，再以该 module 的顶层包目录（单文件 module 则为文件所在目录）作为源码边界，静态发现其中全部普通 `.py` 文件；该排序后的源码集合是唯一权威来源，同时驱动：
 
 - 运行身份摘要；
 - 档案 `code/` 源码快照；
 - Strategy Module 代码变更检测。
+
+`StrategyDescriptor` 不再维护第二份 `source_files` 清单。源码发现不得越过当前 module 包去扫描 `research/archives/` 或其他相邻目录。每个 `_execute` 都是只加载一个策略的全新子进程，子进程把已冻结的策略根放到 `sys.path` 首位并使用标准 `importlib.import_module()`；不建立 UUID（唯一标识）私有命名空间、全局导入锁或手工 `sys.modules`（模块缓存）生命周期。
 
 ### 3.2 执行 contracts
 
@@ -252,7 +252,7 @@ use_numba=True
 max_logs=0
 ```
 
-`fill_pos_record=False` 只有在测试证明 callback 不读取 position record，且公开 trades/positions 仍能由订单记录按需生成时才启用。任何性能开关都必须在结果等价和真实性能门禁通过后保留。
+保留 vectorbt（向量化回测框架）默认的持仓记录能力，`trades/positions` 必须直接复用 Portfolio（组合）的公开 accessor（访问器），不得为了关闭记录而在共享层重建交易或持仓。`max_logs=0` 与缓冲预分配只有在结果等价和真实性能门禁通过后保留；没有实测瓶颈时不增加其他性能开关。
 
 `pre_segment_func_nb` 不得创建行级临时数组。稳定排序使用预分配索引缓冲或原地插入排序；证券数当前为 11–17，禁止为此引入并行分块。共享现金和跨资产风险也禁止按证券独立分块。
 
@@ -371,9 +371,9 @@ cli.py run
   → 父进程验证输出、补全来源证据并原子发布
 ```
 
-`_execute` 不公开给用户配置，所有参数均由 runner 生成。策略 root 临时加入子进程 import path 后，loader 必须验证实际 module file 和 `source_files` 都位于 root 内。
+`_execute` 不公开给用户配置，所有参数均由 runner 生成。父进程静态发现并冻结策略根下全部普通 `.py` 文件；子进程临时把冻结策略 root 放到 import path 首位，并验证实际 module file 位于 root 内。
 
-仓库不再手工维护逐文件 hash 的输入型 `code-identity.json`。父进程根据 `StrategyDescriptor.source_files`、固定共享运行时文件集和已安装依赖生成档案中的 `config/code-identity.json` 与 `evidence/runtime-lock.json`，减少每次策略改动后的机械维护。
+仓库不再手工维护逐文件 hash 的输入型 `code-identity.json`。父进程根据唯一静态发现源码集合、固定共享运行时文件集和已安装依赖生成档案中的 `config/code-identity.json` 与 `evidence/runtime-lock.json`，减少每次策略改动后的机械维护。
 
 ## 8. Archive-ready Result Package
 
@@ -432,7 +432,11 @@ class ResultExtension:
     evidence: Mapping[str, object]
 ```
 
-策略可以构造 Arrow（列式内存）表，但不得选择路径、压缩、文件名或直接写 Parquet。共享 writer 负责唯一物化、回读和清单。
+策略可以构造 Arrow（列式内存）表，但公共契约只接受扁平 `string/bool/int64/float64`（字符串/布尔/整数/浮点）列。浮点缺失值必须使用 Arrow null（空值），不得使用 NaN（非数值）；dictionary/list/struct/map/union/run-end encoded（字典/列表/结构/映射/联合/游程编码）及其他类型统一在冷/热比较前以 `ResultContractError` 拒绝。策略不得选择路径、压缩、文件名或直接写 Parquet。
+
+共享层使用 PyArrow（列式计算库）现成的 `Table.validate(full=True)` 校验表结构，先比较精确 Schema，再用 `Table.equals(check_metadata=True)` 比较冷/热扩展表；核心 vectorbt 事实继续使用 NumPy（数值数组）摘要。共享层不实现递归 Arrow 类型解码或任意类型逻辑哈希。完成包写入后，完整性只使用实际 Parquet 文件 SHA256。
+
+writer 只执行一次核心/扩展 Parquet 物化和一次回读。内部写入路径复用该次回读事实完成 Schema、唯一键、勾稽、报告和 manifest（清单），并在观测边界一次写入性能证据与清单；不得调用带 `preloaded_*` 逃生参数的外部 validator（校验器），也不得构造 provisional/final（临时/最终）两套完整包。公开 `validate_result_package()` 保持纯文件读取，只供复用、晋升和外部查询。
 
 机械执行报告只呈现包内可复核事实：身份、参数、范围、表行数、成交/持仓摘要、净值摘要、性能和完整性门禁。它不得使用“推荐”“稳健性通过”“适合实盘”等判断语句。
 
@@ -446,8 +450,8 @@ class ResultExtension:
 4. 目标固定为 `joinquant/strategies/<strategy_id>/research/archives/<analysis_id>/`。
 5. 若目标存在，逐文件验证：完全一致返回 `reused=true`；任一差异返回 conflict，不修改目标。
 6. 若目标不存在，在 `archives/` 下创建 `.<analysis_id>.<uuid>.tmp`。
-7. 逐文件复制源包，复制后立即复核长度和 SHA256；禁止 hardlink（硬链接）、symlink（符号链接）和目录连接。
-8. 复核目标暂存包清单和分析视图；调用 `os.replace` 原子发布。
+7. 晋升开始前用一次 `lstat/rglob` 扫描拒绝 hardlink（硬链接）、symlink（符号链接）、目录连接和非普通文件；使用标准 `shutil.copy2` 复制，再对目标树逐文件复核长度和 SHA256。
+8. 复核目标暂存包清单和分析视图；调用 `os.replace` 原子发布。本地仓库与同一用户进程属于可信边界，不实现针对扫描后敌对并发替换的文件描述符/inode（文件节点）状态机。
 9. 失败时只删除本次暂存目录，源包和既有档案保持不变。
 
 analysis_id 只存在于目标目录名，包内 run_id 和所有字节不改变。查询返回二者：analysis_id 是人选档案别名，run_id 是内容身份。
@@ -469,6 +473,8 @@ analysis_id 只存在于目标目录名，包内 run_id 和所有字节不改变
 
 只允许显式错误类型映射为 `evidence_insufficient`。未知异常统一进入 `failed`，输出稳定 reason code，不把 traceback（堆栈）或敏感环境写入清单。
 
+不支持的策略扩展类型和扩展中的 NaN 必须在 cold/warm digest（冷/热摘要）前固定映射为 `failed + result_contract_failed`，不得退化为 `execution_digest_mismatch` 或未知异常。
+
 晋升返回独立 `ArchiveResult(status, reused, source, target, reasons)`，不修改研究运行的三种停止状态。
 
 ## 11. 性能与内存设计
@@ -479,7 +485,7 @@ analysis_id 只存在于目标目录名，包内 run_id 和所有字节不改变
 - 预热：同一进程 5 次，中位数；
 - 场景：3,432 日 × 11 ETF、3,432 日 × 17 ETF、延迟 1 日；
 - 正确性：Schema、行数、成交、费用、现金、持仓、净值和逻辑摘要零差异；
-- 相对门禁：时间、峰值进程内存和同逻辑包体积不超过基线 5%；
+- 相对门禁：时间、峰值进程内存和同逻辑核心/扩展 Parquet payload（列式数据载荷）体积不超过基线 5%；固定代码、配置、证据与报告开销单独报告，不与旧 v1 整包直接比较；
 - 绝对门禁：单次冷、热仍不得超过 180 秒。
 
 阶段计时固定为：
@@ -505,7 +511,7 @@ Windows 峰值进程内存使用标准库 `ctypes` 调用 `GetProcessMemoryInfo`
 
 ### 12.1 Interface 测试
 
-- `test_strategy_contract.py`：loader、descriptor、路径安全、两个策略 Adapter。
+- `test_strategy_contract.py`：标准 importlib loader（导入加载器）、唯一静态源码身份、路径安全、两个策略 Adapter。
 - `test_vectorbt_runtime.py`：稳定优先级、订单转换、成交回调、惰性缓存、共享内存和 callback 特化数量。
 - `test_result_package.py`：四表、扩展、清单、单次物化、回读、跨表勾稽和机械报告措辞。
 - `test_archive.py`：完整源、失败源、幂等、冲突、逐字节一致、无行情复制和失败清理。
@@ -546,11 +552,12 @@ Windows 峰值进程内存使用标准库 `ctypes` 调用 `GetProcessMemoryInfo`
 3. 抽取共享结果包并让旧海龟执行在测试中写新包。
 4. 完成 archive-ready package 和 promote E2E。
 5. 抽取共享 CLI、scenario 和 performance；新路径仍只由测试调用。
-6. 建立 vectorbt Adapter，迁移即时路径并删除重复账本镜像。
-7. 迁移延迟两阶段路径，逐笔一致后删除手工账本。
-8. 创建唯一公开海龟 Module；在单个切换提交中更新生产配置并删除旧生产入口。
-9. 更新 Skill、代码身份、OpenSpec 旧约束和文档。
-10. 执行完整 E2E、真实性能和 Build and Verify（构建与验证）。
+6. 收窄扩展表并把 writer 收敛为单次回读事实链，删除递归 Arrow 解释器和内部 validator 双路径。
+7. 统一静态源码身份并改用标准 importlib，删除 descriptor 源码清单、UUID 命名空间和重复 fixture 内容。
+8. 把晋升收敛为扫描、标准复制、摘要复核和原子发布，删除敌对并发树状态机。
+9. 建立通用 vectorbt 唯一账本 runtime，只用通用 primary/follow-up fixture 证明共享接线。
+10. 在海龟 Strategy Module 内同时迁移即时与延迟 OrderProgram，逐笔一致后删除手工账本。
+11. 单次切换生产配置和旧入口，再执行完整 E2E、真实性能和 Build and Verify（构建与验证）。
 
 每一步遵循 RED → GREEN → REFACTOR（失败测试→最小通过→整理），并形成可独立审查的提交。若某一步不能保持共享 CLI 可运行，则缩小该任务，不通过双生产 feature flag 绕过。
 
@@ -585,6 +592,8 @@ Windows 峰值进程内存使用标准库 `ctypes` 调用 `GetProcessMemoryInfo`
 - 策略源码不导入 vectorbt；共享层不导入海龟私有文件；
 - 即时和延迟最终账户变化都只来自 vectorbt；
 - `.local` 包可逐字节晋升且删除源缓存后仍可查询；
-- 结果零差异，固定机器相对性能、内存和体积不超过 5% 噪声；
+- 结果零差异，固定机器相对性能、内存和同逻辑 Parquet payload 体积不超过 5% 噪声；
+- 策略扩展只使用扁平标量 Arrow 类型，冷/热比较和 Parquet 完整性复用 PyArrow/DuckDB（列式计算库/分析数据库）现成能力，不存在递归 Arrow 类型解释器；
+- 共享 writer 只有一次回读事实链，策略加载只有标准 importlib 和一份静态源码身份，晋升只有扫描、标准复制、摘要复核和原子发布；
 - 旧 CLI、旧引擎、旧 writer、延迟手工账本和双生产路径已删除；
 - 完整 Build and Verify 与发布形态 E2E 通过。
