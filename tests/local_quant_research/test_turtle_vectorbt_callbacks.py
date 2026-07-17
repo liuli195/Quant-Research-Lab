@@ -161,7 +161,8 @@ def _config(
 
 
 def test_group_and_portfolio_unit_scales_follow_confirmed_formula() -> None:
-    group_scales, portfolio_scale = callbacks._risk_scales_nb.py_func(
+    risk_scales = callbacks._risk_scales_nb
+    group_scales, portfolio_scale = risk_scales(
         np.asarray([4, 4, 4], dtype=np.int64),
         np.asarray([0, 0, 1], dtype=np.int64),
         2,
@@ -171,7 +172,7 @@ def test_group_and_portfolio_unit_scales_follow_confirmed_formula() -> None:
     assert group_scales.tolist() == pytest.approx([0.75, 1.0])
     assert portfolio_scale == pytest.approx(1.0)
 
-    group_scales, portfolio_scale = callbacks._risk_scales_nb.py_func(
+    group_scales, portfolio_scale = risk_scales(
         np.asarray([4, 4, 4, 4], dtype=np.int64),
         np.asarray([0, 1, 2, 3], dtype=np.int64),
         4,
@@ -189,10 +190,13 @@ def test_target_rounding_is_uniform_and_input_order_invariant() -> None:
     scales = np.asarray([1.0, 1.0])
     locked = np.asarray([-1, -1], dtype=np.int64)
 
-    targets = callbacks._targets_for_scale_nb.py_func(
+    targets_for_scale = getattr(
+        callbacks._targets_for_scale_nb, "py_func", callbacks._targets_for_scale_nb
+    )
+    targets = targets_for_scale(
         bases, counts, groups, scales, 1.0, 0.55, locked, 100
     )
-    permuted = callbacks._targets_for_scale_nb.py_func(
+    permuted = targets_for_scale(
         bases[::-1], counts[::-1], groups[::-1], scales, 1.0, 0.55, locked, 100
     )[::-1]
 
@@ -364,7 +368,8 @@ def test_rejected_official_order_does_not_establish_candidate() -> None:
         position_after=0.0,
     )
 
-    callbacks.after_fill_nb.py_func(
+    after_fill = getattr(callbacks.after_fill_nb, "py_func", callbacks.after_fill_nb)
+    after_fill(
         event,
         callback_inputs,
         params,

@@ -218,85 +218,105 @@ def _derive_forward_only_continuity(
                 (effective_date, event)
             )
 
-    for row in range(1, len(result)):
-        factor[row] = factor[row - 1]
-        current_date = result["date"].iloc[row]
-        previous_close = float(result["raw_close"].iloc[row - 1])
-        current_pre_close = float(result["raw_pre_close"].iloc[row])
-        if (
-            not math.isfinite(previous_close)
-            or not math.isfinite(current_pre_close)
-            or previous_close <= 0.0
-            or current_pre_close <= 0.0
-        ):
-            raise _evidence_insufficient(
-                f"invalid close/pre_close reconciliation input for {security} "
-                f"{current_date.date()}"
-            )
-        scheduled = scheduled_events.get(current_date, [])
-        basis_changed = not np.isclose(
-            previous_close,
-            current_pre_close,
-            rtol=_RECONCILIATION_RTOL,
-            atol=_RECONCILIATION_ATOL,
-        )
-        if scheduled:
-            if basis_changed:
-                factor[row] *= previous_close / current_pre_close
-            applied[row] = True
-            for source_effective_date, event in scheduled:
-                event_type = str(event["event_type"])
-                applications.append(
-                    CorporateActionApplication(
-                        source_event_id=str(event.get("source_event_id", "")),
-                        security=security,
-                        event_type=event_type,
-                        effective_date=source_effective_date.strftime("%Y-%m-%d"),
-                        application_date=current_date.strftime("%Y-%m-%d"),
-                        announcement_date=_action_date(
-                            event.get("announcement_date"), "announcement_date"
-                        ).strftime("%Y-%m-%d"),
-                        knowledge_cutoff_date=_action_date(
-                            event.get("knowledge_cutoff_date"),
-                            "knowledge_cutoff_date",
-                        ).strftime("%Y-%m-%d"),
-                        evidence_timing=(
-                            "point_in_time"
-                            if _action_date(
-                                event.get("announcement_date"),
-                                "announcement_date",
-                            )
-                            <= source_effective_date
-                            else "retrospective_reconciliation"
-                        ),
-                        split_ratio=(
-                            float(event["split_ratio"])
-                            if event_type == "split"
-                            else None
-                        ),
-                        cash_per_share=(
-                            float(event["cash_per_share"])
-                            if event_type == "cash_dividend"
-                            else None
-                        ),
-                        cumulative_factor=float(factor[row]),
-                        price_basis_changed=bool(basis_changed),
-                        source=str(event.get("source", "")),
-                        source_record_sha256=str(
-                            event.get("source_record_sha256", "")
-                        ),
-                    )
-                )
-        elif basis_changed:
-            raise _evidence_insufficient(
-                f"unexplained price-basis change for {security} {current_date.date()}"
-            )
-
     first_date = result["date"].iloc[0]
     if scheduled_events.get(first_date):
         raise _evidence_insufficient(
             f"corporate action on the first market row cannot be reconciled for {security}"
         )
+
+    dates = result["date"].to_numpy(copy=False)
+    raw_close = result["raw_close"].to_numpy(dtype=np.float64, copy=False)
+    raw_pre_close = result["raw_pre_close"].to_numpy(
+        dtype=np.float64, copy=False
+    )
+    previous_close = raw_close[:-1]
+    current_pre_close = raw_pre_close[1:]
+    invalid = (
+        ~np.isfinite(previous_close)
+        | ~np.isfinite(current_pre_close)
+        | (previous_close <= 0.0)
+        | (current_pre_close <= 0.0)
+    )
+    if np.any(invalid):
+        row = int(np.flatnonzero(invalid)[0]) + 1
+        current_date = pd.Timestamp(dates[row])
+        raise _evidence_insufficient(
+            f"invalid close/pre_close reconciliation input for {security} "
+            f"{current_date.date()}"
+        )
+
+    basis_changed = np.zeros(len(result), dtype=np.bool_)
+    basis_changed[1:] = ~np.isclose(
+        previous_close,
+        current_pre_close,
+        rtol=_RECONCILIATION_RTOL,
+        atol=_RECONCILIATION_ATOL,
+    )
+    scheduled_rows = np.asarray(
+        sorted(row_by_date[date] for date in scheduled_events), dtype=np.int64
+    )
+    scheduled_mask = np.zeros(len(result), dtype=np.bool_)
+    scheduled_mask[scheduled_rows] = True
+    unexplained = basis_changed & ~scheduled_mask
+    if np.any(unexplained):
+        row = int(np.flatnonzero(unexplained)[0])
+        current_date = pd.Timestamp(dates[row])
+        raise _evidence_insufficient(
+            f"unexplained price-basis change for {security} {current_date.date()}"
+        )
+
+    factor_steps = np.ones(len(result), dtype=np.float64)
+    changed_rows = np.flatnonzero(basis_changed)
+    factor_steps[changed_rows] = (
+        raw_close[changed_rows - 1] / raw_pre_close[changed_rows]
+    )
+    factor = np.cumprod(factor_steps)
+    applied[scheduled_rows] = True
+    for row in scheduled_rows:
+        current_date = pd.Timestamp(dates[row])
+        for source_effective_date, event in scheduled_events[current_date]:
+            event_type = str(event["event_type"])
+            applications.append(
+                CorporateActionApplication(
+                    source_event_id=str(event.get("source_event_id", "")),
+                    security=security,
+                    event_type=event_type,
+                    effective_date=source_effective_date.strftime("%Y-%m-%d"),
+                    application_date=current_date.strftime("%Y-%m-%d"),
+                    announcement_date=_action_date(
+                        event.get("announcement_date"), "announcement_date"
+                    ).strftime("%Y-%m-%d"),
+                    knowledge_cutoff_date=_action_date(
+                        event.get("knowledge_cutoff_date"),
+                        "knowledge_cutoff_date",
+                    ).strftime("%Y-%m-%d"),
+                    evidence_timing=(
+                        "point_in_time"
+                        if _action_date(
+                            event.get("announcement_date"),
+                            "announcement_date",
+                        )
+                        <= source_effective_date
+                        else "retrospective_reconciliation"
+                    ),
+                    split_ratio=(
+                        float(event["split_ratio"])
+                        if event_type == "split"
+                        else None
+                    ),
+                    cash_per_share=(
+                        float(event["cash_per_share"])
+                        if event_type == "cash_dividend"
+                        else None
+                    ),
+                    cumulative_factor=float(factor[row]),
+                    price_basis_changed=bool(basis_changed[row]),
+                    source=str(event.get("source", "")),
+                    source_record_sha256=str(
+                        event.get("source_record_sha256", "")
+                    ),
+                )
+            )
     result["continuity_factor"] = factor
     result["corporate_action_applied"] = applied
     for field in price_fields:
