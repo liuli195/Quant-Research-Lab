@@ -33,10 +33,10 @@
 
 ## 6. 收窄扩展表并收敛共享 writer
 
-- [ ] 6.1 先编写失败测试，限定 ResultExtension 只接受扁平 `string/bool/int64/float64`、用 Arrow null 表示缺失并在冷/热比较前拒绝 NaN 与其他类型
-- [ ] 6.2 使用 PyArrow `Table.validate`、精确 Schema 和 `Table.equals` 比较扩展，核心事实继续使用 NumPy 摘要，删除递归 Arrow 类型解码和任意类型逻辑哈希
-- [ ] 6.3 将内部 writer 收敛为一次物化、一次回读事实链，公开 validator 保持纯磁盘读取，删除 `preloaded_*` 参数和 provisional/final 双包路径
-- [ ] 6.4 运行结果包、runner、双策略和公开 CLI 回归，确认越界扩展固定返回 `failed/result_contract_failed`
+- [x] 6.1 先编写失败测试，限定 ResultExtension 只接受扁平 `string/bool/int64/float64`、用 Arrow null 表示缺失并在冷/热比较前拒绝 NaN 与其他类型
+- [x] 6.2 使用 PyArrow `Table.validate`、精确 Schema 和 `Table.equals` 比较扩展，核心事实继续使用 NumPy 摘要，删除递归 Arrow 类型解码和任意类型逻辑哈希
+- [x] 6.3 将内部 writer 收敛为一次物化、一次回读事实链，公开 validator 保持纯磁盘读取，删除 `preloaded_*` 参数和 provisional/final 双包路径
+- [x] 6.4 运行结果包、runner、双策略和公开 CLI 回归，确认越界扩展固定返回 `failed/result_contract_failed`
 
 ## 7. 统一策略源码身份并简化加载
 
@@ -63,7 +63,7 @@
 - [ ] 10.1 创建 `turtle_etf.strategy:MODULE` 唯一公开入口，把配置校验、输入准备、即时/后续 OrderProgram 和 ResultExtension 组合在公开 Interface 后
 - [ ] 10.2 将 Numba 内核、海龟归因和延迟冻结计划收敛到私有文件；即时和延迟实际账户变化都交给共享 `from_order_func()`
 - [ ] 10.3 用现有特征逐笔验证计划、成交、费用、现金、持仓、共同止损和原因码，删除 Python 手工账本与 `from_orders()` 重放路径
-- [ ] 10.4 在旧生产文件删除前重跑三个场景的 3 冷/5 热采样，把历史整包体积拆为可比 `parquet_payload_bytes` 与单独固定开销，再更新测试只依赖公开 MODULE 并运行零差异回归
+- [ ] 10.4 在旧生产文件删除前重跑三个场景的引擎 3 冷/5 热采样，把历史整包体积拆为可比 `parquet_payload_bytes` 与单独固定开销；baseline fixture 顶层记录 `protocol_version=local-research-release/2` 和 `environment_identity_sha256`，每个独立旧完整 CLI 冷样本记录 scenario、`sample_type=full_cli_cold`、sample_index、PID、run_id、package_sha256、`reused=false`、`post_publish_validation=passed` 和 `cold_cli_total_seconds`；在删除旧入口前通过逐字段契约测试，baseline 文件自身 SHA256 由 Task 12 读取时计算并绑定外部报告，不自指写回 fixture
 
 ## 11. 单次切换生产配置与入口
 
@@ -74,7 +74,7 @@
 
 ## 12. 发布性能门禁与完整验证
 
-- [ ] 12.1 执行 3,432 日 × 11 ETF、3,432 日 × 17 ETF 和延迟场景的零差异及 3 冷/5 热采样
-- [ ] 12.2 比较时间、峰值内存和同逻辑核心/扩展 Parquet 数据载荷体积的 5% 门禁，固定自包含开销单独报告，并继续执行 180 秒绝对门禁
+- [ ] 12.1 执行三个固定场景的零差异、引擎 3 冷/5 热采样，以及三个禁止复用并覆盖原子发布和发布后校验的独立完整 CLI 冷样本
+- [ ] 12.2 只用协议、环境和起止点一致的旧/新 baseline 比较完整 CLI 时间、引擎时间、峰值内存和同逻辑核心/扩展 Parquet 数据载荷体积的 5% 门禁；单列最终发布诊断阶段与固定自包含开销，并继续执行 180 秒绝对门禁
 - [ ] 12.3 运行仓库完整 Build and Verify，逐项核对三份 capability 规格并确认没有旧生产路径、第二套账本或临时产物
 - [ ] 12.4 保存验证报告，并只在对应证据真实存在后逐项勾选本文件任务

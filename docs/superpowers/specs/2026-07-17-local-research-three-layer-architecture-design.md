@@ -438,7 +438,7 @@ class ResultExtension:
 
 共享层使用 PyArrow（列式计算库）现成的 `Table.validate(full=True)` 校验表结构，先比较精确 Schema，再用 `Table.equals(check_metadata=True)` 比较冷/热扩展表；核心 vectorbt 事实继续使用 NumPy（数值数组）摘要。共享层不实现递归 Arrow 类型解码或任意类型逻辑哈希。完成包写入后，完整性只使用实际 Parquet 文件 SHA256。
 
-writer 只执行一次核心/扩展 Parquet 物化和一次回读。内部写入路径复用该次回读事实完成 Schema、唯一键、勾稽、报告和 manifest（清单），并在观测边界一次写入性能证据与清单；不得调用带 `preloaded_*` 逃生参数的外部 validator（校验器），也不得构造 provisional/final（临时/最终）两套完整包。公开 `validate_result_package()` 保持纯文件读取，只供复用、晋升和外部查询。
+writer 只执行一次核心/扩展 Parquet 物化和一次回读。内部写入路径复用该次回读事实完成 Schema、唯一键、勾稽、报告和 manifest（清单），并在观测边界一次写入性能证据与清单；不得调用带 `preloaded_*` 逃生参数的外部 validator（校验器），也不得构造 provisional/final（临时/最终）两套完整包。包内性能证据只记录从 writer 启动到最终 evidence/report/manifest 写入前的 `prefinalization_seconds`，并明确排除项；writer 返回耗时覆盖最终元数据写入。父进程原子发布与发布后校验由 Task 12 的完整 CLI 发布基准测量并写入外部验证报告，不把自指的最终耗时二次写回不可重写结果包。公开 `validate_result_package()` 保持纯文件读取，只供复用、晋升和外部查询。
 
 机械执行报告只呈现包内可复核事实：身份、参数、范围、表行数、成交/持仓摘要、净值摘要、性能和完整性门禁。它不得使用“推荐”“稳健性通过”“适合实盘”等判断语句。
 
@@ -481,10 +481,12 @@ analysis_id 只存在于目标目录名，包内 run_id 和所有字节不改变
 
 ## 11. 性能与内存设计
 
-正常一次 `run` 仍只在一个全新子进程中执行一次冷启动和一次预热，不把 3/5 重复采样加到日常路径。发布验证使用独立 performance command（性能命令）：
+正常一次 `run` 仍只在一个全新子进程中执行一次冷启动和一次预热，不把重复采样加到日常路径。发布验证使用独立 performance command（性能命令），并把引擎采样与完整 CLI 发布采样分开：
 
-- 冷启动：3 个全新进程，中位数；
-- 预热：同一进程 5 次，中位数；
+- 引擎冷启动：3 个全新进程，中位数；
+- 引擎预热：同一进程 5 次，中位数；
+- 完整 CLI 发布：3 个独立冷进程，每个样本使用独立输出根和非复用 run，计时从 CLI 进程启动到父进程原子发布及发布后校验完成；不伪造“同一进程 warm CLI 启动”指标；
+- 可比基线：Task 10 在旧入口删除前按同一完整 CLI 协议采集；协议、环境、起止点或 baseline 摘要不一致时拒绝比较；
 - 场景：3,432 日 × 11 ETF、3,432 日 × 17 ETF、延迟 1 日；
 - 正确性：Schema、行数、成交、费用、现金、持仓、净值和逻辑摘要零差异；
 - 相对门禁：时间、峰值进程内存和同逻辑核心/扩展 Parquet payload（列式数据载荷）体积不超过基线 5%；固定代码、配置、证据与报告开销单独报告，不与旧 v1 整包直接比较；
@@ -505,7 +507,7 @@ readback_validate
 report_and_manifest
 ```
 
-总计时覆盖上述全部阶段，不允许通过移动工作出计时范围来改善数字。共享 CLI 启动耗时另行记录，不混入预热引擎耗时。
+包内阶段计时覆盖上述全部可在最终元数据一次写入前确定的阶段；`performance.json` 使用 `prefinalization_seconds` 明确该边界。日常 cold/warm 绝对门禁使用 writer 返回耗时，因此继续覆盖最终 evidence/report/manifest 写入。发布验证的三个完整 CLI 冷样本再增加父进程 `finalize_publish` 诊断阶段，从 `_publish_directory()` 开始计时到发布后校验完成；5% 时间门禁比较重构前后相同起止点的完整 CLI 总耗时，`finalize_publish` 只用于归因，不单独与缺少同边界阶段数据的旧实现比较。外部验证报告必须以协议版本、场景、样本类型/序号、PID、run_id、package_sha256、非复用标记、发布后校验状态、baseline 摘要和环境摘要绑定样本；报告写入前后复核已发布包摘要未变化。不得通过在同一观测边界之间移动工作改善数字，也不得为获得自指精确值恢复双包、二次元数据写入或旁路清单。共享 CLI 启动耗时不混入预热引擎耗时。
 
 Windows 峰值进程内存使用标准库 `ctypes` 调用 `GetProcessMemoryInfo`，由父进程轮询子进程 working set peak（峰值工作集），不新增 psutil 依赖。通用 CI 只执行 180 秒绝对门禁；5% 相对门禁只在同一固定机器的发布验证中执行。
 

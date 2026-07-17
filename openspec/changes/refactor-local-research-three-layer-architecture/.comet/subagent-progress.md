@@ -4,15 +4,34 @@
 - Plan: `docs/superpowers/plans/2026-07-17-local-research-three-layer-architecture.md`
 - Review mode: `thorough`
 - TDD mode: `tdd`
-- Current plan task: `Task 6: 收窄扩展表并收敛共享 writer`
+- Execution mode: `executing-plans`（从 Task 7 起由主 Agent 按计划实施；独立审查仍按 thorough 模式执行）
+- Current plan task: `Task 6 complete; next Task 7: 统一策略源码身份并简化加载（主 Agent executing-plans）`
 - OpenSpec mappings:
   - `6.1 先编写失败测试，限定 ResultExtension 只接受扁平 string/bool/int64/float64、用 Arrow null 表示缺失并在冷/热比较前拒绝 NaN 与其他类型`
   - `6.2 使用 PyArrow Table.validate、精确 Schema 和 Table.equals 比较扩展，核心事实继续使用 NumPy 摘要，删除递归 Arrow 类型解码和任意类型逻辑哈希`
   - `6.3 将内部 writer 收敛为一次物化、一次回读事实链，公开 validator 保持纯磁盘读取，删除 preloaded_* 参数和 provisional/final 双包路径`
   - `6.4 运行结果包、runner、双策略和公开 CLI 回归，确认越界扩展固定返回 failed/result_contract_failed`
-- Stage: `ready-to-dispatch`
-- Task base: `pending planning/checkoff commit`
-- Implementer: `not dispatched`
+- Stage: `task-complete`
+- Task base: `8b953fe579a728d965f5a320cc814d516c45f28c`
+- Implementer: `/root/task6_writer_simplification`
+- Implementation commit: `2921397ceb7534f569e18b5559ffdb05770aca42`
+- Implementation evidence: `RED confirmed unsupported list extension and preloaded validation path; focused GREEN 153 passed; complete Task 6 regression 173 passed`
+- Review package: `.superpowers/sdd/task-6-review-package.md`
+- Review round 1: `FINDINGS; Critical 0, Important 2, Minor 1; see .superpowers/sdd/task-6-review.md`
+- Fix round 1 commit: `181ab51c7e928d813d4e26b4fccd3fc885b226d7`
+- Fix round 1 evidence: `disk validator 2 passed; performance boundaries 2 passed; complex Arrow boundaries 8 passed; runner boundaries 2 passed; complete Task 6 regression 181 passed in 80.58s`
+- Re-review package: `.superpowers/sdd/task-6-rereview-package.md`
+- Re-review round 1: `FINDINGS; Critical 0, Important 1, Minor 0; Task 6 code boundaries passed, but the formal performance wording incorrectly required a self-referential final publish duration inside the immutable package`
+- Coordinator resolution: `keep package prefinalization_seconds and daily returned-writer gate; move parent atomic publish and post-validation timing to Task 12 external release evidence; explicitly forbid double package, second metadata write, and sidecar manifest`
+- Planning validation: `OpenSpec strict PASS; Comet build recovery PASS with build_mode=executing-plans`
+- Performance-boundary planning review: `4 Important, 1 Warning in Task 12 protocol: incomparable old baseline, mixed engine/CLI sampling, unbound external evidence, incomplete commit/RED commands`
+- Planning round 2 resolution: `engine 3-cold/5-warm and three independent full-CLI cold samples are separate; Task 10 captures old same-boundary baseline before deletion; external samples bind protocol/scenario/PID/run/package/baseline/environment; Task 12 RED and commit lists include runner and E2E files`
+- Planning re-review: `1 Important, 1 Warning: canonical Task 10.4 omitted the full-CLI baseline contract and Task 12 RED filtering could skip publication tests`
+- Planning round 3 resolution: `Task 10.4 now requires the full-CLI baseline and its contract test before Task 11 deletion; Task 12 RED runs the four declared test files without a name filter`
+- Planning re-review 2: `1 Important: Task 10 baseline samples did not explicitly persist sample_type/reused/post-publish validation and other binding fields`
+- Planning round 4 resolution: `canonical 10.4 and plan enumerate top-level protocol/environment identity plus every per-sample binding field; Task 12 computes baseline_sha256 from fixture bytes instead of creating another self-referential field`
+- Final planning re-review: `PASS; findings=[]; Task 6 can close and remaining performance implementation belongs to Task 10/12`
+- Coordinator completion verification: `2026-07-17 Task 6 five-file regression: 181 passed in 90.59s; OpenSpec strict PASS; git diff --check PASS`
 - Previous task: `Task 5 complete; implementation 90bd254, fixes 29de3ca/85cac8c/7756849; final Arrow/writer feedback reclassified by user-approved planning revision into Task 6`
 - Coordinator verification: `2026-07-17 fresh seven-file regression: 193 passed in 83.80s; revised Planning Review PASS at 6300c05; OpenSpec 5.1-5.4 and plan Task 5 checked off`
 - Scope exclusions: `JoinQuant archive sync cursor bug tracked by #17 and scheduled-workspace isolation tracked by #11; neither belongs to this change`
