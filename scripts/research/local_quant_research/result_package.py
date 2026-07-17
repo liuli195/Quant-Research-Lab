@@ -21,6 +21,10 @@ from scripts.research.local_quant_research.contracts import (
     ExecutionBundle,
     ResultExtension,
 )
+from scripts.research.local_quant_research.evidence import (
+    EvidenceError,
+    validate_extension_table,
+)
 
 
 PACKAGE_SCHEMA_VERSION = "local-research-package/2"
@@ -564,11 +568,10 @@ def _validate_common_facts(
     return materialized_summaries
 
 
-def _validate_extensions(
+def _validate_extension_contracts(
     extensions: tuple[ResultExtension, ...],
-) -> tuple[dict[str, ResultExtension], dict[str, dict[str, object]]]:
+) -> dict[str, ResultExtension]:
     result: dict[str, ResultExtension] = {}
-    summaries: dict[str, dict[str, object]] = {}
     for extension in extensions:
         if _EXTENSION_NAME.fullmatch(extension.name) is None:
             raise ResultContractError("extension name is invalid")
@@ -576,8 +579,22 @@ def _validate_extensions(
             raise ResultContractError("extension names must be unique")
         if not isinstance(extension.schema_version, str) or not extension.schema_version:
             raise ResultContractError("extension schema_version is required")
-        if not isinstance(extension.table, pa.Table):
-            raise ResultContractError("extension table must be an Arrow table")
+        try:
+            validate_extension_table(extension.table)
+        except EvidenceError as exc:
+            raise ResultContractError(str(exc)) from exc
+        _validate_unique_key(extension.table, extension.unique_key, extension.name)
+        _jsonable(extension.evidence)
+        result[extension.name] = extension
+    return result
+
+
+def _validate_extensions(
+    extensions: tuple[ResultExtension, ...],
+) -> tuple[dict[str, ResultExtension], dict[str, dict[str, object]]]:
+    result = _validate_extension_contracts(extensions)
+    summaries: dict[str, dict[str, object]] = {}
+    for extension in result.values():
         summary = _table_summary(extension.table)
         rows = summary["rows"]
         if not isinstance(rows, list):
@@ -588,8 +605,6 @@ def _validate_extensions(
             extension.name,
             rows=rows,
         )
-        _jsonable(extension.evidence)
-        result[extension.name] = extension
         summaries[extension.name] = summary
     return result, summaries
 
@@ -942,6 +957,8 @@ def _write_report(
         report_facts=report_facts,
         package_sha256=package_sha256,
     )
+    if any(phrase.encode("utf-8") in summary_bytes for phrase in FORBIDDEN_REPORT_PHRASES):
+        raise ResultContractError("execution report contains forbidden judgment")
     metrics.write_bytes(metrics_bytes)
     summary = report_dir / "execution-summary.md"
     summary.write_bytes(summary_bytes)
@@ -1100,16 +1117,6 @@ def _resolve_declared(
     return path
 
 
-def _validate_preloaded_payload(reference: object, payload: bytes, field: str) -> None:
-    if not isinstance(reference, Mapping):
-        raise ResultContractError(f"{field} reference is invalid")
-    if (
-        reference.get("bytes") != len(payload)
-        or reference.get("sha256") != hashlib.sha256(payload).hexdigest()
-    ):
-        raise ResultContractError(f"{field} preloaded payload does not match its reference")
-
-
 def _validate_table_entry(
     root: Path,
     name: str,
@@ -1118,9 +1125,6 @@ def _validate_table_entry(
     schema: pa.Schema | None,
     expected_path: str,
     extension: bool,
-    table: pa.Table | None = None,
-    summary: Mapping[str, object] | None = None,
-    physical_validated: bool = False,
 ) -> tuple[pa.Table, tuple[str, ...], dict[str, object]]:
     if not isinstance(entry_value, Mapping):
         raise ResultContractError(f"{name} declaration is invalid")
@@ -1165,13 +1169,11 @@ def _validate_table_entry(
         or reference.get("compression") != "snappy"
     ):
         raise ResultContractError(f"{name} Parquet declaration is invalid")
-    if not physical_validated:
-        _validate_physical_snappy(path, name)
-    if table is None:
-        try:
-            table = pq.read_table(path)
-        except Exception as exc:
-            raise ResultContractError(f"{name} Parquet readback failed") from exc
+    _validate_physical_snappy(path, name)
+    try:
+        table = pq.read_table(path)
+    except Exception as exc:
+        raise ResultContractError(f"{name} Parquet readback failed") from exc
     if table.num_rows != rows:
         raise ResultContractError(f"{name} row count mismatch")
     declared_schema = entry_value["schema"]
@@ -1185,9 +1187,7 @@ def _validate_table_entry(
     if evidence["fields"] != table.schema.names or not isinstance(evidence["unique_key"], list):
         raise ResultContractError(f"{name} evidence fields are invalid")
     unique_key = tuple(evidence["unique_key"])
-    materialized_summary = (
-        _table_summary(table) if summary is None else dict(summary)
-    )
+    materialized_summary = _table_summary(table)
     logical_rows = materialized_summary.get("rows")
     if not isinstance(logical_rows, list):
         raise ResultContractError(f"{name} logical rows are invalid")
@@ -1200,14 +1200,6 @@ def _validate_table_entry(
 def _validate_result_package_document(
     root: Path,
     document: object,
-    *,
-    preloaded_core: Mapping[str, pa.Table] | None = None,
-    preloaded_extensions: Mapping[str, pa.Table] | None = None,
-    preloaded_core_summaries: Mapping[str, Mapping[str, object]] | None = None,
-    preloaded_extension_summaries: Mapping[str, Mapping[str, object]] | None = None,
-    preloaded_inputs: _FrozenInputs | None = None,
-    preloaded_reports: Mapping[str, bytes] | None = None,
-    preloaded_report_facts: _ReportFacts | None = None,
 ) -> Mapping[str, object]:
     if not isinstance(document, dict):
         raise ResultContractError("manifest must be an object")
@@ -1315,12 +1307,6 @@ def _validate_result_package_document(
     datasets = document["datasets"]
     if not isinstance(datasets, Mapping) or set(datasets) != set(CORE_DATASETS):
         raise ResultContractError("result package datasets are invalid")
-    if preloaded_core is not None and set(preloaded_core) != set(CORE_DATASETS):
-        raise ResultContractError("preloaded core tables are incomplete")
-    if preloaded_core_summaries is not None and set(preloaded_core_summaries) != set(
-        CORE_DATASETS
-    ):
-        raise ResultContractError("preloaded core summaries are incomplete")
     core_tables: dict[str, pa.Table] = {}
     core_summaries: dict[str, dict[str, object]] = {}
     for name in CORE_DATASETS:
@@ -1331,13 +1317,6 @@ def _validate_result_package_document(
             schema=_SCHEMAS[name],
             expected_path=f"data/{name}.parquet",
             extension=False,
-            table=None if preloaded_core is None else preloaded_core[name],
-            summary=(
-                None
-                if preloaded_core_summaries is None
-                else preloaded_core_summaries[name]
-            ),
-            physical_validated=preloaded_core is not None,
         )
         if key != _UNIQUE_KEYS[name]:
             raise ResultContractError(f"{name} unique key does not match the contract")
@@ -1349,14 +1328,6 @@ def _validate_result_package_document(
     extensions_value = document["extensions"]
     if not isinstance(extensions_value, Mapping):
         raise ResultContractError("extensions declaration is invalid")
-    if preloaded_extensions is not None and set(preloaded_extensions) != set(
-        extensions_value
-    ):
-        raise ResultContractError("preloaded extension tables are incomplete")
-    if preloaded_extension_summaries is not None and set(
-        preloaded_extension_summaries
-    ) != set(extensions_value):
-        raise ResultContractError("preloaded extension summaries are incomplete")
     extension_content: dict[str, object] = {}
     extension_tables: dict[str, pa.Table] = {}
     for name, entry_value in extensions_value.items():
@@ -1379,17 +1350,6 @@ def _validate_result_package_document(
             schema=None,
             expected_path=f"extensions/{name}/data.parquet",
             extension=True,
-            table=(
-                None
-                if preloaded_extensions is None
-                else preloaded_extensions[name]
-            ),
-            summary=(
-                None
-                if preloaded_extension_summaries is None
-                else preloaded_extension_summaries[name]
-            ),
-            physical_validated=preloaded_extensions is not None,
         )
         extension_content[name] = {
             "schema_version": schema_version,
@@ -1408,38 +1368,15 @@ def _validate_result_package_document(
         "datasets": core_summaries,
         "extensions": extension_content,
     }
-    if preloaded_inputs is None:
-        content["code"] = {
-            name: hashlib.sha256(file.read_bytes()).hexdigest()
-            for name, file in resolved_sections["code"].items()
+    content["code"] = {
+        name: hashlib.sha256(file.read_bytes()).hexdigest()
+        for name, file in resolved_sections["code"].items()
+    }
+    for section in ("config", "evidence"):
+        content[section] = {
+            name: _read_json(file, f"{section}.{name}")
+            for name, file in resolved_sections[section].items()
         }
-        for section in ("config", "evidence"):
-            content[section] = {
-                name: _read_json(file, f"{section}.{name}")
-                for name, file in resolved_sections[section].items()
-            }
-    else:
-        preloaded_values: dict[str, Mapping[str, object] | Mapping[str, bytes]] = {
-            "code": preloaded_inputs.code,
-            "config": preloaded_inputs.config,
-            "evidence": preloaded_inputs.evidence,
-        }
-        for section, values in preloaded_values.items():
-            if set(values) != set(section_values[section]):
-                raise ResultContractError(f"preloaded {section} files are incomplete")
-            for name, value in values.items():
-                payload = value if isinstance(value, bytes) else _json_bytes(value)
-                _validate_preloaded_payload(
-                    section_values[section][name],
-                    payload,
-                    f"{section}.{name}",
-                )
-        content["code"] = {
-            name: hashlib.sha256(payload).hexdigest()
-            for name, payload in preloaded_inputs.code.items()
-        }
-        content["config"] = dict(preloaded_inputs.config)
-        content["evidence"] = dict(preloaded_inputs.evidence)
     scenario_document = content["config"].get("scenario.json")
     if (
         not isinstance(scenario_document, Mapping)
@@ -1451,33 +1388,20 @@ def _validate_result_package_document(
     if _canonical_digest(content) != document["package_sha256"]:
         raise ResultContractError("result package logical digest mismatch")
 
-    if preloaded_reports is None:
-        report_payloads = {
-            name: path.read_bytes()
-            for name, path in resolved_sections["reports"].items()
-        }
-    else:
-        if set(preloaded_reports) != set(report_paths):
-            raise ResultContractError("preloaded reports are incomplete")
-        report_payloads = dict(preloaded_reports)
-        for name, payload in report_payloads.items():
-            _validate_preloaded_payload(
-                reports[name], payload, f"reports.{name}"
-            )
+    report_payloads = {
+        name: path.read_bytes()
+        for name, path in resolved_sections["reports"].items()
+    }
     try:
         report_text = report_payloads["execution-summary"].decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ResultContractError("execution report is unreadable") from exc
     if any(phrase in report_text for phrase in FORBIDDEN_REPORT_PHRASES):
         raise ResultContractError("execution report contains forbidden judgment")
-    report_facts = (
-        _build_report_facts(
-            config=content["config"],
-            facts=facts,
-            extension_tables=extension_tables,
-        )
-        if preloaded_report_facts is None
-        else preloaded_report_facts
+    report_facts = _build_report_facts(
+        config=content["config"],
+        facts=facts,
+        extension_tables=extension_tables,
     )
     summary_bytes, metrics_bytes = _report_payloads(
         identity=identity,
@@ -1508,9 +1432,8 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
         raise ResultContractError("result package identity is incomplete")
     inputs = _freeze_request_inputs(request)
     core_started = time.perf_counter()
-    extensions, extension_summaries = _validate_extensions(request.extensions)
+    extensions = _validate_extension_contracts(request.extensions)
     facts = _materialize_core(request.execution)
-    core_summaries = _validate_common_facts(facts)
     writer_stages = {
         "core_facts": time.perf_counter() - core_started,
         "parquet_materialize": 0.0,
@@ -1519,6 +1442,8 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
     }
     target = Path(request.output_dir).resolve()
     if target.exists():
+        core_summaries = _validate_common_facts(facts)
+        _, extension_summaries = _validate_extensions(request.extensions)
         existing = validate_result_package(target)
         try:
             existing_performance = _read_json(
@@ -1558,6 +1483,14 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
         target.parent.mkdir(parents=True, exist_ok=True)
     elif not target.parent.is_dir():
         raise ResultContractError("pre-staged result parent is missing")
+    scenario_document = inputs.config.get("scenario.json")
+    if (
+        not isinstance(scenario_document, Mapping)
+        or scenario_document.get("scenario_id") != request.scenario_id
+    ):
+        raise ResultContractError(
+            "result package scenario identity differs from frozen configuration"
+        )
     staging = (
         target.parent / f".{request.run_id}.{uuid.uuid4().hex}.tmp"
         if request.atomic_publish
@@ -1581,6 +1514,20 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
         readback_facts, readback_extensions = _readback_tables(
             staging, facts, extensions
         )
+        core_summaries = _validate_common_facts(readback_facts)
+        extension_summaries: dict[str, dict[str, object]] = {}
+        for name, extension in extensions.items():
+            summary = _table_summary(readback_extensions[name])
+            rows = summary["rows"]
+            if not isinstance(rows, list):
+                raise ResultContractError("extension logical rows are invalid")
+            _validate_unique_key(
+                readback_extensions[name],
+                extension.unique_key,
+                name,
+                rows=rows,
+            )
+            extension_summaries[name] = summary
         writer_stages["readback_validate"] = time.perf_counter() - readback_started
 
         report_started = time.perf_counter()
@@ -1595,65 +1542,14 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
             extensions,
             readback_extensions,
         )
-        provisional_inputs = _with_writer_stages(
-            inputs,
-            writer_stages,
-            request.performance_finalizer,
-        )
-        provisional_sha256 = _canonical_digest(
-            _content_document(
-                request,
-                provisional_inputs,
-                extensions,
-                core_summaries,
-                extension_summaries,
-            )
-        )
-        provisional_evidence = _write_documents(
-            staging,
-            "evidence",
-            provisional_inputs.evidence,
-        )
-        reports, report_payloads = _write_report(
-            staging,
-            request,
-            provisional_inputs,
-            report_facts,
-            provisional_sha256,
-        )
-        manifest = _manifest(
-            request,
-            provisional_sha256,
-            code,
-            config,
-            provisional_evidence,
-            reports,
-            datasets,
-            extension_entries,
-        )
-        (staging / "manifest.json").write_bytes(_json_bytes(manifest))
-        _validate_result_package_document(
-            staging.resolve(),
-            manifest,
-            preloaded_core=readback_facts.tables(),
-            preloaded_extensions=readback_extensions,
-            preloaded_core_summaries=core_summaries,
-            preloaded_extension_summaries=extension_summaries,
-            preloaded_inputs=provisional_inputs,
-            preloaded_reports=report_payloads,
-            preloaded_report_facts=report_facts,
-        )
         writer_stages["report_and_manifest"] = time.perf_counter() - report_started
-        first_full_pass_seconds = time.perf_counter() - writer_started
-        gate_measured_seconds = time.perf_counter() - writer_started
-
         final_inputs = _with_writer_stages(
             inputs,
             writer_stages,
             request.performance_finalizer,
             writer_measurement={
-                "first_full_pass_seconds": first_full_pass_seconds,
-                "gate_measured_seconds": gate_measured_seconds,
+                "first_full_pass_seconds": time.perf_counter() - writer_started,
+                "gate_measured_seconds": time.perf_counter() - writer_started,
             },
         )
         package_sha256 = _canonical_digest(

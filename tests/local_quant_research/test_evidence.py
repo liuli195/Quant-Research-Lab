@@ -137,195 +137,34 @@ def test_execution_digest_scans_shared_run_and_arrays_once(
     }
 
 
-def test_execution_digest_streams_arrow_extension_without_to_pylist() -> None:
-    class StreamingTable:
-        def __init__(self) -> None:
-            self._table = pa.table(
-                {"value": pa.array([1.0, None, float("nan")])}
-            )
-            self.schema = self._table.schema
-            self.num_rows = self._table.num_rows
-
-        def to_pylist(self) -> list[object]:
-            pytest.fail("extension digest must not Python-materialize all rows")
-
-        def slice(self, offset: int, length: int) -> pa.Table:
-            return self._table.slice(offset, length)
-
-    empty = np.empty(0, dtype=[("value", "i8")])
-
-    class Ledger:
-        orders = assets = cash = value = trades = positions = returns = empty
-
-    run = ExecutionRun(ledger=Ledger(), trace={})
-    extension = ResultExtension(
-        name="streamed",
-        schema_version="streamed/1",
-        table=StreamingTable(),  # type: ignore[arg-type]
-        unique_key=("value",),
-        evidence={},
-    )
-
-    assert len(execution_digest(ExecutionBundle(run, run, ("primary",)), (extension,))) == 64
+@pytest.mark.parametrize(
+    "table",
+    (
+        pa.table({"value": pa.array([["nested"]])}),
+        pa.table({"value": pa.array([float("nan")], type=pa.float64())}),
+        pa.table({"value": pa.array([1], type=pa.int32())}),
+        pa.table(
+            {
+                "value": pa.DictionaryArray.from_arrays(
+                    pa.array([0], type=pa.int8()), pa.array(["value"])
+                )
+            }
+        ),
+    ),
+)
+def test_extension_table_rejects_non_flat_or_nan_values(table: pa.Table) -> None:
+    with pytest.raises(EvidenceError, match="extension"):
+        evidence.validate_extension_table(table)
 
 
-def test_arrow_digest_distinguishes_equal_length_slices_with_different_values() -> None:
-    base = pa.table({"value": pa.array([1, 2, 3], type=pa.int64())})
-
-    first = evidence._arrow_table_digest(base.slice(0, 2))
-    second = evidence._arrow_table_digest(base.slice(1, 2))
-
-    assert first["sha256"] != second["sha256"]
-
-
-def test_arrow_digest_binds_dictionary_values() -> None:
-    indices = pa.array([0, 1, 0], type=pa.int8())
-    first = pa.table(
+def test_extension_table_accepts_flat_values_and_arrow_nulls() -> None:
+    table = pa.table(
         {
-            "value": pa.DictionaryArray.from_arrays(
-                indices,
-                pa.array(["a", "b"]),
-            )
-        }
-    )
-    second = pa.table(
-        {
-            "value": pa.DictionaryArray.from_arrays(
-                indices,
-                pa.array(["x", "y"]),
-            )
+            "text": pa.array(["value", None], type=pa.string()),
+            "flag": pa.array([True, None], type=pa.bool_()),
+            "count": pa.array([1, None], type=pa.int64()),
+            "score": pa.array([1.0, None], type=pa.float64()),
         }
     )
 
-    assert evidence._arrow_table_digest(first)["sha256"] != evidence._arrow_table_digest(second)["sha256"]
-
-
-def test_arrow_digest_uses_decoded_values_across_dictionary_chunk_encodings() -> None:
-    def dictionary_array(
-        indices: list[int],
-        dictionary: list[str],
-    ) -> pa.DictionaryArray:
-        return pa.DictionaryArray.from_arrays(
-            pa.array(indices, type=pa.int8()),
-            pa.array(dictionary),
-        )
-
-    single = pa.table(
-        {"value": dictionary_array([0, 1, 0], ["a", "b"])}
-    )
-    chunked = pa.Table.from_arrays(
-        [
-            pa.chunked_array(
-                [
-                    dictionary_array([1], ["b", "a"]),
-                    dictionary_array([1, 0], ["a", "b"]),
-                ]
-            )
-        ],
-        names=["value"],
-    )
-    different = pa.table(
-        {"value": dictionary_array([0, 1, 1], ["a", "b"])}
-    )
-
-    single_digest = evidence._arrow_table_digest(single)["sha256"]
-    assert single_digest == evidence._arrow_table_digest(chunked)["sha256"]
-    assert single_digest != evidence._arrow_table_digest(different)["sha256"]
-
-
-def test_arrow_digest_normalizes_dictionary_inside_nested_struct() -> None:
-    def dictionary_array(
-        indices: list[int],
-        dictionary: list[str],
-    ) -> pa.DictionaryArray:
-        return pa.DictionaryArray.from_arrays(
-            pa.array(indices, type=pa.int8()),
-            pa.array(dictionary),
-        )
-
-    def struct_array(
-        labels: pa.DictionaryArray,
-        scores: list[int],
-    ) -> pa.StructArray:
-        return pa.StructArray.from_arrays(
-            [labels, pa.array(scores, type=pa.int64())],
-            names=["label", "score"],
-        )
-
-    single = pa.table(
-        {
-            "nested": struct_array(
-                dictionary_array([0, 1, 0], ["a", "b"]),
-                [1, 2, 3],
-            )
-        }
-    )
-    chunked = pa.Table.from_arrays(
-        [
-            pa.chunked_array(
-                [
-                    struct_array(dictionary_array([1], ["b", "a"]), [1]),
-                    struct_array(
-                        dictionary_array([1, 0], ["a", "b"]),
-                        [2, 3],
-                    ),
-                ]
-            )
-        ],
-        names=["nested"],
-    )
-
-    assert evidence._arrow_table_digest(single)["sha256"] == evidence._arrow_table_digest(chunked)["sha256"]
-
-
-def test_arrow_digest_is_chunk_independent_for_nested_null_and_nan_values() -> None:
-    nested_type = pa.struct(
-        [
-            pa.field("items", pa.list_(pa.float64())),
-            pa.field("label", pa.string()),
-        ]
-    )
-    values = [
-        {"items": [1.0, None, float("nan")], "label": "a"},
-        None,
-        {"items": [], "label": "b"},
-    ]
-    single = pa.table({"nested": pa.array(values, type=nested_type)})
-    chunked = pa.Table.from_arrays(
-        [
-            pa.chunked_array(
-                [
-                    pa.array(values[:1], type=nested_type),
-                    pa.array(values[1:], type=nested_type),
-                ]
-            )
-        ],
-        names=["nested"],
-    )
-
-    assert evidence._arrow_table_digest(single)["sha256"] == evidence._arrow_table_digest(chunked)["sha256"]
-
-
-def test_arrow_digest_binds_field_order_and_null_nan_distinction() -> None:
-    first = pa.table(
-        {
-            "left": pa.array([None], type=pa.float64()),
-            "right": pa.array([float("nan")], type=pa.float64()),
-        }
-    )
-    reordered = pa.table(
-        {
-            "right": pa.array([float("nan")], type=pa.float64()),
-            "left": pa.array([None], type=pa.float64()),
-        }
-    )
-    swapped = pa.table(
-        {
-            "left": pa.array([float("nan")], type=pa.float64()),
-            "right": pa.array([None], type=pa.float64()),
-        }
-    )
-
-    first_digest = evidence._arrow_table_digest(first)["sha256"]
-    assert first_digest != evidence._arrow_table_digest(reordered)["sha256"]
-    assert first_digest != evidence._arrow_table_digest(swapped)["sha256"]
+    evidence.validate_extension_table(table)

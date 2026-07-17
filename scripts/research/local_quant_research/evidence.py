@@ -10,10 +10,11 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import numpy as np
 
-from .contracts import ExecutionBundle, OutputSpec, ResultExtension
+from .contracts import ExecutionBundle, OutputSpec
 
 
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -68,74 +69,20 @@ def _array_digest(value: np.ndarray) -> dict[str, object]:
     }
 
 
-def _decoded_arrow_field(field: pa.Field) -> pa.Field:
-    decoded_type = _decoded_arrow_type(field.type)
-    if decoded_type == field.type:
-        return field
-    return pa.field(
-        field.name,
-        decoded_type,
-        nullable=field.nullable,
-        metadata=field.metadata,
-    )
-
-
-def _decoded_arrow_type(data_type: pa.DataType) -> pa.DataType:
-    if pa.types.is_dictionary(data_type):
-        return _decoded_arrow_type(data_type.value_type)
-    if pa.types.is_list(data_type):
-        return pa.list_(_decoded_arrow_field(data_type.value_field))
-    if pa.types.is_large_list(data_type):
-        return pa.large_list(_decoded_arrow_field(data_type.value_field))
-    if pa.types.is_fixed_size_list(data_type):
-        return pa.list_(
-            _decoded_arrow_field(data_type.value_field),
-            data_type.list_size,
-        )
-    if pa.types.is_struct(data_type):
-        return pa.struct([_decoded_arrow_field(field) for field in data_type])
-    if pa.types.is_map(data_type):
-        return pa.map_(
-            _decoded_arrow_type(data_type.key_type),
-            _decoded_arrow_type(data_type.item_type),
-            keys_sorted=data_type.keys_sorted,
-        )
-    return data_type
-
-
-def _arrow_table_digest(table: object) -> dict[str, object]:
-    source_schema = table.schema
-    decoded_fields = [_decoded_arrow_field(field) for field in source_schema]
-    schema = (
-        source_schema
-        if all(decoded is source for decoded, source in zip(decoded_fields, source_schema))
-        else pa.schema(decoded_fields, metadata=source_schema.metadata)
-    )
-    schema_buffer = schema.serialize()
-    digest = hashlib.sha256()
-    digest.update(memoryview(schema_buffer))
-    rows = int(table.num_rows)
-    windows = 0
-    for offset in range(0, rows, 65_536):
-        length = min(65_536, rows - offset)
-        window = table.slice(offset, length)
-        if schema != source_schema:
-            window = window.cast(schema, safe=True)
-        window = window.combine_chunks()
-        sink = pa.BufferOutputStream()
-        with pa.ipc.new_stream(sink, schema) as writer:
-            writer.write_table(window, max_chunksize=length)
-        payload = sink.getvalue()
-        digest.update(length.to_bytes(8, "little", signed=False))
-        digest.update(len(payload).to_bytes(8, "little", signed=False))
-        digest.update(memoryview(payload))
-        windows += 1
-    return {
-        "schema_sha256": hashlib.sha256(memoryview(schema_buffer)).hexdigest(),
-        "rows": rows,
-        "windows": windows,
-        "sha256": digest.hexdigest(),
-    }
+def validate_extension_table(table: object) -> None:
+    if not isinstance(table, pa.Table):
+        raise EvidenceError("extension table must be an Arrow table")
+    try:
+        table.validate(full=True)
+    except pa.ArrowException as exc:
+        raise EvidenceError("extension table is invalid") from exc
+    for field in table.schema:
+        if field.type not in (pa.string(), pa.bool_(), pa.int64(), pa.float64()):
+            raise EvidenceError("extension fields must use flat string/bool/int64/float64 types")
+        if pa.types.is_float64(field.type) and bool(
+            pc.any(pc.is_nan(table[field.name])).as_py()
+        ):
+            raise EvidenceError("extension float values must use Arrow null instead of NaN")
 
 
 def _run_digest_document(run: object) -> dict[str, object]:
@@ -168,7 +115,6 @@ def _run_digest_document(run: object) -> dict[str, object]:
 
 def execution_digest(
     execution: ExecutionBundle,
-    extensions: Sequence[ResultExtension] = (),
 ) -> str:
     primary_document = _run_digest_document(execution.primary)
     run_documents: dict[str, object] = {"primary": primary_document}
@@ -180,16 +126,6 @@ def execution_digest(
         "stages": list(execution.stages),
         "runs": run_documents,
     }
-    document["extensions"] = [
-        {
-            "name": extension.name,
-            "schema_version": extension.schema_version,
-            "unique_key": list(extension.unique_key),
-            "evidence": dict(extension.evidence),
-            "table": _arrow_table_digest(extension.table),
-        }
-        for extension in extensions
-    ]
     return canonical_digest(document)
 
 

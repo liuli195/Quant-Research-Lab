@@ -436,49 +436,19 @@ def test_writer_reads_each_materialized_parquet_table_only_once(
     )
 
 
-def test_writer_finalize_never_repeats_full_table_work_or_full_validator(
+def test_writer_uses_its_single_readback_without_calling_disk_validator(
     package_request: ResultPackageRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from scripts.research.local_quant_research import result_package
 
-    full_pass_finished = False
-    validation_calls = 0
-    real_validate = result_package._validate_result_package_document
-    real_time_range = result_package._time_range
-    real_column_sum = result_package._column_sum
-    real_common = result_package._validate_common_facts
+    def fail_validator(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("writer must not call the public disk validator")
 
-    def validating(*args: object, **kwargs: object):
-        nonlocal full_pass_finished, validation_calls
-        validation_calls += 1
-        value = real_validate(*args, **kwargs)
-        full_pass_finished = True
-        return value
-
-    def no_late_time_range(*args: object, **kwargs: object):
-        if full_pass_finished:
-            pytest.fail("finalize repeated an O(N) table time-range scan")
-        return real_time_range(*args, **kwargs)
-
-    def no_late_column_sum(*args: object, **kwargs: object):
-        if full_pass_finished:
-            pytest.fail("finalize repeated an O(N) report aggregation")
-        return real_column_sum(*args, **kwargs)
-
-    def no_late_common(*args: object, **kwargs: object):
-        if full_pass_finished:
-            pytest.fail("finalize repeated common facts validation")
-        return real_common(*args, **kwargs)
-
-    monkeypatch.setattr(result_package, "_validate_result_package_document", validating)
-    monkeypatch.setattr(result_package, "_time_range", no_late_time_range)
-    monkeypatch.setattr(result_package, "_column_sum", no_late_column_sum)
-    monkeypatch.setattr(result_package, "_validate_common_facts", no_late_common)
+    monkeypatch.setattr(result_package, "validate_result_package", fail_validator)
+    monkeypatch.setattr(result_package, "_validate_result_package_document", fail_validator)
 
     write_result_package(package_request)
-
-    assert validation_calls == 1
 
 
 def test_writer_persists_first_full_pass_and_gate_measurement_scope(

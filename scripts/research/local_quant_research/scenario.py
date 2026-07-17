@@ -10,7 +10,13 @@ from scripts.research.market_data.query import SnapshotView
 from .contracts import ExecutionBundle, ResultExtension
 from .evidence import execution_digest
 from .performance import PerformanceEvidence, include_shared_work, run_cold_warm
-from .result_package import ResultPackage, ResultPackageRequest, write_result_package
+from .result_package import (
+    ResultContractError,
+    ResultPackage,
+    ResultPackageRequest,
+    _validate_extension_contracts,
+    write_result_package,
+)
 from .strategy_loader import LoadedStrategy
 from .vectorbt_runtime import run_vectorbt
 
@@ -100,12 +106,31 @@ def _engine_once(request: ScenarioRequest) -> _EngineOutcome:
 
 
 def execute_scenario(request: ScenarioRequest) -> ScenarioOutcome:
+    cold_extensions: tuple[ResultExtension, ...] | None = None
+
+    def digest(outcome: _EngineOutcome) -> str:
+        nonlocal cold_extensions
+        _validate_extension_contracts(outcome.extensions)
+        if cold_extensions is None:
+            cold_extensions = outcome.extensions
+        else:
+            if len(cold_extensions) != len(outcome.extensions):
+                raise ResultContractError("cold and warm extension counts differ")
+            for cold, warm in zip(cold_extensions, outcome.extensions, strict=True):
+                if (
+                    cold.name != warm.name
+                    or cold.schema_version != warm.schema_version
+                    or cold.unique_key != warm.unique_key
+                    or dict(cold.evidence) != dict(warm.evidence)
+                    or not cold.table.schema.equals(warm.table.schema, check_metadata=True)
+                    or not cold.table.equals(warm.table, check_metadata=True)
+                ):
+                    raise ResultContractError("cold and warm extensions differ")
+        return execution_digest(outcome.execution)
+
     warm, performance = run_cold_warm(
         lambda: _engine_once(request),
-        digest=lambda outcome: execution_digest(
-            outcome.execution,
-            outcome.extensions,
-        ),
+        digest=digest,
     )
     scenario_id = request.scenario.get("scenario_id")
     if not isinstance(scenario_id, str) or not scenario_id.strip():

@@ -479,6 +479,55 @@ def test_same_complete_identity_is_revalidated_and_reused_without_execution(
     assert _tree_digests(second.run_path) == before
 
 
+def test_invalid_extension_type_fails_before_cold_warm_comparison(
+    repo_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_root, config_path, _ = _build_repo(tmp_path, repo_root)
+    strategy = fake_root / "projects/generic-research/strategy.py"
+    strategy.write_text(
+        strategy.read_text(encoding="utf-8")
+        .replace("import numpy as np", "import numpy as np\nimport pyarrow as pa")
+        .replace("extension_names=(),", 'extension_names=("invalid",),')
+        .replace(
+            "return ()",
+            "return (ResultExtension(\n"
+            "    name=\"invalid\",\n"
+            "    schema_version=\"invalid/1\",\n"
+            "    table=pa.table({\"value\": pa.array([[\"nested\"]])}),\n"
+            "    unique_key=(\"value\",),\n"
+            "    evidence={},\n"
+            "),)",
+        ),
+        encoding="utf-8",
+    )
+    def result_contract_process(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        from scripts.research.local_quant_research.result_package import ResultContractError
+        from scripts.research.local_quant_research.runner import execute_frozen_inputs
+
+        try:
+            document = execute_frozen_inputs(
+                Path(command[command.index("--frozen-inputs") + 1]),
+                _output_dir(command),
+            )
+        except ResultContractError:
+            document = {"status": "failed", "reasons": ["result_contract_failed"]}
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            stdout=json.dumps(document, sort_keys=True),
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", result_contract_process)
+
+    result = run_project(config_path, repo_root=fake_root)
+
+    assert result.status == "failed"
+    assert result.reasons == ("result_contract_failed",)
+
+
 def test_complete_run_with_non_complete_package_status_is_not_reused(
     repo_root: Path,
     tmp_path: Path,
