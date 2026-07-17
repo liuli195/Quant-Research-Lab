@@ -297,8 +297,10 @@
           "-m",
           "pytest",
           "tests\\local_quant_research",
-          "-k",
-          "not test_non_strategy_project_completes_through_shared_market_and_runner"
+          "tests\\quant_analysis",
+          "--ignore=tests\\local_quant_research\\test_generic_e2e.py",
+          "--ignore=tests\\local_quant_research\\test_turtle_e2e.py",
+          "--ignore=tests\\local_quant_research\\test_local_research_v2_e2e.py"
         ],
         "paths": [
           ".agents/skills/run-local-quant-research/**",
@@ -328,7 +330,8 @@
           "requirements-dev.txt"
         ],
         "checkParallel": true,
-        "pytestXdistWorkers": 4
+        "pytestXdistWorkers": 4,
+        "timeoutSeconds": 300
       },
       {
         "id": "verify.local-quant-research-e2e",
@@ -337,7 +340,8 @@
           "-m",
           "pytest",
           "tests\\local_quant_research\\test_generic_e2e.py",
-          "tests\\local_quant_research\\test_turtle_e2e.py"
+          "tests\\local_quant_research\\test_turtle_e2e.py",
+          "tests\\local_quant_research\\test_local_research_v2_e2e.py"
         ],
         "paths": [
           ".agents/skills/run-local-quant-research/**",

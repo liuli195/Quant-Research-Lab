@@ -2,14 +2,28 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter
 from pathlib import Path
 
+import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from scripts.research.analysis_data.manifest import AnalysisManifestError
+from scripts.research.analysis_data.manifest import (
+    AnalysisManifestError,
+    open_analysis_source,
+)
 from scripts.research.analysis_data.views import open_analysis_database
+from scripts.research.local_quant_research.contracts import (
+    ExecutionBundle,
+    ExecutionRun,
+    ResultExtension,
+)
+from scripts.research.local_quant_research.result_package import (
+    ResultPackageRequest,
+    write_result_package,
+)
 
 
 SHA_FIELDS = ("path", "sha256", "bytes")
@@ -205,6 +219,279 @@ def _tree_sha(root: Path) -> str:
         digest.update(path.relative_to(root).as_posix().encode())
         digest.update(hashlib.sha256(path.read_bytes()).digest())
     return digest.hexdigest()
+
+
+class _AnalysisLedger:
+    @property
+    def orders(self) -> np.ndarray:
+        return np.array(
+            [],
+            dtype=[
+                ("match_time", "O"),
+                ("pindex", "i8"),
+                ("cancel_time", "O"),
+                ("action", "U8"),
+                ("limit_price", "f8"),
+                ("comment", "U8"),
+                ("entrust_time", "U19"),
+                ("finish_time", "O"),
+                ("side", "U8"),
+                ("price", "f8"),
+                ("commission", "f8"),
+                ("gains", "f8"),
+                ("type", "U8"),
+                ("time", "U19"),
+                ("security_name", "U16"),
+                ("security", "U16"),
+                ("filled", "i8"),
+                ("amount", "i8"),
+                ("status", "U8"),
+            ],
+        )
+
+    @property
+    def assets(self) -> np.ndarray:
+        return np.array(
+            [],
+            dtype=[
+                ("pindex", "i8"),
+                ("avg_cost", "f8"),
+                ("margin", "f8"),
+                ("amount", "f8"),
+                ("today_amount", "i8"),
+                ("hold_cost", "f8"),
+                ("side", "U8"),
+                ("price", "f8"),
+                ("gains", "f8"),
+                ("daily_gains", "f8"),
+                ("closeable_amount", "i8"),
+                ("time", "U19"),
+                ("security_name", "U16"),
+                ("security", "U16"),
+            ],
+        )
+
+    @property
+    def cash(self) -> np.ndarray:
+        return np.array(
+            [("2024-01-02 16:00:00", 100.0), ("2024-01-03 16:00:00", 110.0)],
+            dtype=[("time", "U19"), ("cash", "f8")],
+        )
+
+    @property
+    def value(self) -> np.ndarray:
+        return np.array(
+            [
+                ("2024-01-02 16:00:00", 100.0, 0.0, np.nan),
+                ("2024-01-03 16:00:00", 110.0, 0.1, np.nan),
+            ],
+            dtype=[
+                ("time", "U19"),
+                ("total_value", "f8"),
+                ("returns", "f8"),
+                ("benchmark_returns", "f8"),
+            ],
+        )
+
+
+def _write_result_package(root: Path) -> Path:
+    code = root.parent / "strategy.py"
+    code.write_text("VALUE = 1\n", encoding="utf-8")
+    ledger = _AnalysisLedger()
+    run = ExecutionRun(ledger=ledger, trace={})
+    package = write_result_package(
+        ResultPackageRequest(
+            strategy_id="minimal",
+            scenario_id="baseline",
+            run_id="run-analysis",
+            output_dir=root,
+            execution=ExecutionBundle(primary=run, final=run, stages=("primary",)),
+            extensions=(
+                ResultExtension(
+                    name="signals",
+                    schema_version="signals/1",
+                    table=pa.table({"event_id": ["signal-1"], "score": [0.5]}),
+                    unique_key=("event_id",),
+                    evidence={"status": "complete"},
+                ),
+            ),
+            code_files={"strategy.py": code},
+            config_documents={
+                "scenario.json": {"scenario_id": "baseline"},
+                "project-run.json": {"schema_version": 2},
+                "code-identity.json": {"digest": "b" * 64},
+            },
+            evidence_documents={
+                "market-snapshot.json": {"snapshot_id": "a" * 64},
+                "runtime-lock.json": {"python": "3.12"},
+                "performance.json": {"status": "pass"},
+                "environment.json": {"platform": "windows"},
+            },
+        )
+    )
+    return package.path
+
+
+def _sync_package_reference(
+    root: Path, manifest: dict[str, object], dataset: str
+) -> None:
+    path = root / f"data/{dataset}.parquet"
+    reference = manifest["datasets"][dataset]["files"][0]
+    reference["sha256"] = _sha(path)
+    reference["bytes"] = path.stat().st_size
+
+
+def test_local_research_package_exposes_identity_core_and_named_extension(
+    tmp_path: Path,
+) -> None:
+    root = _write_result_package(tmp_path / "result")
+    source = open_analysis_source(root)
+
+    assert source.kind == "local_research"
+    assert source.authority == "local_research"
+    assert source.backend == "vectorbt"
+    assert source.formula_version == "unified-strategy-analysis/1"
+    assert set(source.manifest["datasets"]) == {
+        "results",
+        "balances",
+        "positions",
+        "orders",
+    }
+
+    with open_analysis_database(root) as database:
+        assert database.table_names == ("results", "balances", "positions", "orders")
+        assert database.connection.sql("select count(*) from results").fetchone() == (2,)
+        assert database.extension("signals").fetchall() == [("signal-1", 0.5)]
+        with pytest.raises(KeyError, match="unknown"):
+            database.extension("unknown")
+
+
+def test_open_analysis_source_summarizes_each_core_table_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import result_package
+
+    root = _write_result_package(tmp_path / "result")
+    names_by_fields = {
+        tuple(schema.names): name for name, schema in result_package._SCHEMAS.items()
+    }
+    summaries: Counter[str] = Counter()
+    real_summary = result_package._table_summary
+
+    def counting_summary(table: pa.Table) -> dict[str, object]:
+        name = names_by_fields.get(tuple(table.schema.names))
+        if name is not None:
+            summaries[name] += 1
+        return real_summary(table)
+
+    monkeypatch.setattr(result_package, "_table_summary", counting_summary)
+
+    open_analysis_source(root)
+
+    assert summaries == Counter(
+        {name: 1 for name in result_package.CORE_DATASETS}
+    )
+
+
+def test_local_research_rejects_noncanonical_core_path_before_query(
+    tmp_path: Path,
+) -> None:
+    root = _write_result_package(tmp_path / "result")
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    reference = manifest["datasets"]["results"]["files"][0]
+    source = root / str(reference["path"])
+    replacement = root / "data/renamed-results.parquet"
+    replacement.write_bytes(source.read_bytes())
+    reference["path"] = replacement.relative_to(root).as_posix()
+    reference["sha256"] = _sha(replacement)
+    reference["bytes"] = replacement.stat().st_size
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+    )
+
+    with pytest.raises(AnalysisManifestError, match="file identity"):
+        open_analysis_database(root)
+
+
+def test_local_research_extension_digest_is_validated_before_query(
+    tmp_path: Path,
+) -> None:
+    root = _write_result_package(tmp_path / "result")
+    extension = root / "extensions/signals/data.parquet"
+    extension.write_bytes(extension.read_bytes() + b"tampered")
+
+    with pytest.raises(AnalysisManifestError, match="digest"):
+        open_analysis_database(root)
+
+
+@pytest.mark.parametrize(
+    "tampering",
+    ["schema", "unique_key", "time_range", "reconciliation", "package_sha"],
+)
+def test_local_research_source_rejects_untruthful_complete_contract(
+    tmp_path: Path,
+    tampering: str,
+) -> None:
+    root = _write_result_package(tmp_path / "result")
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    if tampering == "schema":
+        path = root / "data/results.parquet"
+        table = pq.read_table(path)
+        replacement = table.set_column(
+            table.schema.get_field_index("returns"),
+            pa.field("returns", pa.float32(), nullable=False),
+            pa.array(table["returns"].to_pylist(), type=pa.float32()),
+        )
+        pq.write_table(replacement, path, compression="snappy")
+        manifest["datasets"]["results"]["schema"] = [
+            {"name": field.name, "type": str(field.type), "nullable": field.nullable}
+            for field in replacement.schema
+        ]
+        _sync_package_reference(root, manifest, "results")
+    elif tampering == "unique_key":
+        path = root / "data/results.parquet"
+        table = pq.read_table(path)
+        repeated_time = table["time"][0].as_py()
+        replacement = table.set_column(
+            table.schema.get_field_index("time"),
+            table.schema.field("time"),
+            pa.array([repeated_time] * table.num_rows, type=pa.string()),
+        )
+        pq.write_table(replacement, path, compression="snappy")
+        repeated_date = str(repeated_time)[:10]
+        manifest["datasets"]["results"]["time_range"] = {
+            "start": repeated_date,
+            "end": repeated_date,
+        }
+        _sync_package_reference(root, manifest, "results")
+    elif tampering == "time_range":
+        manifest["datasets"]["results"]["time_range"] = {
+            "start": "2020-01-01",
+            "end": "2020-01-02",
+        }
+    elif tampering == "reconciliation":
+        path = root / "data/balances.parquet"
+        table = pq.read_table(path)
+        replacement = table.set_column(
+            table.schema.get_field_index("total_value"),
+            table.schema.field("total_value"),
+            pa.array([100.0, 999.0], type=pa.float64()),
+        )
+        pq.write_table(replacement, path, compression="snappy")
+        _sync_package_reference(root, manifest, "balances")
+    else:
+        manifest["package_sha256"] = "f" * 64
+
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+    )
+
+    with pytest.raises(AnalysisManifestError):
+        open_analysis_source(root)
 
 
 def test_joinquant_source_builds_six_read_only_logical_views(repo_root: Path) -> None:

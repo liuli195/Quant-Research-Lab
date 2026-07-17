@@ -16,7 +16,7 @@ RESEARCH_ROOT = (
 )
 sys.path.insert(0, str(RESEARCH_ROOT))
 
-from turtle_etf.indicators import breakout_levels, true_range, turtle_n  # noqa: E402
+from turtle_etf._kernel import breakout_levels, true_range, turtle_n  # noqa: E402
 
 
 def test_true_range_uses_all_three_unadjusted_price_components() -> None:

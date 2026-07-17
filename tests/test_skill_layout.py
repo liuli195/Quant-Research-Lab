@@ -129,15 +129,19 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
         "-m",
         "pytest",
         "tests\\local_quant_research",
-        "-k",
-        "not test_non_strategy_project_completes_through_shared_market_and_runner",
+        "tests\\quant_analysis",
+        "--ignore=tests\\local_quant_research\\test_generic_e2e.py",
+        "--ignore=tests\\local_quant_research\\test_turtle_e2e.py",
+        "--ignore=tests\\local_quant_research\\test_local_research_v2_e2e.py",
     ]
+    assert unit["timeoutSeconds"] == 300
     assert e2e["command"] == [
         ".\\.venv\\Scripts\\python.exe",
         "-m",
         "pytest",
         "tests\\local_quant_research\\test_generic_e2e.py",
         "tests\\local_quant_research\\test_turtle_e2e.py",
+        "tests\\local_quant_research\\test_local_research_v2_e2e.py",
     ]
     required_paths = {
         ".agents/skills/run-local-quant-research/**",

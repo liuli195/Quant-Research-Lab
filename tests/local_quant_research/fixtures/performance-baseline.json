@@ -1,0 +1,550 @@
+{
+  "collection": {
+    "cold_process_model": "independent_process_per_sample",
+    "entrypoint": "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_cli.py",
+    "memory_method": "ctypes.GetProcessMemoryInfo",
+    "python": ".venv/Scripts/python.exe",
+    "warm_process_model": "same_process_for_all_samples"
+  },
+  "environment": {
+    "architecture": "AMD64",
+    "dependencies": {
+      "numba": "0.66.0",
+      "numpy": "2.4.6",
+      "pandas": "3.0.3",
+      "pyarrow": "23.0.1",
+      "vectorbt": "1.1.0"
+    },
+    "logical_cpu_count": 20,
+    "os": "Windows",
+    "os_release": "11",
+    "os_version": "10.0.26200",
+    "physical_memory_bytes": 34163961856,
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "python": "3.12.10"
+  },
+  "environment_identity_sha256": "841d513675d3f36677e772a5104b077317ae50747d4dea0dd4026f6b7cc7f5b2",
+  "sampling": {
+    "cold_processes": 3,
+    "full_cli_cold_processes": 3,
+    "statistic": "median",
+    "warm_runs": 5
+  },
+  "scenarios": {
+    "immediate-11-etf": {
+      "cleanup": {
+        "isolated_output_roots_removed": true,
+        "verified": true
+      },
+      "collected_files": [
+        "code.py",
+        "data/attribution_log-6f320f99d95bb284ccd2086e56f133e2396611b864a3f22a8468c0fbcde9ea1e.parquet",
+        "data/balances.parquet",
+        "data/orders.parquet",
+        "data/positions.parquet",
+        "data/results.parquet",
+        "manifest.json",
+        "params.json",
+        "params_versions/21e7733e5e92a97c233bcb5afce69434da19d040ef33dc8cee670c8249f8240b.json",
+        "performance.json"
+      ],
+      "cold_process": {
+        "median_package_bytes": 1301907,
+        "median_peak_memory_mib": 742.508,
+        "median_seconds": 27.350171,
+        "samples": [
+          {
+            "package_bytes": 1301908,
+            "peak_working_set_bytes": 776437760,
+            "process_id": 25056,
+            "sample_id": "cold-1",
+            "seconds": 27.350171
+          },
+          {
+            "package_bytes": 1301907,
+            "peak_working_set_bytes": 779202560,
+            "process_id": 12264,
+            "sample_id": "cold-2",
+            "seconds": 27.328044
+          },
+          {
+            "package_bytes": 1301907,
+            "peak_working_set_bytes": 778575872,
+            "process_id": 8184,
+            "sample_id": "cold-3",
+            "seconds": 27.379933
+          }
+        ]
+      },
+      "fixed_files_bytes": 20681,
+      "full_cli_cold": {
+        "median_seconds": 68.205946,
+        "samples": [
+          {
+            "cold_cli_total_seconds": 68.41595,
+            "package_sha256": "c56a87780723d01bedcc2c955673b01375bb84e7106295adb620505433427f8a",
+            "pid": 39180,
+            "post_publish_validation": "passed",
+            "reused": false,
+            "run_id": "52225816e08779b0d7fa607f055ee57666c432f982e37c03d540f5e85bd08e35",
+            "sample_index": 1,
+            "sample_type": "full_cli_cold",
+            "scenario": "immediate-11-etf"
+          },
+          {
+            "cold_cli_total_seconds": 68.205946,
+            "package_sha256": "2980ca503f49db62ce270de68e8679e6d5ce42bd4f00dba3115054e16aab1953",
+            "pid": 39776,
+            "post_publish_validation": "passed",
+            "reused": false,
+            "run_id": "23d8547e3367e9ff2b43290044ff1958d284e6259066c44e5337dfe9b8677dd5",
+            "sample_index": 2,
+            "sample_type": "full_cli_cold",
+            "scenario": "immediate-11-etf"
+          },
+          {
+            "cold_cli_total_seconds": 66.287519,
+            "package_sha256": "f4dd8a62c61b2fdfc9f040f746f95e12b9206eff8180f418144e600a72197e57",
+            "pid": 31556,
+            "post_publish_validation": "passed",
+            "reused": false,
+            "run_id": "03b32bbb5a671983d13b65fdfc30502b96d2d524e7bb93b37898bb92cc97717e",
+            "sample_index": 3,
+            "sample_type": "full_cli_cold",
+            "scenario": "immediate-11-etf"
+          }
+        ]
+      },
+      "parquet_payload_bytes": 1281277,
+      "snapshot_id": "e88238cca420a8ae66b90adb6cda4dd6c38a07390a13b8ac2f471e534742e33e",
+      "summary_sha256": "c6ac2f4859df1c11aad57e927350d8f10bdd989984514255b2e3bd2fb3acf09e",
+      "warm": {
+        "median_peak_memory_mib": 721.848,
+        "median_seconds": 4.664146,
+        "phase_medians_seconds": {
+          "adapt": 0.986605,
+          "materialize": 1.27292,
+          "prepare": 1.479399,
+          "simulate": 0.103399,
+          "snapshot": 0.790033
+        },
+        "samples": [
+          {
+            "package_bytes": 1281277,
+            "peak_working_set_bytes": 755023872,
+            "phase_seconds": {
+              "adapt": 1.005442,
+              "materialize": 1.266728,
+              "prepare": 1.453404,
+              "simulate": 0.104756,
+              "snapshot": 0.786358
+            },
+            "process_id": 14060,
+            "sample_id": "warm-1",
+            "seconds": 4.616696
+          },
+          {
+            "package_bytes": 1281277,
+            "peak_working_set_bytes": 755023872,
+            "phase_seconds": {
+              "adapt": 0.98139,
+              "materialize": 1.270248,
+              "prepare": 1.531598,
+              "simulate": 0.103399,
+              "snapshot": 0.777506
+            },
+            "process_id": 14060,
+            "sample_id": "warm-2",
+            "seconds": 4.664146
+          },
+          {
+            "package_bytes": 1281277,
+            "peak_working_set_bytes": 756912128,
+            "phase_seconds": {
+              "adapt": 0.977264,
+              "materialize": 1.274467,
+              "prepare": 1.479399,
+              "simulate": 0.103902,
+              "snapshot": 0.807764
+            },
+            "process_id": 14060,
+            "sample_id": "warm-3",
+            "seconds": 4.642801
+          },
+          {
+            "package_bytes": 1281277,
+            "peak_working_set_bytes": 758992896,
+            "phase_seconds": {
+              "adapt": 0.986605,
+              "materialize": 1.285781,
+              "prepare": 1.456695,
+              "simulate": 0.102775,
+              "snapshot": 0.873627
+            },
+            "process_id": 14060,
+            "sample_id": "warm-4",
+            "seconds": 4.705488
+          },
+          {
+            "package_bytes": 1281277,
+            "peak_working_set_bytes": 780541952,
+            "phase_seconds": {
+              "adapt": 0.988505,
+              "materialize": 1.27292,
+              "prepare": 1.534652,
+              "simulate": 0.102404,
+              "snapshot": 0.790033
+            },
+            "process_id": 14060,
+            "sample_id": "warm-5",
+            "seconds": 4.688518
+          }
+        ]
+      }
+    },
+    "immediate-17-etf": {
+      "cleanup": {
+        "isolated_output_roots_removed": true,
+        "verified": true
+      },
+      "collected_files": [
+        "code.py",
+        "data/attribution_log-f8b55bbeff17e2ab0f96e2c79fb8053e14837ec944ead8a9d43c60f07f88488e.parquet",
+        "data/balances.parquet",
+        "data/orders.parquet",
+        "data/positions.parquet",
+        "data/results.parquet",
+        "manifest.json",
+        "params.json",
+        "params_versions/6ccb72652e816167ea0d12da5f3bf7617da5c88881e7a7875f4c2d429f456fc6.json",
+        "performance.json"
+      ],
+      "cold_process": {
+        "median_package_bytes": 2201265,
+        "median_peak_memory_mib": 819.57,
+        "median_seconds": 33.215047,
+        "samples": [
+          {
+            "package_bytes": 2201266,
+            "peak_working_set_bytes": 859381760,
+            "process_id": 6380,
+            "sample_id": "cold-1",
+            "seconds": 33.164935
+          },
+          {
+            "package_bytes": 2201263,
+            "peak_working_set_bytes": 840359936,
+            "process_id": 13116,
+            "sample_id": "cold-2",
+            "seconds": 33.215047
+          },
+          {
+            "package_bytes": 2201265,
+            "peak_working_set_bytes": 860909568,
+            "process_id": 7264,
+            "sample_id": "cold-3",
+            "seconds": 33.260551
+          }
+        ]
+      },
+      "fixed_files_bytes": 21775,
+      "full_cli_cold": {
+        "median_seconds": 75.335246,
+        "samples": [
+          {
+            "cold_cli_total_seconds": 74.395766,
+            "package_sha256": "bc400d687d04579e26f94e0d4adc706ca28913d5a7cf2bc189984e3eb107f428",
+            "pid": 18228,
+            "post_publish_validation": "passed",
+            "reused": false,
+            "run_id": "c8900384dc59579b09db9fa1569c1d8b0764e41c9da94457adafe6af5134dc92",
+            "sample_index": 1,
+            "sample_type": "full_cli_cold",
+            "scenario": "immediate-17-etf"
+          },
+          {
+            "cold_cli_total_seconds": 75.335246,
+            "package_sha256": "13048b76954973ec72c360f42675dc44adc43df482d12f4b99cd9d1168709044",
+            "pid": 34608,
+            "post_publish_validation": "passed",
+            "reused": false,
+            "run_id": "87a9abc3d271f32d0ff9209c1b671b29e6353d4bc74ad2015c3090c6baff5b97",
+            "sample_index": 2,
+            "sample_type": "full_cli_cold",
+            "scenario": "immediate-17-etf"
+          },
+          {
+            "cold_cli_total_seconds": 76.217841,
+            "package_sha256": "fffe7f41ccfecde332c0cd84c20f10d651386e2d97820640a1008cd76021f5ad",
+            "pid": 11208,
+            "post_publish_validation": "passed",
+            "reused": false,
+            "run_id": "552e23c378621cdcaddbef8ffd87dbcf9e34b227b6c1b1b417409c9ec282677f",
+            "sample_index": 3,
+            "sample_type": "full_cli_cold",
+            "scenario": "immediate-17-etf"
+          }
+        ]
+      },
+      "parquet_payload_bytes": 2179571,
+      "snapshot_id": "27c0a452ad5cd8c7f865d2d8cd7555595df0b1fc7afecb86eace4b36336a7ddd",
+      "summary_sha256": "cfb42161eec33fbb87e3799f71f35b6a7e11db926a71dca218d3daaa1efc2524",
+      "warm": {
+        "median_peak_memory_mib": 863.402,
+        "median_seconds": 7.346294,
+        "phase_medians_seconds": {
+          "adapt": 1.640124,
+          "materialize": 2.171504,
+          "prepare": 2.140393,
+          "simulate": 0.143466,
+          "snapshot": 1.270234
+        },
+        "samples": [
+          {
+            "package_bytes": 2179571,
+            "peak_working_set_bytes": 871301120,
+            "phase_seconds": {
+              "adapt": 1.643303,
+              "materialize": 2.177581,
+              "prepare": 2.116857,
+              "simulate": 0.141557,
+              "snapshot": 1.177482
+            },
+            "process_id": 14060,
+            "sample_id": "warm-1",
+            "seconds": 7.256785
+          },
+          {
+            "package_bytes": 2179571,
+            "peak_working_set_bytes": 898465792,
+            "phase_seconds": {
+              "adapt": 1.634968,
+              "materialize": 2.164927,
+              "prepare": 2.137434,
+              "simulate": 0.143774,
+              "snapshot": 1.259592
+            },
+            "process_id": 14060,
+            "sample_id": "warm-2",
+            "seconds": 7.340699
+          },
+          {
+            "package_bytes": 2179571,
+            "peak_working_set_bytes": 905342976,
+            "phase_seconds": {
+              "adapt": 1.649341,
+              "materialize": 2.178504,
+              "prepare": 2.160176,
+              "simulate": 0.143827,
+              "snapshot": 1.270234
+            },
+            "process_id": 14060,
+            "sample_id": "warm-3",
+            "seconds": 7.402086
+          },
+          {
+            "package_bytes": 2179571,
+            "peak_working_set_bytes": 905342976,
+            "phase_seconds": {
+              "adapt": 1.640124,
+              "materialize": 2.171504,
+              "prepare": 2.14131,
+              "simulate": 0.142223,
+              "snapshot": 1.298777
+            },
+            "process_id": 14060,
+            "sample_id": "warm-4",
+            "seconds": 7.393945
+          },
+          {
+            "package_bytes": 2179571,
+            "peak_working_set_bytes": 907571200,
+            "phase_seconds": {
+              "adapt": 1.625617,
+              "materialize": 2.162463,
+              "prepare": 2.140393,
+              "simulate": 0.143466,
+              "snapshot": 1.27435
+            },
+            "process_id": 14060,
+            "sample_id": "warm-5",
+            "seconds": 7.346294
+          }
+        ]
+      }
+    },
+    "delayed-11-etf-1d": {
+      "cleanup": {
+        "isolated_output_roots_removed": true,
+        "verified": true
+      },
+      "collected_files": [
+        "code.py",
+        "data/attribution_log-4ade2b6e69eb5db6af384c36f7920f513b44db8a76f4fd74b8afbd6a14f6c244.parquet",
+        "data/balances.parquet",
+        "data/orders.parquet",
+        "data/positions.parquet",
+        "data/results.parquet",
+        "manifest.json",
+        "params.json",
+        "params_versions/b39e9f6a0f2bf5874b0eb25d861aea9c1632cea2b0a4dde08e1c89ba29a2def4.json",
+        "performance.json"
+      ],
+      "cold_process": {
+        "median_package_bytes": 1273318,
+        "median_peak_memory_mib": 747.129,
+        "median_seconds": 27.757129,
+        "samples": [
+          {
+            "package_bytes": 1273318,
+            "peak_working_set_bytes": 799870976,
+            "process_id": 34388,
+            "sample_id": "cold-1",
+            "seconds": 27.769536
+          },
+          {
+            "package_bytes": 1273318,
+            "peak_working_set_bytes": 783421440,
+            "process_id": 22016,
+            "sample_id": "cold-2",
+            "seconds": 27.757129
+          },
+          {
+            "package_bytes": 1273317,
+            "peak_working_set_bytes": 781729792,
+            "process_id": 28808,
+            "sample_id": "cold-3",
+            "seconds": 27.624058
+          }
+        ]
+      },
+      "fixed_files_bytes": 20716,
+      "full_cli_cold": {
+        "median_seconds": 69.12615,
+        "samples": [
+          {
+            "cold_cli_total_seconds": 71.605849,
+            "package_sha256": "17f8e4d194eec520920d327285cb21dfdb42c880305b2a208404a52567602ade",
+            "pid": 29760,
+            "post_publish_validation": "passed",
+            "reused": false,
+            "run_id": "d71a7edc7729b63ceab1ad3400ceb12fc85dd64a511e98afbe9836d7c30f3c17",
+            "sample_index": 1,
+            "sample_type": "full_cli_cold",
+            "scenario": "delayed-11-etf-1d"
+          },
+          {
+            "cold_cli_total_seconds": 68.276414,
+            "package_sha256": "ddbae02565040834466df8e49d885448e8126eea8987f6e2ed15338ff3a51e4c",
+            "pid": 35340,
+            "post_publish_validation": "passed",
+            "reused": false,
+            "run_id": "1a3da3f82e55f21366a753bf530f8dfcd68ac9f3ba3447122dc95481e4903eca",
+            "sample_index": 2,
+            "sample_type": "full_cli_cold",
+            "scenario": "delayed-11-etf-1d"
+          },
+          {
+            "cold_cli_total_seconds": 69.12615,
+            "package_sha256": "1b5777e720710dfb87475e8da8b03ee81a74dd6b9560c2694b67aa402ef81cc0",
+            "pid": 36448,
+            "post_publish_validation": "passed",
+            "reused": false,
+            "run_id": "36c5cf62fa177a898efacc60ed091cd3e2184fb48db66759cdec4f308d1215dc",
+            "sample_index": 3,
+            "sample_type": "full_cli_cold",
+            "scenario": "delayed-11-etf-1d"
+          }
+        ]
+      },
+      "parquet_payload_bytes": 1252683,
+      "snapshot_id": "e88238cca420a8ae66b90adb6cda4dd6c38a07390a13b8ac2f471e534742e33e",
+      "summary_sha256": "60218b20e774981c2555f079c093cb249d692425976f26dbd87515daa9da25c8",
+      "warm": {
+        "median_peak_memory_mib": 865.527,
+        "median_seconds": 4.70711,
+        "phase_medians_seconds": {
+          "adapt": 0.965305,
+          "materialize": 1.287114,
+          "prepare": 1.501302,
+          "simulate": 0.185535,
+          "snapshot": 0.786126
+        },
+        "samples": [
+          {
+            "package_bytes": 1252683,
+            "peak_working_set_bytes": 907571200,
+            "phase_seconds": {
+              "adapt": 0.965305,
+              "materialize": 1.290191,
+              "prepare": 1.421793,
+              "simulate": 0.185535,
+              "snapshot": 0.790935
+            },
+            "process_id": 14060,
+            "sample_id": "warm-1",
+            "seconds": 4.653763
+          },
+          {
+            "package_bytes": 1252683,
+            "peak_working_set_bytes": 907571200,
+            "phase_seconds": {
+              "adapt": 0.958211,
+              "materialize": 1.279316,
+              "prepare": 1.502601,
+              "simulate": 0.184109,
+              "snapshot": 0.785772
+            },
+            "process_id": 14060,
+            "sample_id": "warm-2",
+            "seconds": 4.710013
+          },
+          {
+            "package_bytes": 1252683,
+            "peak_working_set_bytes": 907571200,
+            "phase_seconds": {
+              "adapt": 0.963309,
+              "materialize": 1.272238,
+              "prepare": 1.501302,
+              "simulate": 0.186448,
+              "snapshot": 0.783808
+            },
+            "process_id": 14060,
+            "sample_id": "warm-3",
+            "seconds": 4.70711
+          },
+          {
+            "package_bytes": 1252683,
+            "peak_working_set_bytes": 907571200,
+            "phase_seconds": {
+              "adapt": 0.975865,
+              "materialize": 1.287114,
+              "prepare": 1.426913,
+              "simulate": 0.185574,
+              "snapshot": 0.786814
+            },
+            "process_id": 14060,
+            "sample_id": "warm-4",
+            "seconds": 4.662283
+          },
+          {
+            "package_bytes": 1252683,
+            "peak_working_set_bytes": 907571200,
+            "phase_seconds": {
+              "adapt": 0.980808,
+              "materialize": 1.311796,
+              "prepare": 1.508867,
+              "simulate": 0.184094,
+              "snapshot": 0.786126
+            },
+            "process_id": 14060,
+            "sample_id": "warm-5",
+            "seconds": 4.771696
+          }
+        ]
+      }
+    }
+  },
+  "protocol_version": "local-research-release/2",
+  "schema_version": 1
+}

@@ -1,0 +1,261 @@
+{
+  "materialized_contract": {
+    "analysis_data_views": {
+      "balances": [
+        ["total_value", "DOUBLE"],
+        ["net_value", "DOUBLE"],
+        ["cash", "DOUBLE"],
+        ["aval_cash", "DOUBLE"],
+        ["time", "VARCHAR"]
+      ],
+      "orders": [
+        ["match_time", "VARCHAR"],
+        ["pindex", "BIGINT"],
+        ["cancel_time", "VARCHAR"],
+        ["action", "VARCHAR"],
+        ["limit_price", "DOUBLE"],
+        ["comment", "VARCHAR"],
+        ["entrust_time", "VARCHAR"],
+        ["finish_time", "VARCHAR"],
+        ["side", "VARCHAR"],
+        ["price", "DOUBLE"],
+        ["commission", "DOUBLE"],
+        ["gains", "DOUBLE"],
+        ["type", "VARCHAR"],
+        ["time", "VARCHAR"],
+        ["security_name", "VARCHAR"],
+        ["security", "VARCHAR"],
+        ["filled", "BIGINT"],
+        ["amount", "BIGINT"],
+        ["status", "VARCHAR"]
+      ],
+      "period_risks": [
+        ["metric", "VARCHAR"],
+        ["payload_json", "VARCHAR"]
+      ],
+      "positions": [
+        ["pindex", "BIGINT"],
+        ["avg_cost", "DOUBLE"],
+        ["margin", "DOUBLE"],
+        ["amount", "DOUBLE"],
+        ["today_amount", "BIGINT"],
+        ["hold_cost", "DOUBLE"],
+        ["side", "VARCHAR"],
+        ["price", "DOUBLE"],
+        ["gains", "DOUBLE"],
+        ["daily_gains", "DOUBLE"],
+        ["closeable_amount", "BIGINT"],
+        ["time", "VARCHAR"],
+        ["security_name", "VARCHAR"],
+        ["security", "VARCHAR"]
+      ],
+      "results": [
+        ["benchmark_returns", "DOUBLE"],
+        ["returns", "DOUBLE"],
+        ["time", "VARCHAR"]
+      ],
+      "risk": [
+        ["__version", "BIGINT"],
+        ["algorithm_return", "DOUBLE"],
+        ["algorithm_volatility", "DOUBLE"],
+        ["alpha", "DOUBLE"],
+        ["annual_algo_return", "DOUBLE"],
+        ["annual_bm_return", "DOUBLE"],
+        ["avg_excess_return", "DOUBLE"],
+        ["avg_position_days", "DOUBLE"],
+        ["avg_trade_return", "DOUBLE"],
+        ["benchmark_return", "DOUBLE"],
+        ["benchmark_volatility", "DOUBLE"],
+        ["beta", "DOUBLE"],
+        ["day_win_ratio", "DOUBLE"],
+        ["excess_return", "DOUBLE"],
+        ["excess_return_max_drawdown", "DOUBLE"],
+        ["excess_return_max_drawdown_period", "VARCHAR"],
+        ["excess_return_sharpe", "DOUBLE"],
+        ["information", "DOUBLE"],
+        ["lose_count", "BIGINT"],
+        ["max_drawdown", "DOUBLE"],
+        ["max_drawdown_period", "VARCHAR"],
+        ["max_leverage", "DOUBLE"],
+        ["period_label", "VARCHAR"],
+        ["profit_loss_ratio", "DOUBLE"],
+        ["sharpe", "DOUBLE"],
+        ["sortino", "DOUBLE"],
+        ["trading_days", "BIGINT"],
+        ["treasury_return", "DOUBLE"],
+        ["turnover_rate", "DOUBLE"],
+        ["win_count", "BIGINT"],
+        ["win_ratio", "DOUBLE"]
+      ],
+      "source_benchmark_returns": [
+        ["trading_date", "DATE"],
+        ["cumulative_returns", "DOUBLE"]
+      ],
+      "strategy_daily_returns": [
+        ["trading_date", "DATE"],
+        ["cumulative_returns", "DOUBLE"],
+        ["daily_returns", "DOUBLE"],
+        ["comparable", "BOOLEAN"]
+      ]
+    }
+  },
+  "scenarios": [
+    {
+      "cash": {
+        "rows": 3432,
+        "sha256": "7d5f2bad3115cb08fb7e38562bdd5004105d794b6501f2087c39129574220382"
+      },
+      "fees": {
+        "rows": 1799,
+        "sha256": "b2f1bf548c2ade9c223ff55db19f7d68ba796d6286b1ad88c3d6e6f0254b6e48"
+      },
+      "logic": "21e1bc0e630bda66f6dcd69c1e69434cc9a5ee8fe2824d549b018bfe9f91c1ee",
+      "materialized": {
+        "analysis_data_views_sha256": "3235b5cdb3c802c7ff79f258730bdfe3b503e7936cf23dcfe3db089a9893fbd6",
+        "code_identity": {
+          "bytes": 5265,
+          "path": "code.py",
+          "sha256": "f09e51da53d6ffab74efed93bf8ffd7e3e1bd153e68e7992f09b20b631c3caf1"
+        },
+        "config_identity": {
+          "current": {
+            "bytes": 3122,
+            "path": "params.json",
+            "sha256": "21e7733e5e92a97c233bcb5afce69434da19d040ef33dc8cee670c8249f8240b"
+          },
+          "version": {
+            "bytes": 3122,
+            "path": "params_versions/21e7733e5e92a97c233bcb5afce69434da19d040ef33dc8cee670c8249f8240b.json",
+            "sha256": "21e7733e5e92a97c233bcb5afce69434da19d040ef33dc8cee670c8249f8240b"
+          }
+        },
+        "manifest": {
+          "schema_version": "local-backtest/1",
+          "sha256": "4f1290c53c22d8d8a6c8f57658fb7c83198408b5346b24e7f2673a3dae723ec3"
+        }
+      },
+      "orders": {
+        "rows": 1799,
+        "sha256": "d1877caaf7d1e97acb7f2fa35091b0b0b7f0bd17ad7f95a5a8960bca92a21c47"
+      },
+      "positions": {
+        "rows": 4847,
+        "sha256": "cea5348ac2cf9cee66a798b74d339986c110f820e02c8a8a1c93347cde94c585"
+      },
+      "scenario": "immediate-11-etf",
+      "state": {
+        "events": 3249,
+        "sha256": "46260fb20344348bac7995c1cdd07400ecfe3c7844cbc3f02e6b924020d5ce37"
+      },
+      "value": {
+        "rows": 3432,
+        "sha256": "e5e4842ef25cde4d998f87cc0fd877feea88f70d78a8e3f050bf9662222bc78d"
+      }
+    },
+    {
+      "cash": {
+        "rows": 3432,
+        "sha256": "88233873fe7be4d8566b72ed8bc63fe627ed92663fba1cc3a781e298f028b01a"
+      },
+      "fees": {
+        "rows": 4008,
+        "sha256": "eef914a386120c6cbb7321ec4392917eee2a3a12a7465308b93f6eca5c1e5bef"
+      },
+      "logic": "0432dd75ca8a3827af021528130ff2b39e161f903d897dcd6927e29f4273c9a0",
+      "materialized": {
+        "analysis_data_views_sha256": "3235b5cdb3c802c7ff79f258730bdfe3b503e7936cf23dcfe3db089a9893fbd6",
+        "code_identity": {
+          "bytes": 5265,
+          "path": "code.py",
+          "sha256": "f09e51da53d6ffab74efed93bf8ffd7e3e1bd153e68e7992f09b20b631c3caf1"
+        },
+        "config_identity": {
+          "current": {
+            "bytes": 3652,
+            "path": "params.json",
+            "sha256": "3f00000317ec847557830be7ac8ee46a79b3de1238991ca6387710eaa05ea156"
+          },
+          "version": {
+            "bytes": 3652,
+            "path": "params_versions/3f00000317ec847557830be7ac8ee46a79b3de1238991ca6387710eaa05ea156.json",
+            "sha256": "3f00000317ec847557830be7ac8ee46a79b3de1238991ca6387710eaa05ea156"
+          }
+        },
+        "manifest": {
+          "schema_version": "local-backtest/1",
+          "sha256": "9661b8873ebcf153700733a4d0e35c89270134e5167893e4b52b0b1aa263d721"
+        }
+      },
+      "orders": {
+        "rows": 4008,
+        "sha256": "c87a79d2280f4e67fd6256a36302a3f5943f00daadf69bbc2e9c5f478af34836"
+      },
+      "positions": {
+        "rows": 8281,
+        "sha256": "80473f35d321ab22aa0743bf8b318ac01312203a5e745dd4de7703ca09c50be9"
+      },
+      "scenario": "immediate-17-etf",
+      "state": {
+        "events": 5148,
+        "sha256": "9ff69d630275163b2c4df5e67afc2279041fd6f1fbeac1c6f914c83d96559136"
+      },
+      "value": {
+        "rows": 3432,
+        "sha256": "3e5fc67e06719da1f41a618321cce95948e65114b15cec7eca478058fecc6a80"
+      }
+    },
+    {
+      "cash": {
+        "rows": 3432,
+        "sha256": "ca15b2484fe390e70e0cfcd9b6ae4cdc9e3d8fdae369840736dd69e5214530f0"
+      },
+      "fees": {
+        "rows": 1175,
+        "sha256": "f0934237db44835f47a8c5add4f2d4b03929391fb955cb1f2fc50f7567b24b0d"
+      },
+      "logic": "ae0d5c854ff5094ff41dd537a695f2a6436ae87a780d0969992731dcb5dd1e2c",
+      "materialized": {
+        "analysis_data_views_sha256": "3235b5cdb3c802c7ff79f258730bdfe3b503e7936cf23dcfe3db089a9893fbd6",
+        "code_identity": {
+          "bytes": 5265,
+          "path": "code.py",
+          "sha256": "f09e51da53d6ffab74efed93bf8ffd7e3e1bd153e68e7992f09b20b631c3caf1"
+        },
+        "config_identity": {
+          "current": {
+            "bytes": 3123,
+            "path": "params.json",
+            "sha256": "98215da99224136127ca6d0f3dd690d000c6103ccb50d049d2400ef3c34e4457"
+          },
+          "version": {
+            "bytes": 3123,
+            "path": "params_versions/98215da99224136127ca6d0f3dd690d000c6103ccb50d049d2400ef3c34e4457.json",
+            "sha256": "98215da99224136127ca6d0f3dd690d000c6103ccb50d049d2400ef3c34e4457"
+          }
+        },
+        "manifest": {
+          "schema_version": "local-backtest/1",
+          "sha256": "c9c451e68648d54fa2a0370e898d8e641efe421c3ab9964c65cb092ad47b13f1"
+        }
+      },
+      "orders": {
+        "rows": 1175,
+        "sha256": "900249d7d03e416ff4acebd8e8e70a3b61054af2ac27754ed04654d1ff0ad2e9"
+      },
+      "positions": {
+        "rows": 5691,
+        "sha256": "812997e88688e6ef7fc56945f6982f107935f2c39219b345b12451fdbc07e192"
+      },
+      "scenario": "delayed-11-etf-1d",
+      "state": {
+        "events": 1175,
+        "sha256": "1fc6d5b118865fe2e9470bcb71d17354bdd807e9875ad78de583db276b368974"
+      },
+      "value": {
+        "rows": 3432,
+        "sha256": "8704f912a913d52821abd7ee171d13b303dd4104260f470ee644ff230e372f66"
+      }
+    }
+  ],
+  "schema_version": 1
+}

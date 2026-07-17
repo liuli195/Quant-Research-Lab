@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from vectorbt.portfolio.enums import OrderResult, OrderSide, OrderStatus
+
+from scripts.research.local_quant_research.contracts import FillEvent
 
 
 RESEARCH_ROOT = (
@@ -18,13 +18,49 @@ RESEARCH_ROOT = (
 )
 sys.path.insert(0, str(RESEARCH_ROOT))
 
-from turtle_etf import vectorbt_callbacks as callbacks  # noqa: E402
-from turtle_etf.vectorbt_engine import (  # noqa: E402
+from scripts.research.local_quant_research.vectorbt_runtime import run_vectorbt  # noqa: E402
+from turtle_etf import _kernel as callbacks  # noqa: E402
+from turtle_etf._kernel import (  # noqa: E402
+    SimulationInputs,
+    _prepare_turtle_inputs,
     _mutable_state,
     _params,
-    run_vectorbt_simulation,
 )
-from turtle_etf.vectorbt_inputs import SimulationInputs  # noqa: E402
+
+
+class _Result:
+    def __init__(self, execution: object, inputs: SimulationInputs) -> None:
+        self.execution = execution
+        shape = inputs.close.shape
+        rows = {
+            np.datetime_as_string(value, unit="D"): index
+            for index, value in enumerate(inputs.dates)
+        }
+        columns = {security: index for index, security in enumerate(inputs.securities)}
+        self.filled_quantities = np.zeros(shape, dtype=np.int64)
+        for order in execution.ledger.orders:
+            self.filled_quantities[
+                rows[str(order["time"])[:10]],
+                columns[str(order["security"])],
+            ] += int(order["filled"])
+        self.state_quantities = np.zeros(shape, dtype=np.int64)
+        for asset in execution.ledger.assets:
+            self.state_quantities[
+                rows[str(asset["time"])[:10]],
+                columns[str(asset["security"])],
+            ] = int(round(float(asset["amount"])))
+
+    def __getattr__(self, name: str) -> object:
+        return self.execution.trace[name]
+
+
+def _run(inputs: SimulationInputs, config: dict[str, object]) -> _Result:
+    config = {**config, "scenario_id": "callback-test"}
+    prepared = _prepare_turtle_inputs(inputs, config)
+    return _Result(
+        run_vectorbt(prepared.ledger_input, prepared.primary_program),
+        inputs,
+    )
 
 
 def _ro(values: object, dtype: str) -> np.ndarray:
@@ -171,7 +207,7 @@ def test_late_breakout_displaces_earlier_position_without_changing_its_unit() ->
         signal_close=[[11.0, np.nan], [10.0, 11.0], [10.0, 10.0]],
         entry_high=[[10.0, np.nan], [20.0, 10.0], [20.0, 20.0]],
     )
-    result = run_vectorbt_simulation(
+    result = _run(
         inputs, _config(initial_cash=100_005.0, portfolio_cap=1.0)
     )
 
@@ -195,7 +231,7 @@ def test_same_group_units_scale_uniformly() -> None:
         entry_high=[[10.0, np.nan], [20.0, 10.0]],
         group_ids=[0, 0],
     )
-    result = run_vectorbt_simulation(
+    result = _run(
         inputs, _config(initial_cash=100_005.0, group_cap=1.0)
     )
 
@@ -211,7 +247,7 @@ def test_each_filled_unit_freezes_its_own_n_and_only_raises_common_stop() -> Non
         entry_high=[[10.0], [20.0], [20.0]],
         signal_n=[[1.0], [2.0], [999.0]],
     )
-    result = run_vectorbt_simulation(inputs, _config())
+    result = _run(inputs, _config())
 
     assert result.state_unit_counts[:, 0].tolist() == [1, 2, 2]
     assert result.state_common_stop[0, 0] == pytest.approx(8.0)
@@ -227,7 +263,7 @@ def test_additions_use_fixed_initial_levels_one_per_day_and_stop_at_four() -> No
         entry_high=[[10.0], [20.0], [20.0], [20.0], [20.0]],
         signal_n=[[1.0], [8.0], [8.0], [8.0], [8.0]],
     )
-    result = run_vectorbt_simulation(inputs, _config())
+    result = _run(inputs, _config())
 
     assert result.action_codes[:, 0].tolist() == [
         callbacks.ACTION_ENTRY,
@@ -247,7 +283,7 @@ def test_untradeable_candidate_does_not_advance_unit_stop_or_add_level() -> None
         paused=[[True], [False], [False]],
         high_limit=[[np.nan], [np.nan], [11.0]],
     )
-    result = run_vectorbt_simulation(inputs, _config())
+    result = _run(inputs, _config())
 
     assert result.reason_codes[0, 0] == callbacks.REASON_PAUSED
     assert result.state_unit_counts[0, 0] == 0
@@ -265,12 +301,15 @@ def test_exit_sells_before_same_day_entry_uses_released_cash() -> None:
         entry_high=[[10.0, np.nan], [np.nan, 20.0], [np.nan, np.nan]],
         exit_low=[[np.nan, np.nan], [6.0, np.nan], [np.nan, np.nan]],
     )
-    result = run_vectorbt_simulation(inputs, _config(initial_cash=10_005.0))
-    day_two = result.portfolio.orders.records_readable.loc[
-        lambda frame: frame["Timestamp"] == np.datetime64("2026-01-06")
+    result = _run(inputs, _config(initial_cash=10_005.0))
+    day_two = result.execution.ledger.orders[
+        np.char.startswith(
+            result.execution.ledger.orders["time"],
+            "2026-01-06",
+        )
     ]
 
-    assert day_two["Side"].tolist() == ["Sell", "Buy"]
+    assert day_two["action"].tolist() == ["close", "open"]
     assert result.state_quantities[1, 0] == 0
     assert result.state_unit_counts[1, 0] == 0
     assert result.state_quantities[1, 1] > 0
@@ -284,7 +323,7 @@ def test_low_limit_blocks_full_exit_and_preserves_unit_state() -> None:
         exit_low=[[np.nan], [6.0]],
         low_limit=[[np.nan], [8.0]],
     )
-    result = run_vectorbt_simulation(inputs, _config())
+    result = _run(inputs, _config())
 
     assert result.reason_codes[1, 0] == callbacks.REASON_LOW_LIMIT
     assert result.filled_quantities[1, 0] == 0
@@ -313,27 +352,26 @@ def test_rejected_official_order_does_not_establish_candidate() -> None:
         inputs.low_limit,
         inputs.asset_group_ids,
     )
-    context = SimpleNamespace(
-        i=0,
-        col=0,
-        call_idx=0,
-        group_len=1,
-        from_col=0,
-        to_col=1,
-        position_now=0.0,
-        last_position=np.zeros(1, dtype=np.float64),
-        order_result=OrderResult(
-            size=100.0,
-            price=10.0,
-            fees=5.0,
-            side=OrderSide.Buy,
-            status=OrderStatus.Rejected,
-            status_info=0,
-        ),
+    event = FillEvent(
+        row=0,
+        column=0,
+        status=callbacks.FILL_REJECTED,
+        side=callbacks.SIDE_BUY,
+        size=100.0,
+        price=10.0,
+        fees=5.0,
+        cash_after=100_000.0,
+        position_after=0.0,
     )
 
-    callbacks.post_order_func_nb.py_func(context, state, callback_inputs, params)
+    callbacks.after_fill_nb.py_func(
+        event,
+        callback_inputs,
+        params,
+        state,
+        (),
+        (),
+    )
 
     assert state.reason_codes[0, 0] == callbacks.REASON_ORDER_REJECTED
     assert state.unit_count[0] == 0
-    assert state.state_quantities[0, 0] == 0

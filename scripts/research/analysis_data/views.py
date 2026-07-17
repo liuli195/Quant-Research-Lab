@@ -11,6 +11,7 @@ import pyarrow.parquet as pq
 from scripts.research.analysis_data.derived import register_return_views
 from scripts.research.analysis_data.manifest import (
     CORE_DATASETS,
+    LOCAL_PHYSICAL_DATASETS,
     AnalysisManifestError,
     AnalysisSource,
     open_analysis_source,
@@ -144,14 +145,14 @@ def _validate_physical_fields(
     expected = tuple(field for field, _ in _SCHEMAS[name])
     fields_match = (
         actual == expected
-        if source.kind == "local_backtest"
+        if source.kind in {"local_backtest", "local_research"}
         else len(actual) == len(expected) and set(actual) == set(expected)
     )
     if not fields_match:
         raise AnalysisManifestError(
             f"{source.kind} {name} fields do not match the observed contract"
         )
-    if source.kind == "local_backtest" and name == "results":
+    if source.kind in {"local_backtest", "local_research"} and name == "results":
         schema = pq.read_schema(path)
         if (
             str(schema.field("benchmark_returns").type) != "double"
@@ -176,14 +177,36 @@ class AnalysisDatabase:
 
     @property
     def table_names(self) -> tuple[str, ...]:
+        if self.source.kind == "local_research":
+            return LOCAL_PHYSICAL_DATASETS
         return CORE_DATASETS
 
     def reference_status(self, name: str) -> tuple[str, str | None]:
-        if name not in CORE_DATASETS:
+        if name not in self.table_names:
             raise KeyError(name)
         entry = self.source.manifest["datasets"][name]
         return str(entry["status"]), (
             None if "reason" not in entry else str(entry["reason"])
+        )
+
+    def extension(self, name: str) -> duckdb.DuckDBPyRelation:
+        if self.source.kind != "local_research":
+            raise KeyError(name)
+        extensions = self.source.manifest["extensions"]
+        if not isinstance(extensions, Mapping) or name not in extensions:
+            raise KeyError(name)
+        entry = extensions[name]
+        if not isinstance(entry, Mapping):
+            raise AnalysisManifestError(f"extension {name} declaration is invalid")
+        files = entry.get("files")
+        if not isinstance(files, list) or len(files) != 1:
+            raise AnalysisManifestError(f"extension {name} file is missing")
+        reference = files[0]
+        if not isinstance(reference, Mapping) or not isinstance(reference.get("path"), str):
+            raise AnalysisManifestError(f"extension {name} file is invalid")
+        path = self.source.root / str(reference["path"])
+        return self.connection.sql(
+            f"select * from read_parquet({_quote_literal(path.as_posix())})"
         )
 
     def close(self) -> None:
@@ -205,7 +228,12 @@ def open_analysis_database(result_dir: Path) -> AnalysisDatabase:
     source = open_analysis_source(result_dir)
     connection = duckdb.connect(":memory:")
     try:
-        for name in CORE_DATASETS:
+        names = (
+            LOCAL_PHYSICAL_DATASETS
+            if source.kind == "local_research"
+            else CORE_DATASETS
+        )
+        for name in names:
             path = _declared_parquet_path(source, name)
             schema = _SCHEMAS[name]
             if path is None:

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 import importlib.metadata
 import importlib.util
-import json
 import sys
 from pathlib import Path
 
@@ -19,8 +17,7 @@ RESEARCH_ROOT = (
 )
 sys.path.insert(0, str(RESEARCH_ROOT))
 
-from turtle_etf.vectorbt_callbacks import CallbackInputs, CallbackParams  # noqa: E402
-from turtle_etf.vectorbt_engine import _params  # noqa: E402
+from turtle_etf._kernel import CallbackInputs, CallbackParams, _params  # noqa: E402
 
 
 def test_vectorbt_runtime_is_pinned_and_available(repo_root: Path) -> None:
@@ -45,51 +42,7 @@ def test_vectorbt_runtime_is_pinned_and_available(repo_root: Path) -> None:
     assert importlib.metadata.version("vectorbt") == "1.1.0"
 
 
-def test_vectorbt_execution_identity_and_license_are_auditable(repo_root: Path) -> None:
-    research_root = repo_root / "joinquant/strategies/strategy-003/research"
-    callback_path = research_root / "turtle_etf/vectorbt_callbacks.py"
-    identity = json.loads(
-        (research_root / "code-identity.json").read_text(encoding="utf-8")
-    )
-    execution = identity["execution"]
-
-    assert execution == {
-        "backend": "vectorbt.Portfolio.from_order_func",
-        "delayed_backend": "vectorbt.Portfolio.from_orders",
-        "adapter_version": "local-vectorbt-adapter/2",
-        "dependencies": {
-            "vectorbt": "1.1.0",
-            "numba": "0.66.0",
-            "numpy": "2.4.6",
-            "pandas": "3.0.3",
-        },
-        "callbacks_sha256": hashlib.sha256(callback_path.read_bytes()).hexdigest(),
-        "accounting": {
-            "version": "turtle-etf-corporate-actions/1",
-            "corporate_action_mode": "point_in_time_total_return_approximation",
-            "continuity_factor_basis": "raw_previous_close_over_current_pre_close",
-            "corporate_action_metadata_timing": "audit_only_may_be_retrospective",
-            "price_basis": "continuous_economic_price",
-            "quantity_basis": "economic_units",
-            "cash_dividend_mode": "implicit_reinvestment_on_ex_date",
-            "pay_date_cash_supported": False,
-            "exact_joinquant_reconciliation": False,
-        },
-        "license": {
-            "expression": "Apache-2.0 WITH Commons-Clause",
-            "usage": "internal_research_only",
-            "resale_prohibited": True,
-        },
-    }
-    identity_paths = {item["path"] for item in identity["files"]}
-    assert {
-        "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_inputs.py",
-        "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_callbacks.py",
-        "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_delayed.py",
-        "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_engine.py",
-        "scripts/research/market_data/economic_returns.py",
-    }.issubset(identity_paths)
-
+def test_vectorbt_license_is_auditable() -> None:
     distribution = importlib.metadata.distribution("vectorbt")
     license_file = next(
         file for file in distribution.files or () if str(file).endswith("LICENSE.md")

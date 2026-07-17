@@ -11,12 +11,12 @@
 - **WHEN** 读取器处理聚宽回测结果
 - **THEN** 它只按原清单定位文件、摘要、行数、合法空表、数据集状态和来源身份，不扫描“看起来最新”的文件；读取前后聚宽目录摘要必须一致
 
-### Requirement: 本地回测使用独立且可执行的清单 Schema
-系统 SHALL（必须）提供 `local-backtest-manifest.schema.json`。本地结果从 `.local/quant-research/<strategy_id>/<run_id>/backtests/<local_backtest_id>/` 向内尽量镜像聚宽现有回测目录，但 SHALL（必须）使用 `schema_version=local-backtest/1`、`object.kind=local_backtest`、`source.kind=local_vectorbt` 和 `authority=local_research` 明确来源，不能声称符合聚宽远端归档 Schema。
+### Requirement: 本地研究使用独立且可执行的自包含清单
+本地结果 SHALL（必须）直接使用 `.local/quant-research/<strategy_id>/<run_id>/manifest.json` 的 `schema_version=local-research-package/2`、`object.kind=local_research`、`backend=vectorbt` 和 `authority=local_research` 明确来源。该清单不声称符合聚宽远端归档 Schema；晋升到 `research/archives/<analysis_id>/` 后包内 `run_id` 和所有文件字节保持不变。
 
 #### Scenario: 本地清单必需证据
 - **WHEN** 本地 vectorbt（向量化回测框架）完成一个场景
-- **THEN** 本地 Schema 顶层 `additionalProperties=false`，必需字段为 `schema_version`、`object`、`source`、`authority`、`run`、`code`、`params`、`datasets`、`performance`、`gate`；其中必须记录 `local_id`、`status`、`run_id`、`scenario_id`、`snapshot_id`、引擎/适配器版本、公司行动核算模式及精度边界、代码路径/字节数/SHA256、当前参数路径/版本路径/字节数/SHA256、数据集状态/文件摘要/行数/时间范围/空表、性能证据路径/字节数/SHA256，以及 `gate.status=pass|fail` 与 `exceptions`；`code.py`、`params.json`、`params_versions/<sha256>.json`、`performance.json` 与 `data/` 的位置沿用同一回测根目录
+- **THEN** 清单必需记录 `object`、`authority`、`backend`、`formula_version`、`package_sha256`、`code`、`config`、`evidence`、`datasets`、`extensions`、`reports` 和 `gate`；包内固定包含完整 `code/`、`config/`、`evidence/`、`data/`、`extensions/` 与 `report/`，各文件以路径、字节数和 SHA256 绑定，四张核心表和全部声明扩展完成回读勾稽
 
 #### Scenario: 本地公司行动近似口径显式可见
 - **WHEN** 本地 vectorbt 不能原生同步拆分后的真实份额和派息日现金，而改用连续总回报经济价格
@@ -24,7 +24,7 @@
 
 #### Scenario: 性能证据可独立复核
 - **WHEN** 本地结果准备通过 `gate.status=pass`
-- **THEN** `performance.json` 必须记录环境与依赖摘要、准备后输入摘要、代码/参数/场景摘要、`cold_seconds`、`warm_seconds`、两次规范化结果摘要、摘要一致性结论、性能上限和暂存清理结果；计时统一从准备后输入进入项目执行后端开始，到项目声明的执行事实和必需扩展完成结构/摘要/勾稽校验时停止。停止计时后先删除预热副本和可丢弃暂存并确认清理，再把清理结果写入 `performance.json`、生成最终清单并校验全部摘要；二者属于完成门禁但不计入冷/热耗时。最后只原子发布已整理的权威结果目录，发布后不得依赖写入或清理；任一门禁失败不得发布完成目录
+- **THEN** `evidence/performance.json` 必须记录环境与依赖摘要、冷/热执行秒数与规范化摘要、摘要一致性、阶段时间和 180 秒门禁；writer（写入器）返回耗时覆盖最终元数据写入，包内 `prefinalization_seconds` 不虚构尚未发生的自身写入或父进程发布，任一门禁失败不得发布完成目录
 
 #### Scenario: 本地不伪造聚宽专属证据
 - **WHEN** 本地来源没有聚宽详情页、远端原始响应、围栏、官方摘要或官方风险结果
@@ -32,14 +32,14 @@
 
 #### Scenario: 读取器严格选择 Schema
 - **WHEN** 读取器打开来源清单
-- **THEN** 整数 `schema_version=1` 只使用聚宽 Schema，字符串 `schema_version=local-backtest/1` 只使用本地 Schema；未知版本、混合身份、越权字段或校验失败直接拒绝，不得尝试回退另一契约
+- **THEN** 整数 `schema_version=1` 只使用聚宽 Schema，字符串 `schema_version=local-research-package/2` 只使用本地研究 Schema；历史 `local-backtest/1` 结果保持只读兼容，未知版本、混合身份、越权字段或校验失败直接拒绝，不得尝试回退另一契约
 
 ### Requirement: 六类逻辑模型与两种物理形态明确分离
-统一分析模型 SHALL（必须）沿用聚宽现有 `results`、`balances`、`positions`、`orders`、`risk`、`period_risks` 六类名称。聚宽来源物理提供六类数据；本地来源只物理提供四类共同执行事实，并在清单中声明两类官方风险参考缺失。读取器 SHALL（必须）为两种来源建立相同的六类逻辑视图。
+统一分析模型 SHALL（必须）沿用聚宽现有 `results`、`balances`、`positions`、`orders`、`risk`、`period_risks` 六类名称。聚宽来源物理提供六类数据；本地来源清单只声明四类共同执行事实，读取器为 `risk` 与 `period_risks` 派生显式 `missing_at_source` 逻辑视图，不要求结果包伪造两类物理文件或清单条目。
 
 #### Scenario: 本地只落四类执行事实
 - **WHEN** 本地结果通过门禁
-- **THEN** `results`、`balances`、`positions`、`orders` 必须为 `required=true`、`status=complete`；`risk` 与 `period_risks` 必须为 `required=false`、`status=missing_at_source`、`reason=computed_by_strategy_analysis`，本地研究不得计算 Alpha/Beta（超额收益/市场暴露）、Sharpe（夏普比率）、回撤或分期风险来填满六类物理文件
+- **THEN** `results`、`balances`、`positions`、`orders` 必须完成且通过清单摘要校验；查询 `risk` 与 `period_risks` 时读取器返回 `status=missing_at_source`、`reason=computed_by_strategy_analysis`，本地研究不得计算 Alpha/Beta（超额收益/市场暴露）、Sharpe（夏普比率）、回撤或分期风险来填满六类物理文件
 
 #### Scenario: 收益与权益沿用聚宽字段
 - **WHEN** 分析策略收益、权益、现金和仓位占用
@@ -47,7 +47,7 @@
 
 #### Scenario: 本地 results 保留聚宽单基准字段但不伪造值
 - **WHEN** 本地适配器生成 `data/results.parquet`
-- **THEN** 文件固定包含 `time:string`、`returns:double`、`benchmark_returns:double nullable`；`returns` 表示从初始资金起算的累计净收益，`benchmark_returns` 全列为空值且物理类型仍为 `double`，本地清单记录 `source_benchmark_returns.status=missing_at_source`、`reason=independent_benchmark_set` 和空值行数；不得填零或任选一个独立基准冒充聚宽单基准
+- **THEN** 文件固定包含 `time:string`、`returns:double`、`benchmark_returns:double nullable`；`returns` 表示从初始资金起算的累计净收益，`benchmark_returns` 全列为空值且物理类型仍为 `double`，读取器据此暴露 `source_benchmark_returns.status=missing_at_source`、`reason=independent_benchmark_set` 和空值行数；不得填零或任选一个独立基准冒充聚宽单基准
 
 #### Scenario: 累计收益只在查询期转换为单日收益
 - **WHEN** 统一分析需要把来源策略收益与双基准的单日收益对齐

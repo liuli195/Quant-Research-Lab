@@ -13,6 +13,11 @@ import pyarrow.parquet as pq
 from jsonschema import Draft202012Validator, FormatChecker
 from jsonschema.exceptions import SchemaError, ValidationError
 
+from scripts.research.local_quant_research.result_package import (
+    ResultContractError,
+    validate_result_package,
+)
+
 
 CORE_DATASETS = (
     "results",
@@ -91,6 +96,9 @@ class AnalysisSource:
     kind: str
     schema_version: int | str
     manifest: Mapping[str, object]
+    authority: str | None = None
+    backend: str | None = None
+    formula_version: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "root", Path(self.root).resolve())
@@ -549,6 +557,12 @@ def open_analysis_source(result_dir: Path) -> AnalysisSource:
             raise AnalysisManifestError("local archive gate did not pass")
         _validate_local_files(root, document)
         kind = "local_backtest"
+    elif version == "local-research-package/2":
+        try:
+            document = dict(validate_result_package(root))
+        except ResultContractError as exc:
+            raise AnalysisManifestError(str(exc)) from exc
+        kind = "local_research"
     else:
         raise AnalysisManifestError("unsupported analysis manifest schema")
     return AnalysisSource(
@@ -556,6 +570,21 @@ def open_analysis_source(result_dir: Path) -> AnalysisSource:
         kind=kind,
         schema_version=version,
         manifest=document,
+        authority=(
+            str(document["authority"])
+            if isinstance(document.get("authority"), str)
+            else None
+        ),
+        backend=(
+            str(document["backend"])
+            if isinstance(document.get("backend"), str)
+            else None
+        ),
+        formula_version=(
+            str(document["formula_version"])
+            if isinstance(document.get("formula_version"), str)
+            else None
+        ),
     )
 
 
@@ -566,10 +595,16 @@ def validate_analysis_source(source: AnalysisSource) -> ValidationResult:
     elif source.kind == "local_backtest":
         validate_local_manifest_document(source.manifest)
         _validate_local_files(source.root, source.manifest)
+    elif source.kind == "local_research":
+        try:
+            validate_result_package(source.root)
+        except ResultContractError as exc:
+            raise AnalysisManifestError(str(exc)) from exc
     else:
         raise AnalysisManifestError("unsupported analysis source kind")
     datasets = _object(source.manifest["datasets"], "datasets")
+    names = LOCAL_PHYSICAL_DATASETS if source.kind == "local_research" else CORE_DATASETS
     return ValidationResult(
         status="pass",
-        datasets={name: str(_object(datasets[name], name)["status"]) for name in CORE_DATASETS},
+        datasets={name: str(_object(datasets[name], name)["status"]) for name in names},
     )

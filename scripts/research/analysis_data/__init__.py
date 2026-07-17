@@ -2,6 +2,7 @@
 
 from .manifest import (
     CORE_DATASETS,
+    LOCAL_PHYSICAL_DATASETS,
     AnalysisManifestError,
     AnalysisSource,
     ValidationResult,
@@ -13,6 +14,7 @@ from .views import AnalysisDatabase, open_analysis_database
 __all__ = [
     "AnalysisDatabase",
     "CORE_DATASETS",
+    "LOCAL_PHYSICAL_DATASETS",
     "AnalysisManifestError",
     "AnalysisSource",
     "ValidationResult",

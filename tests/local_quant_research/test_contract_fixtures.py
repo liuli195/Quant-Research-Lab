@@ -162,3 +162,55 @@ def test_authoritative_docs_confirm_the_same_new_baseline(repo_root: Path) -> No
         assert "全量仓位再分配" in text
         assert "4/6/12" in text
         assert "180 秒" in text
+
+
+def test_local_research_performance_baseline_freezes_observations(
+    repo_root: Path,
+) -> None:
+    fixture = json.loads(
+        (
+            repo_root
+            / "tests/local_quant_research/fixtures/performance-baseline.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert fixture["schema_version"] == 1
+    assert fixture["environment"] == {
+        "architecture": "AMD64",
+        "dependencies": {
+            "numba": "0.66.0",
+            "numpy": "2.4.6",
+            "pandas": "3.0.3",
+            "pyarrow": "23.0.1",
+            "vectorbt": "1.1.0",
+        },
+        "logical_cpu_count": 20,
+        "os": "Windows",
+        "os_release": "11",
+        "os_version": "10.0.26200",
+        "physical_memory_bytes": 34163961856,
+        "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+        "python": "3.12.10",
+    }
+    assert fixture["sampling"] == {
+        "cold_processes": 3,
+        "full_cli_cold_processes": 3,
+        "warm_runs": 5,
+        "statistic": "median",
+    }
+    assert "limits" not in fixture
+    assert fixture["collection"] == {
+        "python": ".venv/Scripts/python.exe",
+        "entrypoint": (
+            "joinquant/strategies/strategy-003/research/"
+            "turtle_etf/vectorbt_cli.py"
+        ),
+        "memory_method": "ctypes.GetProcessMemoryInfo",
+        "cold_process_model": "independent_process_per_sample",
+        "warm_process_model": "same_process_for_all_samples",
+    }
+    assert tuple(fixture["scenarios"]) == (
+        "immediate-11-etf",
+        "immediate-17-etf",
+        "delayed-11-etf-1d",
+    )

@@ -10,9 +10,11 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
+import numpy as np
 
-from .contracts import OutputSpec
+from .contracts import ExecutionBundle, OutputSpec
 
 
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -42,6 +44,89 @@ def canonical_bytes(value: object) -> bytes:
 
 def canonical_digest(value: object) -> str:
     return hashlib.sha256(canonical_bytes(value)).hexdigest()
+
+
+def _array_digest(value: np.ndarray) -> dict[str, object]:
+    array = np.asarray(value)
+    if array.dtype.hasobject:
+        raise EvidenceError("execution digest does not accept object arrays")
+    digest = hashlib.sha256()
+    if array.flags.c_contiguous:
+        digest.update(memoryview(array).cast("B"))
+    else:
+        iterator = np.nditer(
+            array,
+            flags=("external_loop", "buffered"),
+            order="C",
+            buffersize=65_536,
+        )
+        for chunk in iterator:
+            digest.update(memoryview(np.asarray(chunk)).cast("B"))
+    return {
+        "dtype": array.dtype.descr if array.dtype.names else array.dtype.str,
+        "shape": list(array.shape),
+        "sha256": digest.hexdigest(),
+    }
+
+
+def validate_extension_table(table: object) -> None:
+    if not isinstance(table, pa.Table):
+        raise EvidenceError("extension table must be an Arrow table")
+    try:
+        table.validate(full=True)
+    except pa.ArrowException as exc:
+        raise EvidenceError("extension table is invalid") from exc
+    for field in table.schema:
+        if field.type not in (pa.string(), pa.bool_(), pa.int64(), pa.float64()):
+            raise EvidenceError("extension fields must use flat string/bool/int64/float64 types")
+        if pa.types.is_float64(field.type) and bool(
+            pc.any(pc.is_nan(table[field.name])).as_py()
+        ):
+            raise EvidenceError("extension float values must use Arrow null instead of NaN")
+
+
+def _run_digest_document(run: object) -> dict[str, object]:
+    ledger_document: dict[str, object] = {}
+    seen_arrays: dict[int, str] = {}
+    for field in (
+        "orders",
+        "assets",
+        "cash",
+        "value",
+        "trades",
+        "positions",
+        "returns",
+    ):
+        array = np.asarray(getattr(run.ledger, field))
+        previous = seen_arrays.get(id(array))
+        if previous is None:
+            ledger_document[field] = _array_digest(array)
+            seen_arrays[id(array)] = field
+        else:
+            ledger_document[field] = {"same_as": previous}
+    return {
+        "ledger": ledger_document,
+        "trace": {
+            key: _array_digest(np.asarray(value))
+            for key, value in sorted(run.trace.items())
+        },
+    }
+
+
+def execution_digest(
+    execution: ExecutionBundle,
+) -> str:
+    primary_document = _run_digest_document(execution.primary)
+    run_documents: dict[str, object] = {"primary": primary_document}
+    if execution.final is execution.primary:
+        run_documents["final"] = {"same_as": "primary"}
+    else:
+        run_documents["final"] = _run_digest_document(execution.final)
+    document: dict[str, object] = {
+        "stages": list(execution.stages),
+        "runs": run_documents,
+    }
+    return canonical_digest(document)
 
 
 def file_digest(path: Path) -> str:

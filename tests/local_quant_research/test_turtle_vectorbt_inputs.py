@@ -19,8 +19,11 @@ RESEARCH_ROOT = (
 )
 sys.path.insert(0, str(RESEARCH_ROOT))
 
-from turtle_etf.vectorbt_engine import run_vectorbt_simulation  # noqa: E402
-from turtle_etf.vectorbt_inputs import prepare_simulation_inputs  # noqa: E402
+from scripts.research.local_quant_research.vectorbt_runtime import run_vectorbt  # noqa: E402
+from turtle_etf._kernel import (  # noqa: E402
+    _prepare_turtle_inputs,
+    prepare_simulation_inputs,
+)
 
 
 def _frame(
@@ -63,6 +66,7 @@ def _config() -> dict[str, object]:
 
 def _simulation_config() -> dict[str, object]:
     config = _config()
+    config["scenario_id"] = "inputs-test"
     config["research"] = {"initial_cash": 1_000_000.0}
     config["signal"] = {
         **config["signal"],
@@ -221,22 +225,24 @@ def test_market_money_is_outside_the_turtle_order_contract() -> None:
             "ETF-A": _frame("ETF-A", close_a, money=money),
             "ETF-B": _frame("ETF-B", close_b, money=money),
         }
-        return run_vectorbt_simulation(
-            prepare_simulation_inputs(frames, _simulation_config()),
-            _simulation_config(),
+        config = _simulation_config()
+        prepared = _prepare_turtle_inputs(
+            prepare_simulation_inputs(frames, config),
+            config,
         )
+        return run_vectorbt(prepared.ledger_input, prepared.primary_program)
 
     low = simulate(1.0)
     high = simulate(1_000_000_000_000.0)
-    assert np.array_equal(low.action_codes, high.action_codes)
-    assert np.array_equal(low.filled_quantities, high.filled_quantities)
-    assert low.portfolio.orders.count() == high.portfolio.orders.count()
+    assert np.array_equal(low.trace["action_codes"], high.trace["action_codes"])
+    assert np.array_equal(low.ledger.orders, high.ledger.orders)
+    assert len(low.ledger.orders) == len(high.ledger.orders)
 
     missing = simulate(None)
-    assert np.array_equal(low.action_codes, missing.action_codes)
-    assert np.array_equal(low.filled_quantities, missing.filled_quantities)
-    assert low.portfolio.orders.count() == missing.portfolio.orders.count()
-    assert int(low.filled_quantities.sum()) > 0
+    assert np.array_equal(low.trace["action_codes"], missing.trace["action_codes"])
+    assert np.array_equal(low.ledger.orders, missing.ledger.orders)
+    assert len(low.ledger.orders) == len(missing.ledger.orders)
+    assert int(low.ledger.orders["filled"].sum()) > 0
 
 
 def test_simulation_inputs_expose_only_strategy_and_risk_arrays() -> None:
@@ -478,4 +484,3 @@ def test_corporate_action_digest_mismatch_closes_the_run() -> None:
             corporate_actions=[_corporate_action()],
             corporate_actions_digest="0" * 64,
         )
-
