@@ -105,6 +105,8 @@ class StrategyModule(Protocol):
 
 `StrategyDescriptor` 不再维护第二份 `source_files` 清单。源码发现不得越过当前 module 包去扫描 `research/archives/` 或其他相邻目录。每个 `_execute` 都是只加载一个策略的全新子进程，子进程把已冻结的策略根放到 `sys.path` 首位并使用标准 `importlib.import_module()`；不建立 UUID（唯一标识）私有命名空间、全局导入锁或手工 `sys.modules`（模块缓存）生命周期。
 
+Strategy Module 是仓库内受版本管理和代码审查的可信代码，不是可上传的敌对插件。运行边界由受限源码路径、冻结输入、清理后的环境、全新子进程和 180 秒超时组成；共享层不安装 Python audit hook（审计钩子），也不自行实现操作系统沙箱。若未来要运行第三方不可信策略，必须作为独立 capability（能力）使用进程级权限隔离设计，不能把该需求塞回当前加载器。
+
 ### 3.2 执行 contracts
 
 ```python
@@ -553,7 +555,7 @@ Windows 峰值进程内存使用标准库 `ctypes` 调用 `GetProcessMemoryInfo`
 4. 完成 archive-ready package 和 promote E2E。
 5. 抽取共享 CLI、scenario 和 performance；新路径仍只由测试调用。
 6. 收窄扩展表并把 writer 收敛为单次回读事实链，删除递归 Arrow 解释器和内部 validator 双路径。
-7. 统一静态源码身份并改用标准 importlib，删除 descriptor 源码清单、UUID 命名空间和重复 fixture 内容。
+7. 统一静态源码身份并改用标准 importlib，删除 descriptor 源码清单、UUID 命名空间、v2 audit hook 沙箱和重复 fixture 内容。
 8. 把晋升收敛为扫描、标准复制、摘要复核和原子发布，删除敌对并发树状态机。
 9. 建立通用 vectorbt 唯一账本 runtime，只用通用 primary/follow-up fixture 证明共享接线。
 10. 在海龟 Strategy Module 内同时迁移即时与延迟 OrderProgram，逐笔一致后删除手工账本。
@@ -583,6 +585,10 @@ Windows 峰值进程内存使用标准库 `ctypes` 调用 `GetProcessMemoryInfo`
 ### 保留旧入口作为兼容模式
 
 会形成两套账本、writer 和代码身份，继续制造原问题，拒绝。回滚依赖 Git 提交，不依赖运行时兼容开关。
+
+### 用 Python audit hook 把仓库内策略当作敌对插件
+
+不能形成可靠的操作系统安全边界，却增加冻结文件、导入注入和平台分支。当前策略是仓库内受审查代码，使用既有子进程与输入边界即可；真正的不可信策略执行另立能力，拒绝在本变更中模拟沙箱。
 
 ## 15. 完成判据
 

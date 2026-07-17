@@ -4,21 +4,15 @@
 - Plan: `docs/superpowers/plans/2026-07-17-local-research-three-layer-architecture.md`
 - Review mode: `thorough`
 - TDD mode: `tdd`
-- Current plan task: `Task 4: 实现策略目录自包含档案的原样晋升`
+- Current plan task: `Task 6: 收窄扩展表并收敛共享 writer`
 - OpenSpec mappings:
-  - `4.1 先编写失败测试，定义档案清单、目录布局、必需代码/配置/数据/证据/报告和 analysis_id 校验`
-  - `4.2 实现独立 promote 动作，只复制已完成结果字节和策略源码，不加载策略、vectorbt 或 writer`
-  - `4.3 实现逐文件 SHA256 复核、同内容幂等复用、异内容冲突拒绝、同级暂存和原子发布`
-  - `4.4 验证删除 .local 源运行后档案仍可查询和生成报告，同时确认共享行情文件没有被复制`
-- Stage: `done`
-- Task base: `01f734358b6ddd192a1d43e0f19b8dcac3bd4b4f`
-- Implementer: `/root/task4_archive_promotion`
-- Implementation commits: `ad5bd29 功能：支持本地研究结果原样晋升`; `5a4353a 修复：强化研究档案晋升安全`; `c785cc3 修复：消除档案晋升重复验证`
-- Changed files: `scripts/research/local_quant_research/archive.py`; `scripts/research/local_quant_research/cli.py`; `tests/local_quant_research/test_archive_promotion.py`
-- RED evidence: `archive module missing and mutation; fix1: identity/parent 15, source race 9, analysis 2, cleanup 2 failures; fix2: duplicate validation/full fetch and fd leak 3 failures`
-- GREEN evidence: `fix2 combined 133 passed; Ruff and diff check passed; all prior fix groups green`
-- Risk signals: `filesystem atomicity; untrusted identity/path input; symlink/hardlink/reparse handling; public CLI; destructive cleanup limited to own staging`
-- Task review: `approved after fix round 2 by /root/final_review_task4`
-- Review-fix round: `2/2`
-- Unresolved feedback: `none; target no-replace/source post-rescan races and old code-identity remain non-blocking warnings`
-- Coordinator verification: `Task 3 approved and authoritative result-package validator available; Task 4 tests constrained to tmp_path; user JoinQuant parallel archive state explicitly excluded`
+  - `6.1 先编写失败测试，限定 ResultExtension 只接受扁平 string/bool/int64/float64、用 Arrow null 表示缺失并在冷/热比较前拒绝 NaN 与其他类型`
+  - `6.2 使用 PyArrow Table.validate、精确 Schema 和 Table.equals 比较扩展，核心事实继续使用 NumPy 摘要，删除递归 Arrow 类型解码和任意类型逻辑哈希`
+  - `6.3 将内部 writer 收敛为一次物化、一次回读事实链，公开 validator 保持纯磁盘读取，删除 preloaded_* 参数和 provisional/final 双包路径`
+  - `6.4 运行结果包、runner、双策略和公开 CLI 回归，确认越界扩展固定返回 failed/result_contract_failed`
+- Stage: `ready-to-dispatch`
+- Task base: `pending planning/checkoff commit`
+- Implementer: `not dispatched`
+- Previous task: `Task 5 complete; implementation 90bd254, fixes 29de3ca/85cac8c/7756849; final Arrow/writer feedback reclassified by user-approved planning revision into Task 6`
+- Coordinator verification: `2026-07-17 fresh seven-file regression: 193 passed in 83.80s; revised Planning Review PASS at 6300c05; OpenSpec 5.1-5.4 and plan Task 5 checked off`
+- Scope exclusions: `JoinQuant archive sync cursor bug tracked by #17 and scheduled-workspace isolation tracked by #11; neither belongs to this change`

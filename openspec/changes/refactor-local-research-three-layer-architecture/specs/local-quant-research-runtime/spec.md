@@ -49,6 +49,13 @@
 - **WHEN** 全新 `_execute` 子进程加载唯一 Strategy Module
 - **THEN** 它把冻结策略根放到 `sys.path` 首位并使用标准 `importlib.import_module()`，不建立 UUID 私有命名空间、全局导入锁或手工模块缓存生命周期
 
+### Requirement: 仓库内策略加载不得模拟敌对插件沙箱
+Strategy Module MUST 是仓库内受版本管理和代码审查的可信代码。共享运行 MUST 使用受限源码路径、冻结输入、清理环境、全新子进程和超时限制执行策略；它 MUST NOT 安装 Python audit hook（审计钩子）或自行模拟操作系统沙箱。本 capability（能力）不得声称支持第三方不可信策略。
+
+#### Scenario: 执行仓库内策略
+- **WHEN** 固定 `_execute` 子进程加载已通过源码边界校验的 Strategy Module
+- **THEN** 它直接通过标准导入执行，不复制或注入 `adapter_guard`，并继续受输入冻结、环境清理和超时限制
+
 ### Requirement: 所有项目必须通过固定共享入口运行
 系统 MUST 从项目 `.venv` 调用共享本地研究 CLI。项目配置 MUST 声明仓库内 strategy root、module 和 symbol，不得声明策略专属 project entry、任意命令、系统 Python 或隐式依赖安装。
 

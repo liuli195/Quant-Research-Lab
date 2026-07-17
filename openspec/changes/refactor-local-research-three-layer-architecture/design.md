@@ -26,6 +26,7 @@
 
 - 不修改海龟突破、退出、加仓、风险单位、共同止损、全量再分配和延迟冻结规则。
 - 不把本地研究结果声明为聚宽正式回测或模拟交易结果。
+- 不修改聚宽定时归档、归档格式、同步逻辑、`backtests/` 或 `simulations/` 数据模型，也不在本 change（变更）实现定时任务运行目录隔离；该运维问题另行处理。
 - 不复制 vectorbt、共享 Skill 实现、Python 环境或共享行情文件到每个档案。
 - 不引入新的回测框架、策略 DSL、Rust 执行内核或多场景批处理器。
 - 不支持完整 Arrow 类型体系，不为 dictionary/nested/union/run-end encoded（字典/嵌套/联合/游程编码）编写规范化解释器。
@@ -89,6 +90,8 @@ turtle_etf/
 
 父进程先在受限策略根内解析 module，再以其顶层包目录（单文件 module 则为文件所在目录）为源码边界，静态发现并排序全部普通 `.py` 文件。该集合同时驱动运行身份和档案 `code/`，不得越界扫描 `research/archives/` 或相邻目录，`StrategyDescriptor` 不再声明第二份 `source_files`。每次 `_execute` 是只加载一个策略的全新子进程，因此子进程只需把冻结策略根放到 `sys.path` 首位并调用标准 `importlib.import_module()`；不建立 UUID 命名空间、全局导入锁或手工模块缓存生命周期。
 
+Strategy Module 是仓库内受版本管理和代码审查的可信代码。当前运行边界使用受限源码路径、冻结输入、清理环境、全新子进程和超时；不安装 Python audit hook（审计钩子），也不把加载器扩展成不可靠的应用层沙箱。第三方不可信策略执行不属于本 capability（能力）。
+
 把全部策略逻辑合并为一个物理文件会形成约 150 KB 大文件、扩大导入和代码身份变化面，因此拒绝。
 
 ### 5. 公共结果包后端中立，策略证据作为扩展注入
@@ -146,11 +149,11 @@ joinquant/strategies/<strategy_id>/research/archives/<analysis_id>/
 4. 完成 archive-ready package 和 promote 端到端测试。
 5. 抽取共享单场景、性能和 CLI，仅让测试配置走新入口，生产配置留到单次切换任务。
 6. 收窄扩展表并把 writer 收敛为单次回读事实链，删除自定义递归 Arrow 解释器和内部 validator 双路径。
-7. 统一静态源码身份并改用标准 importlib，删除 descriptor 源码清单、UUID 命名空间和重复测试夹具内容。
+7. 统一静态源码身份并改用标准 importlib，删除 descriptor 源码清单、UUID 命名空间、v2 audit hook 沙箱和重复测试夹具内容。
 8. 把晋升收敛为扫描、标准复制、摘要复核和原子发布，删除敌对并发树状态机。
 9. 建立通用 vectorbt 唯一账本 runtime，只用通用 primary/follow-up fixture 证明共享接线。
 10. 在海龟 Strategy Module 内同时迁移即时与延迟 OrderProgram，逐笔一致后删除手工账本。
-11. 单次切换生产配置，更新测试、代码身份、Skill 文档和旧 OpenSpec 约束，删除所有旧生产文件。
+11. 单次切换生产配置，更新测试、代码身份、Skill 文档和旧 OpenSpec 约束，删除所有旧生产文件、共享 `adapter_guard.py` 和 runner v1 command 路径。
 12. 运行共享 CLI → vectorbt → 标准结果包 → 自包含档案的完整端到端回归和真实规模性能验证。
 
 回滚以任务提交为单位进行：在旧生产入口尚未删除前，可回退最近迁移提交；删除旧入口后只允许整体回退到最后一个已验证提交，不提供运行时双路径开关。

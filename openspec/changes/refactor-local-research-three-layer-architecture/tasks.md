@@ -26,10 +26,10 @@
 
 ## 5. 统一共享单场景、性能与 CLI
 
-- [ ] 5.1 先编写失败测试，把项目 CLI、单场景编排、冷热确定性、阶段计时和停止状态迁入共享 Module
-- [ ] 5.2 将 runner 固定为项目 `.venv` 加共享 CLI；外部配置只声明嵌套 `strategy.root/module/symbol`，内部 `RunConfig` 再映射为 `strategy_root/strategy_module/strategy_symbol`
-- [ ] 5.3 保持输入冻结、清理环境、运行复用、失败证据和 `complete/evidence_insufficient/failed` 语义不变
-- [ ] 5.4 更新仓库 Skill，使 Codex、其他 Agent 和人工命令只调用共享 `run` 与 `promote` 入口
+- [x] 5.1 先编写失败测试，把项目 CLI、单场景编排、冷热确定性、阶段计时和停止状态迁入共享 Module
+- [x] 5.2 将 runner 固定为项目 `.venv` 加共享 CLI；外部配置只声明嵌套 `strategy.root/module/symbol`，内部 `RunConfig` 再映射为 `strategy_root/strategy_module/strategy_symbol`
+- [x] 5.3 保持输入冻结、清理环境、运行复用、失败证据和 `complete/evidence_insufficient/failed` 语义不变
+- [x] 5.4 更新仓库 Skill，使 Codex、其他 Agent 和人工命令只调用共享 `run` 与 `promote` 入口
 
 ## 6. 收窄扩展表并收敛共享 writer
 
@@ -42,7 +42,8 @@
 
 - [ ] 7.1 先编写失败测试，证明当前 module 顶层包内静态发现并排序的普通 `.py` 文件集合同时驱动运行身份和档案 `code/`，相邻目录与 `research/archives/` 不进入，descriptor 不含第二份 `source_files`
 - [ ] 7.2 在每次全新单策略 `_execute` 子进程中使用标准 `importlib.import_module()`，删除 UUID 命名空间、全局导入锁和手工 `sys.modules` 生命周期
-- [ ] 7.3 把第二个最小策略 fixture 缩到验证公开 Module、相对导入和无扩展结果所需的最小代码，并运行 loader、contract 和 E2E 回归
+- [ ] 7.3 按仓库内可信策略边界删除 v2 `adapter_guard` 注入和 audit hook 沙箱，仅保留受限源码路径、冻结输入、清理环境、全新子进程和超时
+- [ ] 7.4 把第二个最小策略 fixture 缩到验证公开 Module、相对导入和无扩展结果所需的最小代码，并运行 loader、contract 和 E2E 回归
 
 ## 8. 简化可信工作区内的档案晋升
 
@@ -67,7 +68,7 @@
 ## 11. 单次切换生产配置与入口
 
 - [ ] 11.1 把生产 project-run 配置切换为 v2，并删除策略根下手工输入型 `code-identity.json`
-- [ ] 11.2 在同一提交物理删除旧策略 CLI、single_scenario、benchmark、vectorbt_engine、result_adapter 及其他已被新 Module 取代的生产入口，不保留兼容分支
+- [ ] 11.2 在同一提交物理删除旧策略 CLI、single_scenario、benchmark、vectorbt_engine、result_adapter、共享 `adapter_guard.py` 和 runner v1 command 路径，不保留兼容分支
 - [ ] 11.3 从共享 CLI 完成海龟 `run → package → promote` E2E，覆盖复用、证据不足、失败、冲突、中途清理和删除 `.local` 后查询
 - [ ] 11.4 同步 Skill、研究说明、旧 OpenSpec 约束和 Build and Verify 配置，保留生成包内 `config/code-identity.json`
 
