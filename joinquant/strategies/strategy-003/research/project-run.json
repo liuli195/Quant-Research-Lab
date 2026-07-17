@@ -1,6 +1,11 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "project_id": "strategy-003",
+  "strategy": {
+    "root": "joinquant/strategies/strategy-003/research",
+    "module": "turtle_etf.strategy",
+    "symbol": "MODULE"
+  },
   "snapshot_id": "e88238cca420a8ae66b90adb6cda4dd6c38a07390a13b8ac2f471e534742e33e",
   "snapshot_requirements": {
     "source": {
@@ -44,26 +49,8 @@
       "skip_paused": false
     }
   },
-  "project_entry": "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_cli.py",
-  "command": [
-    ".venv/Scripts/python.exe",
-    "joinquant/strategies/strategy-003/research/turtle_etf/vectorbt_cli.py"
-  ],
-  "project_config": "joinquant/strategies/strategy-003/research/baseline.json",
-  "code_identity": "joinquant/strategies/strategy-003/research/code-identity.json",
+  "scenario_config": "joinquant/strategies/strategy-003/research/baseline.json",
   "declared_inputs": [
     "joinquant/strategies/strategy-003/manifest.json"
-  ],
-  "required_outputs": [
-    {
-      "path": "backtests/local-baseline",
-      "format": "directory"
-    }
-  ],
-  "output_root": ".local/quant-research",
-  "stop_states": [
-    "complete",
-    "evidence_insufficient",
-    "failed"
   ]
 }

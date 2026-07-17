@@ -20,7 +20,8 @@ description: Use when 用户或 Agent 需要基于仓库项目配置与共享行
 3. 运行共享场景：由通用 CLI（命令行接口）生成私有子进程协议；共享运行时在同一全新进程内分别完成一次冷启动和一次预热执行。
 4. 校验单场景结果：重新读取唯一结果目录，核对状态、运行身份、输入摘要、性能证据、临时产物清理和输出摘要。
 5. 固化运行证据：通过后原子写入不可变清单；相同输入和相同输出复用既有运行，摘要冲突则失败。
-6. 返回调用者：完整运行固定输出 `next_action=return_to_caller`。复数场景由主 agent（代理）多次调用本 Skill，不在 Skill 内聚合、分析、报告或推荐。
+6. 可选晋升：公开 `promote` 只把完整结果包逐字节复制到 `joinquant/strategies/<strategy_id>/research/archives/<analysis_id>/`；它不重算结果，也不写入聚宽正式 `backtests/` 或 `simulations/`。
+7. 返回调用者：完整运行固定输出 `next_action=return_to_caller`。复数场景由主 agent（代理）多次调用本 Skill，不在 Skill 内聚合、分析、报告或推荐。结果包内报告只复述可复核的机械执行事实，不承担策略分析、推荐或人工批准。
 
 统一公开命令：
 

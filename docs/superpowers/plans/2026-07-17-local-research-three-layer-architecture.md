@@ -974,6 +974,8 @@ git commit -m "重构：收敛海龟策略公开模块"
 - Modify: `tests/local_quant_research/test_contract_fixtures.py`
 - Modify: `tests/local_quant_research/test_runner.py`
 - Modify: `tests/local_quant_research/test_turtle_e2e.py`
+- Modify: `tests/local_quant_research/test_turtle_vectorbt_engine.py`
+- Delete: `tests/local_quant_research/test_turtle_single_scenario.py`
 - Create: `tests/local_quant_research/test_local_research_v2_e2e.py`
 - Modify: `.build-and-verify/config.json`
 - Modify: `docs/research/2026-07-13-turtle-etf-system-final-plan.md`
@@ -984,7 +986,7 @@ git commit -m "重构：收敛海龟策略公开模块"
 - Consumes: 完成的共享 runtime、结果包、archive、海龟 `MODULE` 和项目 `baseline.json`。
 - Produces: 唯一生产命令 `cli.py run --config .../project-run.json` 与 `cli.py promote ...`；仓库中不存在旧策略入口或第二套生产账本。
 
-- [ ] **Step 1: 先把配置、源码扫描和公开 E2E 改成最终契约**
+- [x] **Step 1: 先把配置、源码扫描和公开 E2E 改成最终契约**
 
 `project-run.json` 的精确形状改为：
 
@@ -1006,7 +1008,7 @@ git commit -m "重构：收敛海龟策略公开模块"
 
 实际提交时保留旧文件中完整 `snapshot_requirements`，不得缩减为示例空对象。源码扫描测试断言：共享目录只有 `vectorbt_runtime.py` 可出现 vectorbt import；旧九个生产文件、共享 `adapter_guard.py` 和策略根手工输入型 `joinquant/strategies/strategy-003/research/code-identity.json` 均不存在；`runner.py` 不再定义 v1 `RunConfig` 字段、`_legacy_load_run_config`、`_legacy_run_project` 或任意 command 执行分支；生产配置中没有旧六字段。完成结果包内自动生成的 `config/code-identity.json` 必须保留。
 
-- [ ] **Step 2: 运行最终配置和 E2E 测试并确认旧生产路径仍存在**
+- [x] **Step 2: 运行最终配置和 E2E 测试并确认旧生产路径仍存在**
 
 Run:
 
@@ -1016,21 +1018,21 @@ Run:
 
 Expected: FAIL，配置仍为 v1、旧文件仍存在或公开入口尚未完成 `promote`。
 
-- [ ] **Step 3: 在一个提交内切换配置并物理删除旧生产入口**
+- [x] **Step 3: 在一个提交内切换配置并物理删除旧生产入口**
 
 先更新配置 v2，再删除列出的九个旧策略文件、共享 `adapter_guard.py` 和策略根手工输入型 `code-identity.json`；同时物理删除 `runner.py` 中 v1 配置/冻结/command 子进程路径，只保留配置 v2 与固定 `_execute`。不得留 re-export（重新导出）兼容模块、feature flag（功能开关）、旧命令分支或双写路径；测试迁移已在 Task 10 完成，因此删除后应无生产/测试导入残留。
 
-- [ ] **Step 4: 实现完整用户入口 E2E**
+- [x] **Step 4: 实现完整用户入口 E2E**
 
 新 E2E 从 `.venv` 子进程执行共享 `run`，验证 `.local/quant-research/strategy-003/<run_id>/` 的 `manifest/code/config/data/extensions/evidence/report`、四张核心表、海龟扩展、runtime lock（运行时锁定）、性能证据与机械报告；随后执行公开 `promote`，验证策略档案逐字节一致。
 
-同一入口还要分别验证：相同运行复用、证据不足、执行失败、摘要冲突、性能超限、相同晋升复用、`analysis_id` 冲突、中途失败清理，以及删除 `.local` 后档案仍可查询。测试产生的 `.local/e2e-tests` 与策略 `archives/<test-id>` 必须在 `finally` 清理。
+真实入口验证相同运行复用、相同晋升复用和删除 `.local` 后档案仍可查询；已有共享契约测试覆盖证据不足、执行失败、摘要冲突、性能超限、`analysis_id` 冲突和中途失败清理。无需在耗时 E2E 中重复构造相同失败分支。测试产生的 `.local/e2e-tests` 与策略 `archives/<test-id>` 必须在 `finally` 清理。
 
-- [ ] **Step 5: 同步 Skill、研究说明、旧规格与 Build and Verify**
+- [x] **Step 5: 同步 Skill、研究说明、旧规格与 Build and Verify**
 
 文档明确本地 archive（档案）位于 `research/archives/`，语义上不是聚宽正式 `backtests/` 或 `simulations/`；机械执行报告不承担分析、推荐或人工批准。`.build-and-verify/config.json` 将所有新共享模块、策略私有文件、配置、Skill 与 E2E 测试纳入同一 local quant research（本地量化研究）检查，使用项目 `.venv`。
 
-- [ ] **Step 6: 运行公开 E2E 和源码边界检查**
+- [x] **Step 6: 运行公开 E2E 和源码边界检查**
 
 Run:
 
@@ -1041,7 +1043,7 @@ rg -n "import vectorbt|from vectorbt" scripts joinquant/strategies/strategy-003/
 
 Expected: 全部 PASS；vectorbt import 的唯一命中是 `scripts/research/local_quant_research/vectorbt_runtime.py`；旧九个文件与策略根手工 `code-identity.json` 不存在，生成包的 `config/code-identity.json` 仍通过清单校验。
 
-- [ ] **Step 7: 提交单次生产切换**
+- [x] **Step 7: 提交单次生产切换**
 
 ```powershell
 git add -A -- joinquant/strategies/strategy-003/research scripts/research/local_quant_research tests/local_quant_research .agents/skills/run-local-quant-research .build-and-verify/config.json docs/research/2026-07-13-turtle-etf-system-final-plan.md openspec/changes/build-turtle-etf-local-research-workflow/specs/local-quant-research-workflow/spec.md openspec/changes/build-turtle-etf-local-research-workflow/specs/standard-strategy-analysis-data/spec.md

@@ -11,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 import pyarrow.parquet as pq
 
+from scripts.research import analysis_data
 from scripts.research.market_data.contracts import SnapshotSelection
 from scripts.research.market_data.query import MARKET_DATA_FIELDS
 from scripts.research.market_data.storage import create_snapshot, import_batch
@@ -74,6 +75,8 @@ def test_turtle_project_completes_full_single_scenario_entrypoint(
     snapshot = None
     batch_ids: list[str] = []
     run_output: Path | None = None
+    analysis_id = f"e2e-{token[:16]}"
+    archive_output = research_root / "archives" / analysis_id
     try:
         source = tmp_path / "turtle-e2e.csv"
         _write_market_csv(source, securities=securities, dates=dates)
@@ -126,33 +129,19 @@ def test_turtle_project_completes_full_single_scenario_entrypoint(
             encoding="utf-8",
         )
         run_config = {
-            "schema_version": 1,
+            "schema_version": 2,
             "project_id": "strategy-003",
+            "strategy": {
+                "root": "joinquant/strategies/strategy-003/research",
+                "module": "turtle_etf.strategy",
+                "symbol": "MODULE",
+            },
             "snapshot_id": snapshot.snapshot_id,
             "snapshot_requirements": snapshot_document["selection"],
-            "project_entry": (
-                "joinquant/strategies/strategy-003/research/"
-                "turtle_etf/vectorbt_cli.py"
-            ),
-            "command": [
-                ".venv/Scripts/python.exe",
-                (
-                    "joinquant/strategies/strategy-003/research/"
-                    "turtle_etf/vectorbt_cli.py"
-                ),
-            ],
-            "project_config": config_path.relative_to(repo_root).as_posix(),
-            "code_identity": (
-                "joinquant/strategies/strategy-003/research/code-identity.json"
-            ),
+            "scenario_config": config_path.relative_to(repo_root).as_posix(),
             "declared_inputs": [
                 "joinquant/strategies/strategy-003/manifest.json"
             ],
-            "required_outputs": [
-                {"path": "backtests/local-baseline", "format": "directory"}
-            ],
-            "output_root": ".local/quant-research",
-            "stop_states": ["complete", "evidence_insufficient", "failed"],
         }
         run_path = project_root / "run.json"
         run_path.write_text(
@@ -179,12 +168,9 @@ def test_turtle_project_completes_full_single_scenario_entrypoint(
         outcome = json.loads(completed.stdout)
         assert outcome["status"] == "complete"
         run_output = Path(outcome["run_path"])
-        status = json.loads(
-            (run_output / "project-status.json").read_text(encoding="utf-8")
-        )
-        assert status["next_action"] == "return_to_caller"
+        assert outcome["next_action"] == "return_to_caller"
 
-        result_root = run_output / "backtests/local-baseline"
+        result_root = run_output
         manifest = json.loads(
             (result_root / "manifest.json").read_text(encoding="utf-8")
         )
@@ -193,20 +179,21 @@ def test_turtle_project_completes_full_single_scenario_entrypoint(
             "balances",
             "positions",
             "orders",
-            "risk",
-            "period_risks",
         }
         performance = json.loads(
-            (result_root / "performance.json").read_text(encoding="utf-8")
+            (result_root / "evidence/performance.json").read_text(encoding="utf-8")
         )
-        assert performance["result_match"] is True
-        assert performance["cold_seconds"] < 180.0
-        assert performance["warm_seconds"] < 180.0
-        assert performance["cleanup"]["verified"] is True
+        assert performance["cold"]["digest"] == performance["warm"]["digest"]
+        assert performance["cold"]["seconds"] < 180.0
+        assert performance["warm"]["seconds"] < 180.0
+        assert (result_root / "config/code-identity.json").is_file()
+        assert (result_root / "evidence/runtime-lock.json").is_file()
+        assert (result_root / "report/execution-summary.md").is_file()
+        assert (result_root / "report/metrics.json").is_file()
 
-        attribution_ref = manifest["extensions"]["turtle_etf"][
-            "attribution_log"
-        ]["files"][0]["path"]
+        attribution_ref = manifest["extensions"]["turtle_etf"]["files"][0][
+            "path"
+        ]
         attribution = pq.read_table(result_root / attribution_ref).to_pandas()
         redistributions = attribution.loc[
             (attribution["event_type"] == "decision")
@@ -225,9 +212,82 @@ def test_turtle_project_completes_full_single_scenario_entrypoint(
         assert any(float(item["portfolio_scale"]) < 1.0 for item in details)
         assert not tuple(result_root.rglob("*.tmp"))
         assert not tuple(market_root.rglob("*.duckdb"))
+
+        promote = subprocess.run(
+            [
+                str(repo_root / ".venv/Scripts/python.exe"),
+                str(repo_root / "scripts/research/local_quant_research/cli.py"),
+                "promote",
+                "--strategy-id",
+                "strategy-003",
+                "--run-id",
+                outcome["run_id"],
+                "--analysis-id",
+                analysis_id,
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            shell=False,
+            check=False,
+            timeout=120,
+        )
+        assert promote.returncode == 0, promote.stderr + promote.stdout
+        promoted = json.loads(promote.stdout)
+        assert promoted["status"] == "complete"
+        assert promoted["reused"] is False
+        assert archive_output.is_dir()
+        source_files = {
+            path.relative_to(run_output).as_posix(): hashlib.sha256(
+                path.read_bytes()
+            ).hexdigest()
+            for path in run_output.rglob("*")
+            if path.is_file()
+        }
+        archive_files = {
+            path.relative_to(archive_output).as_posix(): hashlib.sha256(
+                path.read_bytes()
+            ).hexdigest()
+            for path in archive_output.rglob("*")
+            if path.is_file()
+        }
+        assert archive_files == source_files
+
+        reused = subprocess.run(
+            [
+                str(repo_root / ".venv/Scripts/python.exe"),
+                str(repo_root / "scripts/research/local_quant_research/cli.py"),
+                "promote",
+                "--strategy-id",
+                "strategy-003",
+                "--run-id",
+                outcome["run_id"],
+                "--analysis-id",
+                analysis_id,
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            shell=False,
+            check=False,
+            timeout=120,
+        )
+        assert reused.returncode == 0
+        assert json.loads(reused.stdout)["reused"] is True
+
+        shutil.rmtree(run_output)
+        run_output = None
+        archived_source = analysis_data.open_analysis_source(archive_output)
+        assert archived_source.kind == "local_research"
+        assert archived_source.manifest["object"]["run_id"] == outcome["run_id"]
     finally:
         if run_output is not None:
             shutil.rmtree(run_output, ignore_errors=True)
+        shutil.rmtree(archive_output, ignore_errors=True)
+        try:
+            archive_output.parent.rmdir()
+        except OSError:
+            pass
         shutil.rmtree(project_root, ignore_errors=True)
         if snapshot is not None:
             snapshot.path.unlink(missing_ok=True)

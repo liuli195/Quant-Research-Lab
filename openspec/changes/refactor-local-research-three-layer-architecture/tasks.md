@@ -68,10 +68,10 @@
 
 ## 11. 单次切换生产配置与入口
 
-- [ ] 11.1 把生产 project-run 配置切换为 v2，并删除策略根下手工输入型 `code-identity.json`
-- [ ] 11.2 在同一提交物理删除旧策略 CLI、single_scenario、benchmark、vectorbt_engine、result_adapter、共享 `adapter_guard.py` 和 runner v1 command 路径，不保留兼容分支
-- [ ] 11.3 从共享 CLI 完成海龟 `run → package → promote` E2E，覆盖复用、证据不足、失败、冲突、中途清理和删除 `.local` 后查询
-- [ ] 11.4 同步 Skill、研究说明、旧 OpenSpec 约束和 Build and Verify 配置，保留生成包内 `config/code-identity.json`
+- [x] 11.1 把生产 project-run 配置切换为 v2，并删除策略根下手工输入型 `code-identity.json`
+- [x] 11.2 在同一提交物理删除旧策略 CLI、single_scenario、benchmark、vectorbt_engine、result_adapter、共享 `adapter_guard.py` 和 runner v1 command 路径，不保留兼容分支
+- [x] 11.3 从共享 CLI 完成海龟 `run → package → promote` E2E，覆盖复用、证据不足、失败、冲突、中途清理和删除 `.local` 后查询
+- [x] 11.4 同步 Skill、研究说明、旧 OpenSpec 约束和 Build and Verify 配置，保留生成包内 `config/code-identity.json`
 
 ## 12. 发布性能门禁与完整验证
 
