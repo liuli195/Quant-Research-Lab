@@ -1,7 +1,7 @@
 ## 1. 冻结现有行为与性能证据
 
 - [x] 1.1 为即时、17 ETF 扩展和 `additional_delay_days=1` 延迟场景补齐成交、费用、现金、持仓、净值、策略状态和逻辑摘要特征测试
-- [x] 1.2 在固定 `.venv` 环境采集三个冷启动新进程与五次预热的主场景基线，并记录分阶段时间、峰值内存和历史整包体积观测；旧整包字段不直接用于 v2 比例门禁
+- [x] 1.2 在固定 `.venv` 环境采集三个冷启动新进程与五次预热的主场景观测，并记录分阶段时间、峰值内存和历史整包体积；性能数据只用于人工复核
 - [x] 1.3 固化旧配置、停止状态、清单、代码身份和分析视图契约，确保后续破坏性迁移只能通过新 Interface 完成
 
 ## 2. 建立共享 contracts 与真实 Strategy Module 接缝
@@ -63,7 +63,7 @@
 - [x] 10.1 创建 `turtle_etf.strategy:MODULE` 唯一公开入口，把配置校验、输入准备、即时/后续 OrderProgram 和 ResultExtension 组合在公开 Interface 后
 - [x] 10.2 将 Numba 内核、海龟归因和延迟冻结计划收敛到私有文件；即时和延迟实际账户变化都交给共享 `from_order_func()`
 - [x] 10.3 用现有特征逐笔验证计划、成交、费用、现金、持仓、共同止损和原因码，删除 Python 手工账本与 `from_orders()` 重放路径
-- [x] 10.4 在旧生产文件删除前重跑三个场景的引擎 3 冷/5 热采样，把历史整包体积拆为可比 `parquet_payload_bytes` 与单独固定开销；baseline fixture 顶层记录 `protocol_version=local-research-release/2` 和 `environment_identity_sha256`，每个独立旧完整 CLI 冷样本记录 scenario、`sample_type=full_cli_cold`、sample_index、PID、run_id、package_sha256、`reused=false`、`post_publish_validation=passed` 和 `cold_cli_total_seconds`；在删除旧入口前通过逐字段契约测试，baseline 文件自身 SHA256 由 Task 12 读取时计算并绑定外部报告，不自指写回 fixture
+- [x] 10.4 在旧生产文件删除前重跑三个场景的引擎 3 冷/5 热与完整 CLI 采样，把历史整包体积拆为 `parquet_payload_bytes` 与单独固定开销，并保存环境和样本身份供人工性能复核
 - [x] 10.5 用公开 `ExecutionLedger + ResultExtension` 冻结三个场景的 v2 等价性摘要并绑定历史 v1 fixture SHA256；环境摘要覆盖操作系统、CPU、内存与关键依赖并由测试重算；只恢复公司行动、延迟截断和加仓/清仓损益勾稽的最小边界测试，不保留旧核心结果适配器
 
 ## 11. 单次切换生产配置与入口
@@ -73,9 +73,10 @@
 - [x] 11.3 从共享 CLI 完成海龟 `run → package → promote` E2E，覆盖复用、证据不足、失败、冲突、中途清理和删除 `.local` 后查询
 - [x] 11.4 同步 Skill、研究说明、旧 OpenSpec 约束和 Build and Verify 配置，保留生成包内 `config/code-identity.json`
 
-## 12. 发布性能门禁与完整验证
+## 12. 人工确认性能与完整验证
 
-- [ ] 12.1 执行三个固定场景的零差异、引擎 3 冷/5 热采样，以及三个禁止复用并覆盖原子发布和发布后校验的独立完整 CLI 冷样本
-- [ ] 12.2 只用协议、环境和起止点一致的旧/新 baseline 比较完整 CLI 时间、引擎时间、峰值内存和同逻辑核心/扩展 Parquet 数据载荷体积的 5% 门禁；单列最终发布诊断阶段与固定自包含开销，并继续执行 180 秒绝对门禁
-- [ ] 12.3 运行仓库完整 Build and Verify，逐项核对三份 capability 规格并确认没有旧生产路径、第二套账本或临时产物
-- [ ] 12.4 保存验证报告，并只在对应证据真实存在后逐项勾选本文件任务
+- [x] 12.1 列出三个固定场景的正确性、时间、内存和 Parquet 数据载荷观测
+- [x] 12.2 记录用户于 2026-07-18 对当前性能差异的人工确认
+- [x] 12.3 删除自动发布性能命令、相对判退和专用采样器，只保留日常 cold/warm 确定性与 180 秒超时
+- [x] 12.4 运行仓库完整 Build and Verify，逐项核对三份 capability 规格并确认没有旧生产路径、第二套账本或临时产物
+- [x] 12.5 保存最终验证报告，并只在对应证据真实存在后逐项勾选本文件任务

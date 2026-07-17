@@ -949,3 +949,9 @@ def test_daily_performance_adds_single_writer_duration_to_both_limits() -> None:
         performance.include_shared_work(evidence, 180.0)
 
     assert caught.value.code == "cold_performance_limit"
+
+
+def test_public_cli_omits_release_performance_workflow() -> None:
+    from scripts.research.local_quant_research import cli
+
+    assert "performance" not in cli._parser().format_help()

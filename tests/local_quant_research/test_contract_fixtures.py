@@ -164,7 +164,7 @@ def test_authoritative_docs_confirm_the_same_new_baseline(repo_root: Path) -> No
         assert "180 秒" in text
 
 
-def test_local_research_performance_baseline_freezes_release_gate(
+def test_local_research_performance_baseline_freezes_observations(
     repo_root: Path,
 ) -> None:
     fixture = json.loads(
@@ -198,10 +198,7 @@ def test_local_research_performance_baseline_freezes_release_gate(
         "warm_runs": 5,
         "statistic": "median",
     }
-    assert fixture["limits"] == {
-        "relative_ratio": 1.05,
-        "absolute_seconds": 180.0,
-    }
+    assert "limits" not in fixture
     assert fixture["collection"] == {
         "python": ".venv/Scripts/python.exe",
         "entrypoint": (

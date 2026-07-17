@@ -26,7 +26,7 @@ _REQUIRED_CLI_SAMPLE_FIELDS = {
 }
 
 
-def test_release_performance_baseline_has_v2_engine_and_cli_samples(
+def test_performance_observations_have_v2_engine_and_cli_samples(
     repo_root: Path,
 ) -> None:
     fixture = json.loads(

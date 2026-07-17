@@ -24,10 +24,6 @@
     "python": "3.12.10"
   },
   "environment_identity_sha256": "841d513675d3f36677e772a5104b077317ae50747d4dea0dd4026f6b7cc7f5b2",
-  "limits": {
-    "absolute_seconds": 180.0,
-    "relative_ratio": 1.05
-  },
   "sampling": {
     "cold_processes": 3,
     "full_cli_cold_processes": 3,

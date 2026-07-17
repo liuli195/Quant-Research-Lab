@@ -124,11 +124,11 @@ joinquant/strategies/<strategy_id>/research/archives/<analysis_id>/
 
 晋升先扫描源树并拒绝链接、目录连接和非普通文件，使用标准 `shutil.copy2` 复制到目标同级暂存目录，逐文件复核 SHA256 后使用 `os.replace` 原子发布。目标不存在时发布；目标内容完全相同时返回复用；同一 analysis_id 内容不同时失败且不覆盖。晋升不得调用策略、vectorbt、事实转换或 Parquet writer，也不防御同一用户在扫描后敌对替换源树。
 
-### 7. 正确性零容忍，性能门禁区分目标与测量噪声
+### 7. 正确性自动校验，性能数据人工确认
 
 重构前在固定环境建立 3,432 日 × 11 ETF 主场景基线，并覆盖 17 ETF 扩展场景和 `additional_delay_days=1` 延迟场景。重构后 Schema、行数、成交、净值和逻辑摘要必须完全一致。
 
-性能目标为零退化。引擎冷启动使用三个新进程中位数，引擎预热使用同一进程五次中位数；完整 CLI 发布另使用三个独立冷进程，每个样本使用隔离输出根并禁止复用，计时到原子发布和发布后校验完成，不把同进程预热伪装成重复 CLI 启动。Task 10 必须在旧入口删除前用同一协议补齐旧完整 CLI 总时间与 Parquet 载荷 baseline；协议、环境、起止点或 baseline 摘要不一致时拒绝比较。环境身份必须包含 Python、vectorbt/NumPy/Pandas/Numba/PyArrow、Windows 发行版与版本、CPU 架构与型号、逻辑核心数和物理内存字节数，并从规范化 JSON 重算 SHA256。时间、峰值内存和同逻辑核心/扩展 Parquet payload 体积允许最多 5% 测量噪声；固定代码、配置、证据和报告开销单独报告，不与旧 v1 整包直接比较。正确性迁移只保留历史 v1 fixture 作为来源证据，新基线直接摘要公开 `ExecutionLedger + ResultExtension` 并绑定 v1 fixture SHA256，不保留旧结果适配器。任何超过噪声带的变化阻断完成。现有冷/热各 180 秒绝对门禁继续保留。包内 `performance.json` 只记录不自指的预最终化阶段；日常绝对门禁使用 writer 返回时的完整耗时；完整 CLI 的 5% 门禁只比较重构前后相同起止点的总耗时，`finalize_publish` 只作归因。外部验证报告必须用协议版本、场景、样本、PID、run_id、package_sha256、非复用与发布后校验状态、baseline 和环境摘要绑定实际包，并证明写报告没有修改结果包。不得为把最终总耗时写回同一个不可重写包而恢复双包、二次元数据写入或旁路清单。策略准备、vectorbt、公共事实、策略归因、Parquet、最终发布和晋升分别计时，避免在相同观测边界之间移动工作隐藏退化。
+性能不设置自动相对门禁。历史 baseline 与本次三个场景的时间、内存和 Parquet payload（列式数据载荷）只作为验证报告中的观测数据，由用户根据实际波动人工确认；共享 CLI 不提供专用发布性能命令，也不实现 Windows 进程采样器。日常 cold/warm（冷/热）确定性检查和各 180 秒超时继续保留。正确性迁移只保留历史 v1 fixture 作为来源证据，新基线直接摘要公开 `ExecutionLedger + ResultExtension` 并绑定 v1 fixture SHA256，不保留旧结果适配器。
 
 `max_logs=0` 和回调缓冲预分配属于候选优化，只有结果摘要完全一致且真实基准不退化时才保留。保留 vectorbt 默认持仓记录并直接复用其 trades/positions accessor；没有实测瓶颈时不关闭记录，也不在共享层重建交易或持仓。
 

@@ -272,13 +272,13 @@ def _tree_digest(root: Path) -> str:
     return digest.hexdigest()
 
 
-def _assert_snappy(path: Path) -> None:
+def _assert_zstd(path: Path) -> None:
     metadata = pq.ParquetFile(path).metadata
     if metadata.num_row_groups == 0:
         return
     for row_group in range(metadata.num_row_groups):
         for column in range(metadata.num_columns):
-            assert metadata.row_group(row_group).column(column).compression == "SNAPPY"
+            assert metadata.row_group(row_group).column(column).compression == "ZSTD"
 
 
 def _write_manifest(path: Path, document: Mapping[str, object]) -> None:
@@ -306,7 +306,7 @@ def _replace_persisted_extension_table(package: Path, table: pa.Table) -> None:
     from scripts.research.local_quant_research import result_package
 
     data_path = package / "extensions/decision_log/data.parquet"
-    pq.write_table(table, data_path, compression="snappy")
+    pq.write_table(table, data_path, compression="zstd")
     persisted = pq.read_table(data_path)
     manifest_path = package / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -346,11 +346,11 @@ def test_writer_materializes_one_package_without_recomputing_ledger(
     assert set(manifest["datasets"]) == {"results", "balances", "positions", "orders"}
     assert counting_ledger.calls == {"orders": 1, "assets": 1, "cash": 1, "value": 1}
     assert writes == [
-        ("results.parquet", "snappy"),
-        ("balances.parquet", "snappy"),
-        ("positions.parquet", "snappy"),
-        ("orders.parquet", "snappy"),
-        ("data.parquet", "snappy"),
+        ("results.parquet", "zstd"),
+        ("balances.parquet", "zstd"),
+        ("positions.parquet", "zstd"),
+        ("orders.parquet", "zstd"),
+        ("data.parquet", "zstd"),
     ]
     assert set(package.writer_stages) == {
         "core_facts",
@@ -373,9 +373,9 @@ def test_writer_materializes_one_package_without_recomputing_ledger(
         reference = manifest["datasets"][name]["files"][0]
         path = package.path / reference["path"]
         assert hashlib.sha256(path.read_bytes()).hexdigest() == reference["sha256"]
-        _assert_snappy(path)
+        _assert_zstd(path)
     extension_ref = manifest["extensions"]["decision_log"]["files"][0]
-    _assert_snappy(package.path / extension_ref["path"])
+    _assert_zstd(package.path / extension_ref["path"])
     report = (package.path / "report/execution-summary.md").read_text(
         encoding="utf-8"
     )
@@ -1064,13 +1064,13 @@ def test_disk_validator_rejects_extension_types_outside_flat_contract(
         validate_result_package(package.path)
 
 
-def test_validator_rejects_non_snappy_physical_compression_with_synced_digest(
+def test_validator_rejects_non_zstd_physical_compression_with_synced_digest(
     package_request: ResultPackageRequest,
 ) -> None:
     package = write_result_package(package_request)
     results = package.path / "data/results.parquet"
     table = pq.read_table(results)
-    pq.write_table(table, results, compression="zstd")
+    pq.write_table(table, results, compression="snappy")
     manifest_path = package.path / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     reference = manifest["datasets"]["results"]["files"][0]

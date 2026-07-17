@@ -279,7 +279,7 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _validate_physical_snappy(path: Path, field: str) -> None:
+def _validate_physical_zstd(path: Path, field: str) -> None:
     try:
         parquet = pq.ParquetFile(path)
         compression = {
@@ -289,7 +289,7 @@ def _validate_physical_snappy(path: Path, field: str) -> None:
         }
     except Exception as exc:
         raise ResultContractError(f"{field} Parquet metadata is invalid") from exc
-    if compression and compression != {"SNAPPY"}:
+    if compression and compression != {"ZSTD"}:
         raise ResultContractError(f"{field} physical compression is invalid")
 
 
@@ -683,7 +683,7 @@ def _file_ref(
         "bytes": path.stat().st_size,
     }
     if rows is not None:
-        result.update({"rows": rows, "format": "parquet", "compression": "snappy"})
+        result.update({"rows": rows, "format": "parquet", "compression": "zstd"})
     return result
 
 
@@ -976,11 +976,11 @@ def _readback_tables(
 ) -> tuple[_CoreFacts, dict[str, pa.Table]]:
     try:
         for name in CORE_DATASETS:
-            _validate_physical_snappy(
+            _validate_physical_zstd(
                 root / "data" / f"{name}.parquet", name
             )
         for name in extensions:
-            _validate_physical_snappy(
+            _validate_physical_zstd(
                 root / "extensions" / name / "data.parquet", name
             )
         core = _CoreFacts(
@@ -1164,10 +1164,10 @@ def _validate_table_entry(
         not isinstance(reference, Mapping)
         or reference.get("rows") != rows
         or reference.get("format") != "parquet"
-        or reference.get("compression") != "snappy"
+        or reference.get("compression") != "zstd"
     ):
         raise ResultContractError(f"{name} Parquet declaration is invalid")
-    _validate_physical_snappy(path, name)
+    _validate_physical_zstd(path, name)
     try:
         table = pq.read_table(path)
     except Exception as exc:
@@ -1507,11 +1507,11 @@ def write_result_package(request: ResultPackageRequest) -> ResultPackage:
         config = _write_documents(staging, "config", inputs.config)
         parquet_started = time.perf_counter()
         for name, table in facts.tables().items():
-            pq.write_table(table, staging / "data" / f"{name}.parquet", compression="snappy")
+            pq.write_table(table, staging / "data" / f"{name}.parquet", compression="zstd")
         for name, extension in sorted(extensions.items()):
             directory = staging / "extensions" / name
             directory.mkdir()
-            pq.write_table(extension.table, directory / "data.parquet", compression="snappy")
+            pq.write_table(extension.table, directory / "data.parquet", compression="zstd")
         writer_stages["parquet_materialize"] = time.perf_counter() - parquet_started
         readback_started = time.perf_counter()
         readback_facts, readback_extensions = _readback_tables(

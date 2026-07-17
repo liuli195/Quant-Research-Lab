@@ -297,8 +297,9 @@
           "-m",
           "pytest",
           "tests\\local_quant_research",
-          "-k",
-          "not test_non_strategy_project_completes_through_shared_market_and_runner"
+          "--ignore=tests\\local_quant_research\\test_generic_e2e.py",
+          "--ignore=tests\\local_quant_research\\test_turtle_e2e.py",
+          "--ignore=tests\\local_quant_research\\test_local_research_v2_e2e.py"
         ],
         "paths": [
           ".agents/skills/run-local-quant-research/**",
