@@ -53,10 +53,10 @@
 
 ## 9. 完善通用 vectorbt 唯一账本
 
-- [ ] 9.1 先编写通用 primary/follow-up、稳定优先级、真实成交回调和惰性只读访问器失败测试，实现隐藏原始 Portfolio 的共享 vectorbt Adapter
-- [ ] 9.2 让两个最小 fixture 都通过同一 `run_vectorbt()` 完成 primary 与可选 follow-up，runtime 不解释海龟冻结计划、执行日规则或原因码
-- [ ] 9.3 删除成交、费用、持仓和净值镜像，直接复用并缓存 vectorbt trades/positions/returns 等访问器；默认保留所需记录
-- [ ] 9.4 等价性通过后仅评估有测量证据的 `max_logs=0` 和缓冲预分配，不通过关闭记录再自行重建统计来优化
+- [x] 9.1 先编写通用 primary/follow-up、稳定优先级、真实成交回调和惰性只读访问器失败测试，实现隐藏原始 Portfolio 的共享 vectorbt Adapter
+- [x] 9.2 让两个最小 fixture 都通过同一 `run_vectorbt()` 完成 primary 与可选 follow-up，runtime 不解释海龟冻结计划、执行日规则或原因码
+- [x] 9.3 删除成交、费用、持仓和净值镜像，直接复用并缓存 vectorbt trades/positions/returns 等访问器；默认保留所需记录
+- [x] 9.4 等价性通过后仅评估有测量证据的 `max_logs=0` 和缓冲预分配，不通过关闭记录再自行重建统计来优化
 
 ## 10. 收敛海龟公开 Module 并迁移即时与延迟执行
 

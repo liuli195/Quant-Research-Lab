@@ -720,7 +720,7 @@ git commit -m "精简：收敛研究档案晋升"
 - Consumes: `LedgerInput`、预分配 `OrderBuffer`、策略 `OrderProgram` 的三个 callback（回调）和只读 trace（轨迹）。
 - Produces: 通用 `run_vectorbt(ledger_input, program) -> ExecutionRun`；两个最小 fixture 的 primary/follow-up 都走同一入口，`ExecutionLedger.orders/assets/cash/value/trades/positions/returns` 直接复用 vectorbt 访问器并惰性、只读、各计算一次。
 
-- [ ] **Step 1: 写共享回调、优先级、成交事件和惰性缓存失败测试**
+- [x] **Step 1: 写共享回调、优先级、成交事件和惰性缓存失败测试**
 
 测试一组两列订单：同优先级按原 column（列）稳定排序，卖出优先买入；`order_func_nb` 只把启用槽转换为 `nb.order_nb`；`after_fill_nb` 只在真实成交后推进状态。另用 monkeypatch（运行期替换）统计 portfolio accessor（组合访问器）调用与内存共享：
 
@@ -737,7 +737,7 @@ def test_priority_is_stable_for_equal_orders() -> None:
     assert stable_call_sequence(np.array([2, 1, 1]), np.array([0, 1, 2])) == (1, 2, 0)
 ```
 
-- [ ] **Step 2: 运行 runtime 扩展测试并确认高级账本约束缺失**
+- [x] **Step 2: 运行 runtime 扩展测试并确认高级账本约束缺失**
 
 Run:
 
@@ -747,7 +747,7 @@ Run:
 
 Expected: FAIL，最小 runtime 尚未满足稳定优先级、成交回调、惰性缓存、共享内存或 primary/follow-up（主/后续）双程序约束。
 
-- [ ] **Step 3: 实现唯一共享 `from_order_func()` 接线**
+- [x] **Step 3: 实现唯一共享 `from_order_func()` 接线**
 
 `vectorbt_runtime.py` 是仓库唯一允许 `import vectorbt as vbt` 与 `from vectorbt.portfolio import nb` 的模块。`run_vectorbt()` 固定 `cash_sharing`、group、frequency 和 `max_logs=0`，默认保留 trades/positions 所需的 vectorbt 记录并直接使用其访问器；没有等价性与性能证据时不得关闭记录后自行重建。回调生命周期必须为：reset buffer → 构造 `SegmentView` → 策略 prepare → 原地稳定 call sequence → 转换订单 → 构造 `FillEvent` → 策略 after fill → 可选 after segment。
 
@@ -796,15 +796,15 @@ def run_vectorbt(ledger_input: LedgerInput, program: OrderProgram) -> ExecutionR
 
 `_specialize_program()` 按 callback（回调）函数身份缓存 `_SpecializedCallbacks`，只把 Numba 可接受的数组/标量 tuple（元组）传给 vectorbt，不能把 Python dataclass（数据类）塞进已编译回调。实际参数位置必须以 vectorbt 1.1.0 已安装签名和现有 `vectorbt_engine.py::_run_immediate()` 为准；不能用兼容捕获隐藏签名错误。
 
-- [ ] **Step 4: 实现惰性只读 ExecutionLedger**
+- [x] **Step 4: 实现惰性只读 ExecutionLedger**
 
 ledger 私有保存 Portfolio（组合）并为七个公开属性各设单独 cache。首次访问若结果是独占连续 `ndarray` 只设置 `writeable=False`；临时或非连续视图只复制一次。测试必须同时记录 accessor 次数和 `np.shares_memory()`，防止无意深复制。
 
-- [ ] **Step 5: 证明即时和后续程序都经过同一 runtime**
+- [x] **Step 5: 证明即时和后续程序都经过同一 runtime**
 
 用两个通用 fixture `OrderProgram` 验证 primary（主运行）与 follow-up（后续运行）都调用同一个 `run_vectorbt()`，第二个运行的 ledger 可作为 final ledger。runtime 不解释冻结计划、执行日可交易性或策略原因码；这些海龟私有语义在 Task 10 组装为 follow-up program。runtime 不得调用 `from_orders()`，不得在 Python 循环中推进现金、仓位或净值。
 
-- [ ] **Step 6: 运行共享 runtime 与旧路径回归**
+- [x] **Step 6: 运行共享 runtime 与旧路径回归**
 
 Run:
 
@@ -814,7 +814,7 @@ Run:
 
 Expected: PASS；共享 fixture 覆盖即时与后续程序，每个 ledger 视图最多计算一次；尚未切换的旧海龟即时/延迟回归保持通过。
 
-- [ ] **Step 7: 提交唯一账本 runtime**
+- [x] **Step 7: 提交唯一账本 runtime**
 
 ```powershell
 git add -- scripts/research/local_quant_research/vectorbt_runtime.py tests/local_quant_research/test_vectorbt_runtime.py
