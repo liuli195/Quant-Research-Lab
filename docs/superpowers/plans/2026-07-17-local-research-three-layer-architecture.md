@@ -672,11 +672,11 @@ git commit -m "精简：统一策略源码身份与加载"
 - Consumes: 已完成并通过公开 validator 的本机同一用户可信结果包。
 - Produces: 预扫描 → `shutil.copy2` → 复制后长度/SHA256 复核 → `os.replace` 的幂等原子晋升；不承诺防御同一用户敌对并发替换源树。
 
-- [ ] **Step 1: 保留面向行为的晋升失败测试**
+- [x] **Step 1: 保留面向行为的晋升失败测试**
 
 先保留现有测试，并确保行为测试覆盖非法链接/目录连接/非普通文件/硬链接在复制前拒绝、源目标逐字节一致、同内容复用、异内容冲突、目标抢占和复制/校验/发布中断清理。再增加一个聚焦的 AST（语法树）边界测试：`archive.py` 不得定义 `_open_verified_descriptor/_descriptor_identity/_file_identity`，也不得调用 `os.open/dup/fdopen/fstat`；此时不得先删除旧描述符或 inode 竞态测试。
 
-- [ ] **Step 2: 运行 archive 测试并确认简化边界尚未满足**
+- [x] **Step 2: 运行 archive 测试并确认简化边界尚未满足**
 
 Run:
 
@@ -686,11 +686,11 @@ Run:
 
 Expected: FAIL，新增 AST 边界测试识别出现有描述符和 inode 状态机；现有行为测试继续通过。
 
-- [ ] **Step 3: 实现标准扫描、复制、复核和原子发布**
+- [x] **Step 3: 实现标准扫描、复制、复核和原子发布**
 
 晋升开始前用 `lstat/rglob` 扫描源树并拒绝链接、目录连接、非普通文件和硬链接；使用标准 `shutil.copy2` 复制到目标同级暂存目录，再逐文件复核长度和 SHA256。目标不存在时用 `os.replace` 发布；目标已存在时只做同内容复用或异内容冲突。任何失败只清理本次暂存和新建空父目录，不覆盖现有档案。最小实现通过 AST 边界测试后，再删除只验证旧描述符关闭、inode 替换和扫描后敌对换树内部机制的测试，保留全部外部行为回归。
 
-- [ ] **Step 4: 运行晋升与查询回归**
+- [x] **Step 4: 运行晋升与查询回归**
 
 Run:
 
@@ -700,7 +700,7 @@ Run:
 
 Expected: PASS；删除 `.local` 后档案仍可查询，晋升不导入策略、vectorbt 或 Parquet writer。
 
-- [ ] **Step 5: 提交档案晋升精简**
+- [x] **Step 5: 提交档案晋升精简**
 
 ```powershell
 git add -- scripts/research/local_quant_research/archive.py tests/local_quant_research/test_archive_promotion.py

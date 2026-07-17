@@ -43,16 +43,6 @@ class _FileEntry:
     relative: Path
     size: int
     sha256: str
-    metadata: _FileMetadata
-
-
-@dataclass(frozen=True, slots=True)
-class _FileMetadata:
-    device: int
-    inode: int
-    mode: int
-    links: int
-    reparse: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,87 +128,14 @@ def _optional_directory(root: Path, *parts: str) -> Path:
     return current
 
 
-def _metadata_identity(metadata: os.stat_result) -> _FileMetadata:
-    return _FileMetadata(
-        device=metadata.st_dev,
-        inode=metadata.st_ino,
-        mode=metadata.st_mode,
-        links=metadata.st_nlink,
-        reparse=_is_reparse_point(metadata),
-    )
-
-
-def _ordinary_file(metadata: _FileMetadata) -> bool:
-    return (
-        stat.S_ISREG(metadata.mode)
-        and metadata.links == 1
-        and not metadata.reparse
-    )
-
-
-def _open_verified_descriptor(
-    path: Path,
-    expected: os.stat_result | _FileMetadata | None = None,
-) -> tuple[int, _FileMetadata]:
-    before = _metadata_identity(path.lstat())
-    expected_identity = (
-        _metadata_identity(expected)
-        if isinstance(expected, os.stat_result)
-        else expected
-    )
-    if not _ordinary_file(before) or (
-        expected_identity is not None and before != expected_identity
-    ):
-        raise _UnsafeTreeError("tree file identity changed")
-    flags = os.O_RDONLY
-    flags |= getattr(os, "O_BINARY", 0)
-    flags |= getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(os.fspath(path), flags)
-    try:
-        opened = _metadata_identity(os.fstat(descriptor))
-        current = _metadata_identity(path.lstat())
-        if not _ordinary_file(opened) or opened != before or current != before:
-            raise _UnsafeTreeError("tree file identity changed")
-    except Exception:
-        os.close(descriptor)
-        raise
-    return descriptor, opened
-
-
-def _descriptor_identity(descriptor: int) -> tuple[int, str]:
+def _file_digest(path: Path) -> tuple[int, str]:
     digest = hashlib.sha256()
     size = 0
-    while True:
-        chunk = os.read(descriptor, 1024 * 1024)
-        if not chunk:
-            break
-        size += len(chunk)
-        digest.update(chunk)
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            size += len(chunk)
+            digest.update(chunk)
     return size, digest.hexdigest()
-
-
-def _verify_open_file(
-    path: Path,
-    descriptor: int,
-    expected: _FileMetadata,
-) -> None:
-    opened = _metadata_identity(os.fstat(descriptor))
-    current = _metadata_identity(path.lstat())
-    if opened != expected or current != expected:
-        raise _UnsafeTreeError("tree file changed while open")
-
-
-def _file_identity(
-    path: Path,
-    expected: os.stat_result | _FileMetadata | None = None,
-) -> tuple[int, str]:
-    descriptor, opened = _open_verified_descriptor(path, expected)
-    try:
-        identity = _descriptor_identity(descriptor)
-        _verify_open_file(path, descriptor, opened)
-    finally:
-        os.close(descriptor)
-    return identity
 
 
 def _tree_digest(
@@ -244,25 +161,15 @@ def _scan_tree(root: Path) -> _TreeSnapshot:
         root_metadata = root.lstat()
     except OSError as exc:
         raise _UnsafeTreeError("tree root is unreadable") from exc
-    root_identity = _metadata_identity(root_metadata)
-    if not stat.S_ISDIR(root_identity.mode) or root_identity.reparse:
+    if not stat.S_ISDIR(root_metadata.st_mode) or _is_reparse_point(root_metadata):
         raise _UnsafeTreeError("tree root is not an ordinary directory")
 
     directories: list[Path] = []
     files: list[_FileEntry] = []
 
-    def visit(
-        directory: Path,
-        relative_root: Path,
-        expected_directory: _FileMetadata,
-    ) -> None:
-        current_directory = _metadata_identity(directory.lstat())
-        if current_directory != expected_directory or current_directory.reparse:
-            raise _UnsafeTreeError("tree directory changed during inspection")
+    def visit(directory: Path, relative_root: Path) -> None:
         with os.scandir(directory) as iterator:
             entries = sorted(iterator, key=lambda item: item.name)
-        if _metadata_identity(directory.lstat()) != expected_directory:
-            raise _UnsafeTreeError("tree directory changed during inspection")
         for entry in entries:
             relative = relative_root / entry.name
             entry_path = Path(entry.path)
@@ -273,28 +180,20 @@ def _scan_tree(root: Path) -> _TreeSnapshot:
             if entry.is_symlink() or _is_reparse_point(metadata):
                 raise _UnsafeTreeError("tree contains a link or reparse point")
             if stat.S_ISDIR(metadata.st_mode):
-                directory_identity = _metadata_identity(metadata)
-                if _metadata_identity(entry_path.lstat()) != directory_identity:
-                    raise _UnsafeTreeError(
-                        "tree directory changed during inspection"
-                    )
                 directories.append(relative)
-                visit(entry_path, relative, directory_identity)
+                visit(entry_path, relative)
                 continue
             if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
                 raise _UnsafeTreeError("tree contains a non-ordinary file")
             try:
-                file_metadata = _metadata_identity(metadata)
-                size, sha256 = _file_identity(entry_path, file_metadata)
-            except (OSError, _UnsafeTreeError) as exc:
+                size, sha256 = _file_digest(entry_path)
+            except OSError as exc:
                 raise _UnsafeTreeError("tree file is unreadable") from exc
             if size != metadata.st_size:
                 raise _UnsafeTreeError("tree file changed during inspection")
-            files.append(_FileEntry(relative, size, sha256, file_metadata))
-        if _metadata_identity(directory.lstat()) != expected_directory:
-            raise _UnsafeTreeError("tree directory changed during inspection")
+            files.append(_FileEntry(relative, size, sha256))
 
-    visit(root, Path(), root_identity)
+    visit(root, Path())
     directory_entries = tuple(directories)
     file_entries = tuple(files)
     return _TreeSnapshot(
@@ -347,44 +246,8 @@ def _cleanup_failed_promotion(
     return cleanup_failed
 
 
-def _copy_verified_tree(
-    source: Path,
-    staging: Path,
-    snapshot: _TreeSnapshot,
-) -> None:
-    staging.mkdir()
-    for relative in snapshot.directories:
-        (staging / relative).mkdir()
-    expected = {entry.relative: entry for entry in snapshot.files}
-    for relative, entry in expected.items():
-        source_file = source / relative
-        target_file = staging / relative
-        descriptor, opened = _open_verified_descriptor(
-            source_file, entry.metadata
-        )
-        try:
-            duplicate = os.dup(descriptor)
-            try:
-                source_stream = os.fdopen(duplicate, "rb")
-            except Exception:
-                os.close(duplicate)
-                raise
-            with source_stream:
-                with target_file.open("xb") as target_stream:
-                    shutil.copyfileobj(
-                        source_stream,
-                        target_stream,
-                        length=1024 * 1024,
-                    )
-            os.lseek(descriptor, 0, os.SEEK_SET)
-            source_identity = _descriptor_identity(descriptor)
-            _verify_open_file(source_file, descriptor, opened)
-        finally:
-            os.close(descriptor)
-        target_identity = _file_identity(target_file)
-        expected_identity = (entry.size, entry.sha256)
-        if source_identity != expected_identity or target_identity != expected_identity:
-            raise OSError("archive copy verification failed")
+def _copy_tree(source: Path, staging: Path) -> None:
+    shutil.copytree(source, staging, copy_function=shutil.copy2)
 
 
 def _existing_result(
@@ -397,7 +260,12 @@ def _existing_result(
     except (OSError, _UnsafeTreeError):
         target_snapshot = None
     if target_snapshot is not None and target_snapshot.digest == source_snapshot.digest:
-        return ArchiveResult("complete", True, source, target, ())
+        try:
+            _validate_analysis_views(target)
+        except Exception:
+            pass
+        else:
+            return ArchiveResult("complete", True, source, target, ())
     return ArchiveResult(
         "conflict",
         False,
@@ -502,10 +370,7 @@ def promote_archive(
         if _path_exists(target):
             return _existing_result(source, target, source_snapshot)
         staging = archives / f".{analysis_id}.{uuid.uuid4().hex}.tmp"
-        _copy_verified_tree(source, staging, source_snapshot)
-        current_source_snapshot = _scan_tree(source)
-        if current_source_snapshot != source_snapshot:
-            raise OSError("archive source changed during copy")
+        _copy_tree(source, staging)
         staging_snapshot = _scan_tree(staging)
         if staging_snapshot.digest != source_snapshot.digest:
             raise OSError("archive tree verification failed")
@@ -519,7 +384,19 @@ def promote_archive(
                     target=target,
                 )
             return existing
-        os.replace(staging, target)
+        try:
+            os.replace(staging, target)
+        except OSError:
+            if not _path_exists(target):
+                raise
+            existing = _existing_result(source, target, source_snapshot)
+            if _cleanup_failed_promotion(staging, ()):
+                return _failed(
+                    "cleanup_failed",
+                    source=source,
+                    target=target,
+                )
+            return existing
         return ArchiveResult("complete", False, source, target, ())
     except Exception:
         cleanup_failed = _cleanup_failed_promotion(

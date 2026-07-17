@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import builtins
 import hashlib
 import importlib
@@ -154,8 +155,29 @@ def _tree_directories(root: Path) -> tuple[str, ...]:
     )
 
 
-def _path_exists_for_test(path: Path) -> bool:
-    return os.path.lexists(os.fspath(path))
+def test_archive_has_no_descriptor_or_inode_state_machine(repo_root: Path) -> None:
+    source = (
+        repo_root / "scripts/research/local_quant_research/archive.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    functions = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    os_calls = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "os"
+    }
+
+    assert functions.isdisjoint(
+        {"_open_verified_descriptor", "_descriptor_identity", "_file_identity"}
+    )
+    assert os_calls.isdisjoint({"open", "dup", "fdopen", "fstat"})
 
 
 @pytest.mark.parametrize(
@@ -446,7 +468,7 @@ def test_promote_reuses_identical_target_without_writing(
     _guard_recomputation(monkeypatch)
     from scripts.research.local_quant_research import archive
 
-    monkeypatch.setattr(archive.shutil, "copyfileobj", _boom)
+    monkeypatch.setattr(archive.shutil, "copy2", _boom)
     monkeypatch.setattr(archive.os, "replace", _boom)
 
     second = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
@@ -454,6 +476,32 @@ def test_promote_reuses_identical_target_without_writing(
     assert second.status == "complete"
     assert second.reused is True
     assert second.reasons == ()
+    assert _tree_digests(second.target) == before
+
+
+def test_identical_target_is_revalidated_before_reuse(
+    complete_package: Path,
+    isolated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import archive
+
+    first = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
+    before = _tree_digests(first.target)
+    real_validate_views = archive._validate_analysis_views
+
+    def reject_existing_target(path: Path) -> None:
+        if path == first.target:
+            raise ValueError("simulated invalid existing archive")
+        real_validate_views(path)
+
+    monkeypatch.setattr(archive, "_validate_analysis_views", reject_existing_target)
+
+    second = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
+
+    assert second.status == "conflict"
+    assert second.reused is False
+    assert second.reasons == ("target_conflict",)
     assert _tree_digests(second.target) == before
 
 
@@ -468,7 +516,7 @@ def test_promote_reports_conflict_without_changing_existing_target(
     _guard_recomputation(monkeypatch)
     from scripts.research.local_quant_research import archive
 
-    monkeypatch.setattr(archive.shutil, "copyfileobj", _boom)
+    monkeypatch.setattr(archive.shutil, "copy2", _boom)
     monkeypatch.setattr(archive.os, "replace", _boom)
 
     result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
@@ -494,7 +542,7 @@ def test_existing_target_is_never_written(
     _guard_recomputation(monkeypatch)
     from scripts.research.local_quant_research import archive
 
-    monkeypatch.setattr(archive.shutil, "copyfileobj", _boom)
+    monkeypatch.setattr(archive.shutil, "copy2", _boom)
     monkeypatch.setattr(archive.os, "replace", _boom)
 
     result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
@@ -519,7 +567,8 @@ def test_target_appearing_before_publish_does_not_leave_staging(
 
     def publish_competing_target(staging: Path) -> None:
         real_validate_views(staging)
-        shutil.copytree(complete_package, target)
+        if staging != target:
+            shutil.copytree(complete_package, target)
 
     monkeypatch.setattr(
         archive,
@@ -531,6 +580,70 @@ def test_target_appearing_before_publish_does_not_leave_staging(
 
     assert result.status == "complete"
     assert result.reused is True
+    assert list(target.parent.glob(f".{ANALYSIS_ID}.*.tmp")) == []
+
+
+@pytest.mark.parametrize(
+    ("competing_content", "expected_status", "expected_reused"),
+    (
+        ("identical", "complete", True),
+        ("different", "conflict", False),
+    ),
+)
+def test_target_appearing_during_atomic_publish_uses_idempotency_rules(
+    complete_package: Path,
+    isolated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    competing_content: str,
+    expected_status: str,
+    expected_reused: bool,
+) -> None:
+    from scripts.research.local_quant_research import archive
+
+    target = (
+        isolated_repo
+        / f"joinquant/strategies/{STRATEGY_ID}/research/archives/{ANALYSIS_ID}"
+    )
+
+    def publish_competing_target(*_args: object, **_kwargs: object) -> None:
+        shutil.copytree(complete_package, target)
+        if competing_content == "different":
+            (target / "competing.bin").write_bytes(b"different")
+        raise FileExistsError("simulated competing publish")
+
+    monkeypatch.setattr(archive.os, "replace", publish_competing_target)
+
+    result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
+
+    assert result.status == expected_status
+    assert result.reused is expected_reused
+    assert result.reasons == (() if expected_reused else ("target_conflict",))
+    assert list(target.parent.glob(f".{ANALYSIS_ID}.*.tmp")) == []
+
+
+def test_publish_failure_cleans_staging(
+    complete_package: Path,
+    isolated_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.research.local_quant_research import archive
+
+    target = (
+        isolated_repo
+        / f"joinquant/strategies/{STRATEGY_ID}/research/archives/{ANALYSIS_ID}"
+    )
+    _guard_recomputation(monkeypatch)
+
+    def fail_publish(*_args: object, **_kwargs: object) -> None:
+        raise OSError("simulated publish failure")
+
+    monkeypatch.setattr(archive.os, "replace", fail_publish)
+
+    result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
+
+    assert result.status == "failed"
+    assert result.reasons == ("copy_failed",)
+    assert not target.exists()
     assert list(target.parent.glob(f".{ANALYSIS_ID}.*.tmp")) == []
 
 
@@ -549,21 +662,22 @@ def test_copy_interruption_cleans_only_its_staging_directory(
     _guard_recomputation(monkeypatch)
     from scripts.research.local_quant_research import archive
 
-    real_copyfileobj = shutil.copyfileobj
+    real_copy2 = shutil.copy2
     copies = 0
 
     def interrupted_copy(
         source: object,
         target: object,
-        length: int = 0,
-    ) -> None:
+        *args: object,
+        **kwargs: object,
+    ) -> object:
         nonlocal copies
         copies += 1
         if copies == 2:
             raise OSError("simulated copy interruption")
-        real_copyfileobj(source, target, length)
+        return real_copy2(source, target, *args, **kwargs)
 
-    monkeypatch.setattr(archive.shutil, "copyfileobj", interrupted_copy)
+    monkeypatch.setattr(archive.shutil, "copy2", interrupted_copy)
 
     result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
 
@@ -573,54 +687,6 @@ def test_copy_interruption_cleans_only_its_staging_directory(
     assert list(archives.glob(f".{ANALYSIS_ID}.*.tmp")) == []
     assert neighbor.read_bytes() == b"keep"
     assert _tree_digests(complete_package) == source_before
-
-
-def test_fdopen_failure_closes_duplicate_and_original_descriptors(
-    complete_package: Path,
-    isolated_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from scripts.research.local_quant_research import archive
-
-    snapshot = archive._scan_tree(complete_package)
-    staging = isolated_repo / "staging"
-    original_descriptors: list[int] = []
-    duplicate_descriptors: list[int] = []
-    real_open = os.open
-    real_dup = os.dup
-    real_close = os.close
-
-    def record_open(*args: object, **kwargs: object) -> int:
-        descriptor = real_open(*args, **kwargs)
-        original_descriptors.append(descriptor)
-        return descriptor
-
-    def record_dup(descriptor: int) -> int:
-        duplicate = real_dup(descriptor)
-        duplicate_descriptors.append(duplicate)
-        return duplicate
-
-    def fail_fdopen(*_args: object, **_kwargs: object) -> object:
-        raise OSError("simulated fdopen failure")
-
-    monkeypatch.setattr(archive.os, "open", record_open)
-    monkeypatch.setattr(archive.os, "dup", record_dup)
-    monkeypatch.setattr(archive.os, "fdopen", fail_fdopen)
-    try:
-        with pytest.raises(OSError, match="simulated fdopen failure"):
-            archive._copy_verified_tree(complete_package, staging, snapshot)
-
-        assert len(original_descriptors) == 1
-        assert len(duplicate_descriptors) == 1
-        for descriptor in (*original_descriptors, *duplicate_descriptors):
-            with pytest.raises(OSError):
-                os.fstat(descriptor)
-    finally:
-        for descriptor in (*original_descriptors, *duplicate_descriptors):
-            try:
-                real_close(descriptor)
-            except OSError:
-                pass
 
 
 def test_copy_failure_rolls_back_new_empty_archive_parents(
@@ -637,7 +703,7 @@ def test_copy_failure_rolls_back_new_empty_archive_parents(
     def fail_copy(*_args: object, **_kwargs: object) -> None:
         raise OSError("simulated copy failure")
 
-    monkeypatch.setattr(archive.shutil, "copyfileobj", fail_copy)
+    monkeypatch.setattr(archive.shutil, "copy2", fail_copy)
 
     result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
 
@@ -670,7 +736,7 @@ def test_cleanup_failure_returns_stable_reason_and_preserves_existing_parent(
         if not ignore_errors:
             raise OSError("simulated cleanup failure")
 
-    monkeypatch.setattr(archive.shutil, "copyfileobj", fail_copy)
+    monkeypatch.setattr(archive.shutil, "copy2", fail_copy)
     monkeypatch.setattr(archive.shutil, "rmtree", fail_real_cleanup)
 
     result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
@@ -706,193 +772,6 @@ def test_source_change_after_validation_is_not_published(
     assert not result.target.exists()
     archives = result.target.parent
     assert list(archives.glob(f".{ANALYSIS_ID}.*.tmp")) == []
-
-
-@pytest.mark.parametrize(
-    "mutation", ("added_file", "added_empty_directory", "deleted_file")
-)
-def test_source_tree_change_after_initial_scan_is_not_published(
-    complete_package: Path,
-    isolated_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    mutation: str,
-) -> None:
-    from scripts.research.local_quant_research import archive
-
-    real_scan = archive._scan_tree
-    mutated = False
-
-    def mutate_after_scan(root: Path) -> object:
-        nonlocal mutated
-        snapshot = real_scan(root)
-        if Path(root) == complete_package and not mutated:
-            mutated = True
-            if mutation == "added_file":
-                (complete_package / "added-after-scan.bin").write_bytes(b"added")
-            elif mutation == "added_empty_directory":
-                (complete_package / "added-after-scan").mkdir()
-            else:
-                (complete_package / "evidence/raw-bytes.bin").unlink()
-        return snapshot
-
-    _guard_recomputation(monkeypatch)
-    monkeypatch.setattr(archive, "_scan_tree", mutate_after_scan)
-
-    result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
-
-    assert result.status == "failed"
-    assert not result.target.exists()
-
-
-@pytest.mark.parametrize("mutation", ("changed", "deleted"))
-def test_source_file_change_after_it_was_copied_is_not_published(
-    complete_package: Path,
-    isolated_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    mutation: str,
-) -> None:
-    from scripts.research.local_quant_research import archive
-
-    first_source = complete_package / sorted(_tree_digests(complete_package))[0]
-    real_copyfileobj = shutil.copyfileobj
-    copies = 0
-
-    def mutate_after_first_copy(
-        source: object,
-        target: object,
-        length: int = 0,
-    ) -> None:
-        nonlocal copies
-        copies += 1
-        if copies == 2:
-            if mutation == "changed":
-                first_source.write_bytes(first_source.read_bytes() + b"changed")
-            else:
-                first_source.unlink()
-        real_copyfileobj(source, target, length)
-
-    _guard_recomputation(monkeypatch)
-    monkeypatch.setattr(archive.shutil, "copyfileobj", mutate_after_first_copy)
-
-    result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
-
-    assert result.status == "failed"
-    assert not result.target.exists()
-
-
-def test_source_file_inode_replacement_between_lstat_and_read_is_rejected(
-    complete_package: Path,
-    isolated_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from scripts.research.local_quant_research import archive
-
-    victim = complete_package / "evidence/raw-bytes.bin"
-    replacement = isolated_repo.parent / "replacement.bin"
-    replacement.write_bytes(victim.read_bytes())
-    real_identity = archive._file_identity
-    replaced = False
-
-    def replace_before_read(path: Path, *args: object, **kwargs: object) -> object:
-        nonlocal replaced
-        if Path(path) == victim and not replaced:
-            replaced = True
-            os.replace(replacement, victim)
-        return real_identity(path, *args, **kwargs)
-
-    _guard_recomputation(monkeypatch)
-    monkeypatch.setattr(archive, "_file_identity", replace_before_read)
-
-    result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
-
-    assert result.status == "failed"
-    assert result.reasons == ("unsafe_source_entry",)
-    assert not result.target.exists()
-
-
-@pytest.mark.skipif(os.name != "nt", reason="junction coverage is Windows-specific")
-def test_source_directory_junction_replacement_after_lstat_is_rejected(
-    complete_package: Path,
-    isolated_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    victim = complete_package / "extensions/empty-evidence"
-    outside = isolated_repo.parent / "replacement-directory"
-    real_lstat = Path.lstat
-    replaced = False
-
-    def replace_after_lstat(path: Path) -> os.stat_result:
-        nonlocal replaced
-        metadata = real_lstat(path)
-        if path == victim and not replaced:
-            replaced = True
-            _replace_directory_with_link(victim, outside, "junction")
-        return metadata
-
-    _guard_recomputation(monkeypatch)
-    monkeypatch.setattr(Path, "lstat", replace_after_lstat)
-    try:
-        result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
-
-        assert result.status == "failed"
-        assert result.reasons == ("unsafe_source_entry",)
-        assert not result.target.exists()
-    finally:
-        if replaced:
-            _restore_linked_directory(victim, outside)
-
-
-@pytest.mark.parametrize("replacement_kind", ("symlink", "hardlink", "junction"))
-def test_source_entry_replaced_with_link_before_copy_is_not_published(
-    complete_package: Path,
-    isolated_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    replacement_kind: str,
-) -> None:
-    from scripts.research.local_quant_research import archive
-
-    victim = (
-        complete_package / "extensions/empty-evidence"
-        if replacement_kind == "junction"
-        else complete_package / "evidence/raw-bytes.bin"
-    )
-    outside = isolated_repo.parent / "copy-replacement"
-    real_scan = archive._scan_tree
-    replaced = False
-
-    def replace_after_scan(root: Path) -> object:
-        nonlocal replaced
-        snapshot = real_scan(root)
-        if Path(root) == complete_package and not replaced:
-            replaced = True
-            if replacement_kind == "junction":
-                _replace_directory_with_link(victim, outside, "junction")
-            else:
-                victim.rename(outside)
-                if replacement_kind == "symlink":
-                    try:
-                        victim.symlink_to(outside)
-                    except OSError as exc:
-                        outside.rename(victim)
-                        pytest.skip(f"file symlink is unavailable: {exc}")
-                else:
-                    os.link(outside, victim)
-        return snapshot
-
-    _guard_recomputation(monkeypatch)
-    monkeypatch.setattr(archive, "_scan_tree", replace_after_scan)
-    try:
-        result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)
-
-        assert result.status == "failed"
-        assert not result.target.exists()
-    finally:
-        if replaced and _path_exists_for_test(victim):
-            if replacement_kind == "junction":
-                _restore_linked_directory(victim, outside)
-            else:
-                victim.unlink()
-                outside.rename(victim)
 
 
 def test_promoted_archive_remains_queryable_after_local_source_is_deleted(
