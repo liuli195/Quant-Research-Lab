@@ -134,6 +134,7 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
         "--ignore=tests\\local_quant_research\\test_turtle_e2e.py",
         "--ignore=tests\\local_quant_research\\test_local_research_v2_e2e.py",
     ]
+    assert unit["timeoutSeconds"] == 300
     assert e2e["command"] == [
         ".\\.venv\\Scripts\\python.exe",
         "-m",
