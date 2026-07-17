@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
 import numpy as np
@@ -28,7 +27,6 @@ class MinimalStrategy:
     descriptor = StrategyDescriptor(
         strategy_id="minimal-fixture",
         contract_version="1",
-        source_files=(Path("strategy.py"),),
         extension_names=(),
         accounting={},
     )

@@ -610,21 +610,25 @@ git commit -m "精简：收敛共享结果与列式契约"
 - Modify: `scripts/research/local_quant_research/strategy_loader.py`
 - Modify: `scripts/research/local_quant_research/runner.py`
 - Modify: `scripts/research/local_quant_research/result_package.py`
+- Modify: `tests/local_quant_research/fixtures/minimal_strategy/strategy.py`
+- Create: `tests/local_quant_research/fixtures/minimal_strategy_b/__init__.py`
 - Modify: `tests/local_quant_research/fixtures/minimal_strategy_b/strategy.py`
 - Modify: `tests/local_quant_research/test_strategy_contract.py`
 - Modify: `tests/local_quant_research/test_strategy_identity.py`
 - Modify: `tests/local_quant_research/test_runner.py`
 - Modify: `tests/local_quant_research/test_result_package.py`
+- Modify: `tests/local_quant_research/test_vectorbt_runtime.py`
+- Modify: `tests/local_quant_research/test_generic_e2e.py`
 
 **Interfaces:**
 - Consumes: 仓库内策略根、module/symbol 和全新单策略 `_execute` 子进程。
 - Produces: `discover_strategy_sources(strategy_root, module) -> tuple[Path, ...]`，该排序集合只来自当前 module 顶层包并同时驱动运行身份和档案 `code/`；`StrategyDescriptor` 不再保存第二份源码清单。
 
-- [ ] **Step 1: 写单一源码身份与标准导入失败测试**
+- [x] **Step 1: 写单一源码身份与标准导入失败测试**
 
 测试断言 `StrategyDescriptor` 字段中不存在 `source_files`；当前 module 顶层包内全部普通 `.py` 文件按相对路径排序后同时进入 identity（身份）和结果包 `code/`，相邻目录与 `research/archives/` 不进入。第二个最小策略只保留公开 `MODULE`、一次相对导入和无扩展结果，证明标准包导入可用。源码边界测试同时禁止 UUID 私有模块名、全局导入锁、手工 `sys.modules` 清理器，以及 v2 `_execute` 注入 `adapter_guard` 或安装 audit hook。
 
-- [ ] **Step 2: 运行 loader、identity 和结果包测试并确认失败**
+- [x] **Step 2: 运行 loader、identity 和结果包测试并确认失败**
 
 Run:
 
@@ -634,11 +638,11 @@ Run:
 
 Expected: FAIL，现有 descriptor、私有命名空间或档案源码路径仍维护第二份身份来源。
 
-- [ ] **Step 3: 实现静态发现唯一来源与标准 importlib**
+- [x] **Step 3: 实现静态发现唯一来源与标准 importlib**
 
-父进程先在受限策略根内解析 module，再以其顶层包目录（单文件 module 则用文件所在目录）为源码边界，发现全部普通 `.py` 文件并拒绝链接、路径逃逸和大小/数量超限；排序结果直接传给运行身份冻结和结果包代码复制。每个 `_execute` 都是全新、只加载一个策略的子进程：把冻结策略根放到 `sys.path` 首位，调用标准 `importlib.import_module()` 后读取 symbol；删除 UUID 命名空间、全局导入锁、手工模块缓存生命周期和 v2 audit hook 注入。Task 11 切断旧 command 路径前可暂留只被 v1 使用的 `adapter_guard.py`，但 v2 不再复制或加载它。
+父进程先在受限策略根内解析 module，再以其顶层包目录（单文件 module 则用文件所在目录）为源码边界，发现全部普通 `.py` 文件并拒绝链接与路径逃逸；排序结果直接传给运行身份冻结和结果包代码复制。每个 `_execute` 都是全新、只加载一个策略的子进程：把冻结策略根放到 `sys.path` 首位，调用标准 `importlib.import_module()` 后读取 symbol；删除 UUID 命名空间、全局导入锁、手工模块缓存生命周期和 v2 audit hook 注入。Task 11 切断旧 command 路径前可暂留只被 v1 使用的 `adapter_guard.py`，但 v2 不再复制或加载它。
 
-- [ ] **Step 4: 收缩第二个 fixture 并运行共享 E2E 回归**
+- [x] **Step 4: 收缩第二个 fixture 并运行共享 E2E 回归**
 
 Run:
 
@@ -648,10 +652,10 @@ Run:
 
 Expected: PASS；新增或重组私有 `.py` 文件无需同步 descriptor，仍会自动进入 identity 与档案。
 
-- [ ] **Step 5: 提交源码身份精简**
+- [x] **Step 5: 提交源码身份精简**
 
 ```powershell
-git add -- scripts/research/local_quant_research/contracts.py scripts/research/local_quant_research/cli.py scripts/research/local_quant_research/strategy_loader.py scripts/research/local_quant_research/runner.py scripts/research/local_quant_research/result_package.py tests/local_quant_research/fixtures/minimal_strategy_b/strategy.py tests/local_quant_research/test_strategy_contract.py tests/local_quant_research/test_strategy_identity.py tests/local_quant_research/test_runner.py tests/local_quant_research/test_result_package.py tests/local_quant_research/test_generic_e2e.py
+git add -- scripts/research/local_quant_research/contracts.py scripts/research/local_quant_research/cli.py scripts/research/local_quant_research/strategy_loader.py scripts/research/local_quant_research/runner.py scripts/research/local_quant_research/result_package.py tests/local_quant_research/fixtures/minimal_strategy/strategy.py tests/local_quant_research/fixtures/minimal_strategy_b/__init__.py tests/local_quant_research/fixtures/minimal_strategy_b/strategy.py tests/local_quant_research/test_strategy_contract.py tests/local_quant_research/test_strategy_identity.py tests/local_quant_research/test_runner.py tests/local_quant_research/test_result_package.py tests/local_quant_research/test_vectorbt_runtime.py tests/local_quant_research/test_generic_e2e.py
 git diff --cached --name-only
 git commit -m "精简：统一策略源码身份与加载"
 ```

@@ -40,10 +40,10 @@
 
 ## 7. 统一策略源码身份并简化加载
 
-- [ ] 7.1 先编写失败测试，证明当前 module 顶层包内静态发现并排序的普通 `.py` 文件集合同时驱动运行身份和档案 `code/`，相邻目录与 `research/archives/` 不进入，descriptor 不含第二份 `source_files`
-- [ ] 7.2 在每次全新单策略 `_execute` 子进程中使用标准 `importlib.import_module()`，删除 UUID 命名空间、全局导入锁和手工 `sys.modules` 生命周期
-- [ ] 7.3 按仓库内可信策略边界删除 v2 `adapter_guard` 注入和 audit hook 沙箱，仅保留受限源码路径、冻结输入、清理环境、全新子进程和超时
-- [ ] 7.4 把第二个最小策略 fixture 缩到验证公开 Module、相对导入和无扩展结果所需的最小代码，并运行 loader、contract 和 E2E 回归
+- [x] 7.1 先编写失败测试，证明当前 module 顶层包内静态发现并排序的普通 `.py` 文件集合同时驱动运行身份和档案 `code/`，相邻目录与 `research/archives/` 不进入，descriptor 不含第二份 `source_files`
+- [x] 7.2 在每次全新单策略 `_execute` 子进程中使用标准 `importlib.import_module()`，删除 UUID 命名空间、全局导入锁和手工 `sys.modules` 生命周期
+- [x] 7.3 按仓库内可信策略边界删除 v2 `adapter_guard` 注入和 audit hook 沙箱，仅保留受限源码路径、冻结输入、清理环境、全新子进程和超时
+- [x] 7.4 把第二个最小策略 fixture 缩到验证公开 Module、相对导入和无扩展结果所需的最小代码，并运行 loader、contract 和 E2E 回归
 
 ## 8. 简化可信工作区内的档案晋升
 

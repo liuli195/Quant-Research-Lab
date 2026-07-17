@@ -25,14 +25,15 @@ def _snapshot() -> SnapshotView:
 
 
 @pytest.mark.parametrize(
-    "strategy_root",
+    ("strategy_root", "strategy_module"),
     (
-        "tests/local_quant_research/fixtures/minimal_strategy",
-        "tests/local_quant_research/fixtures/minimal_strategy_b",
+        ("tests/local_quant_research/fixtures/minimal_strategy", "strategy"),
+        ("tests/local_quant_research/fixtures", "minimal_strategy_b.strategy"),
     ),
 )
 def test_minimal_no_order_strategy_runs_through_shared_vectorbt_runtime(
     strategy_root: str,
+    strategy_module: str,
     repo_root: Path,
 ) -> None:
     try:
@@ -43,7 +44,7 @@ def test_minimal_no_order_strategy_runs_through_shared_vectorbt_runtime(
         pytest.fail("shared vectorbt runtime is missing")
     loaded = load_strategy(
         repo_root,
-        {"root": strategy_root, "module": "strategy", "symbol": "MODULE"},
+        {"root": strategy_root, "module": strategy_module, "symbol": "MODULE"},
     )
     prepared = loaded.module.prepare(_snapshot(), {})
 

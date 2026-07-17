@@ -62,7 +62,6 @@ class FillEvent(NamedTuple):
 class StrategyDescriptor:
     strategy_id: str
     contract_version: str
-    source_files: tuple[Path, ...]
     extension_names: tuple[str, ...]
     accounting: Mapping[str, object]
 

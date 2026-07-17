@@ -1,23 +1,16 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import TYPE_CHECKING, Mapping
-
 import numpy as np
 
+from . import STRATEGY_ID
+
 from scripts.research.local_quant_research.contracts import (
-    ExecutionBundle,
-    ExecutionRun,
     LedgerInput,
     OrderBuffer,
     OrderProgram,
     PreparedStrategy,
-    ResultExtension,
     StrategyDescriptor,
 )
-
-if TYPE_CHECKING:
-    from scripts.research.market_data.query import SnapshotView
 
 
 def _noop(*args: object) -> None:
@@ -26,18 +19,13 @@ def _noop(*args: object) -> None:
 
 class MinimalStrategyB:
     descriptor = StrategyDescriptor(
-        strategy_id="minimal-fixture-b",
+        strategy_id=STRATEGY_ID,
         contract_version="1",
-        source_files=(Path("strategy.py"),),
         extension_names=(),
         accounting={},
     )
 
-    def prepare(
-        self,
-        snapshot: SnapshotView,
-        config: Mapping[str, object],
-    ) -> PreparedStrategy:
+    def prepare(self, snapshot: object, config: object) -> PreparedStrategy:
         ledger_input = LedgerInput(
             dates=np.array(["2026-01-05", "2026-01-06"], dtype="datetime64[D]"),
             symbols=("TEST",),
@@ -73,18 +61,14 @@ class MinimalStrategyB:
             context=None,
         )
 
-    def followup_program(
-        self,
-        prepared: PreparedStrategy,
-        primary_run: ExecutionRun,
-    ) -> OrderProgram | None:
+    def followup_program(self, prepared: object, primary_run: object) -> None:
         return None
 
     def build_extensions(
         self,
-        prepared: PreparedStrategy,
-        execution: ExecutionBundle,
-    ) -> tuple[ResultExtension, ...]:
+        prepared: object,
+        execution: object,
+    ) -> tuple[object, ...]:
         return ()
 
 

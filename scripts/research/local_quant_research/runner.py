@@ -1397,6 +1397,9 @@ def _runtime_lock(repo_root: Path) -> tuple[dict[str, object], tuple[Path, ...]]
         repo_root / "scripts/research/local_quant_research",
         repo_root / "scripts/research/market_data",
     )
+    v1_adapter_guard = (
+        repo_root / "scripts/research/local_quant_research/adapter_guard.py"
+    )
     sources = tuple(
         sorted(
             (
@@ -1406,7 +1409,7 @@ def _runtime_lock(repo_root: Path) -> tuple[dict[str, object], tuple[Path, ...]]
                     repo_root / "scripts/research/__init__.py",
                     *(path for root in source_roots for path in root.glob("*.py")),
                 )
-                if path.is_file()
+                if path.is_file() and path != v1_adapter_guard
             ),
             key=lambda path: path.relative_to(repo_root).as_posix(),
         )
@@ -1436,19 +1439,21 @@ def _v2_identity(
     *,
     repo_root: Path,
     config_path: Path,
-) -> tuple[object, str, str, dict[str, object], dict[str, object], dict[str, object]]:
+) -> tuple[tuple[Path, ...], str, str, dict[str, object], dict[str, object], dict[str, object]]:
     from .strategy_loader import ConfigurationError as StrategyConfigurationError
     from .strategy_loader import discover_strategy_sources
 
-    strategy_document = config.document["strategy"]
     try:
-        discovered = discover_strategy_sources(repo_root, strategy_document)
+        strategy_sources = discover_strategy_sources(
+            config.strategy_root,
+            config.strategy_module,
+        )
     except StrategyConfigurationError as exc:
         raise ConfigurationError(exc.code, str(exc)) from exc
     runtime_lock, runtime_sources = _runtime_lock(repo_root)
     code_sources = tuple(
         sorted(
-            {*discovered.source_paths, *runtime_sources},
+            {*strategy_sources, *runtime_sources},
             key=lambda item: item.relative_to(repo_root).as_posix(),
         )
     )
@@ -1524,14 +1529,13 @@ def _v2_identity(
         "project_run": dict(config.document),
         "scenario_document": dict(scenario_document),
     }
-    return discovered, config_digest, code_digest, evidence, code_identity, runtime_lock
+    return strategy_sources, config_digest, code_digest, evidence, code_identity, runtime_lock
 
 
 def _copy_v2_inputs(
     *,
     config_path: Path,
     config: RunConfig,
-    discovered: object,
     repo_root: Path,
     market_root: Path,
     snapshot_document: Mapping[str, object],
@@ -1543,10 +1547,6 @@ def _copy_v2_inputs(
     staging: Path,
     attempt_id: str,
 ) -> None:
-    from .strategy_loader import DiscoveredStrategySources
-
-    if not isinstance(discovered, DiscoveredStrategySources):
-        raise InputIntegrityError("invalid_strategy", "discovered strategy is invalid")
     frozen_repo = execution_root / "repository"
     frozen_market = execution_root / "market-data"
     try:
@@ -1915,7 +1915,7 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
         )
     stages.append(StageRecord("snapshot_validation", "complete"))
     try:
-        discovered, config_digest, code_digest, inputs, code_identity, runtime_lock = (
+        _, config_digest, code_digest, inputs, code_identity, runtime_lock = (
             _v2_identity(
                 config,
                 repo_root=repo_root,
@@ -2006,7 +2006,6 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
         _copy_v2_inputs(
             config_path=Path(config_path).resolve(),
             config=config,
-            discovered=discovered,
             repo_root=repo_root,
             market_root=market_root,
             snapshot_document=snapshot_document,

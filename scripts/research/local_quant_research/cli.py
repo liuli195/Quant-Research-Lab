@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import importlib
-import importlib.util
 import json
 import os
 import re
@@ -197,30 +196,6 @@ def _private_execute(argv: list[str]) -> int:
         os.environ["MPLCONFIGDIR"] = str(matplotlib_cache)
         os.environ["XDG_CACHE_HOME"] = str(runtime_cache)
         tempfile.tempdir = str(runtime_cache)
-        for name in tuple(sys.modules):
-            if name == "scripts" or name.startswith("scripts."):
-                del sys.modules[name]
-        guard_path = (
-            frozen_repository
-            / "scripts/research/local_quant_research/adapter_guard.py"
-        )
-        _require_plain_path(guard_path, kind="file")
-        guard_spec = importlib.util.spec_from_file_location(
-            "_frozen_local_quant_research_adapter_guard",
-            guard_path,
-        )
-        if guard_spec is None or guard_spec.loader is None:
-            raise _BootstrapError("invalid_frozen_inputs")
-        guard = importlib.util.module_from_spec(guard_spec)
-        guard_spec.loader.exec_module(guard)
-        sys.modules["scripts.research.local_quant_research.adapter_guard"] = guard
-        guard.install_access_guard(
-            args.staging,
-            execution_root=_absolute_path(args.frozen_inputs).parent,
-            repository_root=REPO_ROOT,
-            venv_root=REPO_ROOT / ".venv",
-            runtime_cache_root=runtime_cache,
-        )
         sys.path.insert(0, str(frozen_repository))
         importlib.invalidate_caches()
         from scripts.research.local_quant_research.contracts import StrategyEvidenceError

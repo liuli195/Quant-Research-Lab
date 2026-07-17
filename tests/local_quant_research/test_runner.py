@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import inspect
 import gc
 import json
 import os
@@ -110,7 +111,8 @@ def _build_repo(tmp_path: Path, source_repo: Path) -> tuple[Path, Path, dict[str
     venv_python.write_bytes(b"test launcher")
 
     project_dir = root / "projects" / "generic-research"
-    entry = project_dir / "strategy.py"
+    strategy_module = f"strategy_{uuid.uuid4().hex}"
+    entry = project_dir / f"{strategy_module}.py"
     entry.parent.mkdir(parents=True)
     source_strategy = (
         source_repo
@@ -185,7 +187,7 @@ def _build_repo(tmp_path: Path, source_repo: Path) -> tuple[Path, Path, dict[str
         "project_id": "generic-research",
         "strategy": {
             "root": "projects/generic-research",
-            "module": "strategy",
+            "module": strategy_module,
             "symbol": "MODULE",
         },
         "snapshot_id": snapshot.snapshot_id,
@@ -493,8 +495,12 @@ def test_invalid_extension_type_fails_before_cold_warm_comparison(
     monkeypatch: pytest.MonkeyPatch,
     invalid_array_expression: str,
 ) -> None:
-    fake_root, config_path, _ = _build_repo(tmp_path, repo_root)
-    strategy = fake_root / "projects/generic-research/strategy.py"
+    fake_root, config_path, config = _build_repo(tmp_path, repo_root)
+    strategy = (
+        fake_root
+        / "projects/generic-research"
+        / f"{config['strategy']['module']}.py"
+    )
     strategy.write_text(
         strategy.read_text(encoding="utf-8")
         .replace("import numpy as np", "import numpy as np\nimport pyarrow as pa")
@@ -1316,227 +1322,6 @@ def test_private_execute_rejects_staging_not_bound_to_frozen_request(
             pass
 
 
-def _build_private_bootstrap_layout(
-    repo_root: Path,
-    project_id: str,
-) -> tuple[Path, Path, Path, Path]:
-    run_id = "d" * 64
-    attempt_id = uuid.uuid4().hex
-    project_root = repo_root / ".local/quant-research" / project_id
-    execution_root = project_root / f".{run_id}.{attempt_id}.inputs"
-    frozen = execution_root / "repository"
-    staging = project_root / f".{run_id}.{attempt_id}.tmp"
-    (frozen / "scripts/research/local_quant_research").mkdir(parents=True)
-    (execution_root / "market-data").mkdir()
-    (execution_root / "runtime-cache").mkdir()
-    _write_json(
-        execution_root / "request.json",
-        {
-            "schema_version": 2,
-            "project_id": project_id,
-            "run_id": run_id,
-            "attempt_id": attempt_id,
-            "output_root": str((repo_root / ".local/quant-research").resolve()),
-            "repository": str(frozen.resolve()),
-            "market_data": str((execution_root / "market-data").resolve()),
-            "live_repository": str(repo_root.resolve()),
-            "runtime_cache": str((execution_root / "runtime-cache").resolve()),
-            "staging": str(staging.resolve()),
-        },
-    )
-    return project_root, execution_root, frozen, staging
-
-
-def test_private_execute_maps_guard_import_failure_without_traceback(
-    repo_root: Path,
-) -> None:
-    project_root, execution_root, frozen, staging = _build_private_bootstrap_layout(
-        repo_root,
-        "private-guard-error-test",
-    )
-    guard = frozen / "scripts/research/local_quant_research/adapter_guard.py"
-    guard.write_text("raise RuntimeError('sensitive guard detail')\n", encoding="utf-8")
-    try:
-        completed = subprocess.run(
-            [
-                str(repo_root / ".venv/Scripts/python.exe"),
-                str(repo_root / "scripts/research/local_quant_research/cli.py"),
-                "_execute",
-                "--frozen-inputs",
-                str(execution_root / "request.json"),
-                "--staging",
-                str(staging),
-            ],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            shell=False,
-            check=False,
-        )
-
-        assert completed.returncode == 1
-        assert json.loads(completed.stdout) == {
-            "reasons": ["frozen_bootstrap_failed"],
-            "status": "failed",
-        }
-        assert completed.stderr == ""
-        assert "Traceback" not in completed.stdout
-        assert "sensitive guard detail" not in completed.stdout
-    finally:
-        shutil.rmtree(project_root, ignore_errors=True)
-
-
-def test_private_execute_rejects_linked_guard_before_top_level_execution(
-    repo_root: Path,
-    tmp_path: Path,
-) -> None:
-    project_root, execution_root, frozen, staging = _build_private_bootstrap_layout(
-        repo_root,
-        "private-linked-guard-test",
-    )
-    marker = tmp_path / "linked-guard-executed"
-    external = tmp_path / "external-guard.py"
-    external.write_text(
-        "from pathlib import Path\n"
-        f"Path({str(marker)!r}).write_text('executed', encoding='utf-8')\n",
-        encoding="utf-8",
-    )
-    guard = frozen / "scripts/research/local_quant_research/adapter_guard.py"
-    try:
-        guard.symlink_to(external)
-    except OSError as exc:
-        shutil.rmtree(project_root, ignore_errors=True)
-        pytest.skip(f"file links are unavailable: {exc}")
-    try:
-        completed = subprocess.run(
-            [
-                str(repo_root / ".venv/Scripts/python.exe"),
-                str(repo_root / "scripts/research/local_quant_research/cli.py"),
-                "_execute",
-                "--frozen-inputs",
-                str(execution_root / "request.json"),
-                "--staging",
-                str(staging),
-            ],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            shell=False,
-            check=False,
-        )
-
-        assert completed.returncode == 2
-        assert json.loads(completed.stdout) == {
-            "reasons": ["unsafe_frozen_inputs"],
-            "status": "evidence_insufficient",
-        }
-        assert completed.stderr == ""
-        assert not marker.exists()
-    finally:
-        guard.unlink(missing_ok=True)
-        shutil.rmtree(project_root, ignore_errors=True)
-
-
-@pytest.mark.parametrize("action", ("write", "process"))
-def test_frozen_child_guards_strategy_top_level_before_execution(
-    repo_root: Path,
-    tmp_path: Path,
-    action: str,
-) -> None:
-    project_root, execution_root, frozen, staging = _build_private_bootstrap_layout(
-        repo_root,
-        f"private-strategy-{action}-test",
-    )
-    for relative in (
-        Path("scripts/__init__.py"),
-        Path("scripts/research/__init__.py"),
-    ):
-        destination = frozen / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(repo_root / relative, destination)
-    for relative in (
-        Path("scripts/research/local_quant_research"),
-        Path("scripts/research/market_data"),
-    ):
-        shutil.copytree(repo_root / relative, frozen / relative, dirs_exist_ok=True)
-    strategy_root = frozen / "projects/malicious"
-    strategy_root.mkdir(parents=True)
-    marker = tmp_path / f"strategy-{action}-escaped"
-    entered = execution_root / "runtime-cache" / f"entered-{action}.txt"
-    caught = execution_root / "runtime-cache" / f"caught-{action}.txt"
-    side_effect = (
-        f"Path({str(marker)!r}).write_text('escaped', encoding='utf-8')"
-        if action == "write"
-        else "subprocess.run([sys.executable, '-c', 'pass'], check=True)"
-    )
-    (strategy_root / "strategy.py").write_text(
-        "from pathlib import Path\n"
-        "import subprocess\n"
-        "import sys\n"
-        f"Path({str(entered)!r}).write_text('entered', encoding='utf-8')\n"
-        "try:\n"
-        f"    {side_effect}\n"
-        "except BaseException as exc:\n"
-        f"    Path({str(caught)!r}).write_text(type(exc).__name__, encoding='utf-8')\n"
-        "    raise\n"
-        "MODULE = object()\n",
-        encoding="utf-8",
-    )
-    _write_json(strategy_root / "scenario.json", {"scenario_id": "baseline"})
-    _write_json(
-        strategy_root / "run.json",
-        {
-            "schema_version": 2,
-            "project_id": f"private-strategy-{action}-test",
-            "strategy": {
-                "root": "projects/malicious",
-                "module": "strategy",
-                "symbol": "MODULE",
-            },
-            "snapshot_id": "e" * 64,
-            "snapshot_requirements": {},
-            "scenario_config": "projects/malicious/scenario.json",
-            "declared_inputs": [],
-        },
-    )
-    request_path = execution_root / "request.json"
-    request = json.loads(request_path.read_text(encoding="utf-8"))
-    request["config"] = "projects/malicious/run.json"
-    _write_json(request_path, request)
-    environment = dict(os.environ)
-    environment["PYTHONDONTWRITEBYTECODE"] = "1"
-    try:
-        completed = subprocess.run(
-            [
-                str(repo_root / ".venv/Scripts/python.exe"),
-                str(repo_root / "scripts/research/local_quant_research/cli.py"),
-                "_execute",
-                "--frozen-inputs",
-                str(request_path),
-                "--staging",
-                str(staging),
-            ],
-            cwd=repo_root,
-            env=environment,
-            capture_output=True,
-            text=True,
-            shell=False,
-            check=False,
-        )
-
-        assert completed.returncode == 1, completed.stderr + completed.stdout
-        assert json.loads(completed.stdout) == {
-            "reasons": ["access_guard_violation"],
-            "status": "failed",
-        }
-        assert completed.stderr == ""
-        assert entered.read_text(encoding="utf-8") == "entered"
-        assert caught.read_text(encoding="utf-8") == "PermissionError"
-        assert not marker.exists()
-    finally:
-        shutil.rmtree(project_root, ignore_errors=True)
-
-
 def test_freezing_copies_every_captured_shared_runtime_source(
     tmp_path: Path,
     repo_root: Path,
@@ -1574,6 +1359,22 @@ def test_freezing_copies_every_captured_shared_runtime_source(
         "scripts/research/local_quant_research/scenario.py",
         "scripts/research/market_data/query.py",
     }.issubset(observed)
+    assert "scripts/research/local_quant_research/adapter_guard.py" not in observed
+
+
+def test_v2_bootstrap_does_not_install_adapter_guard(repo_root: Path) -> None:
+    from scripts.research.local_quant_research import cli, runner
+
+    private_execute = inspect.getsource(cli._private_execute)
+    assert "adapter_guard" not in private_execute
+    assert "install_access_guard" not in private_execute
+    assert "sys.modules" not in private_execute
+
+    _, runtime_sources = runner._runtime_lock(repo_root)
+    assert (
+        repo_root / "scripts/research/local_quant_research/adapter_guard.py"
+        not in runtime_sources
+    )
 
 
 def test_parent_runner_never_executes_strategy_top_level_before_frozen_child(
@@ -1583,8 +1384,12 @@ def test_parent_runner_never_executes_strategy_top_level_before_frozen_child(
 ) -> None:
     from scripts.research.local_quant_research import runner
 
-    fake_root, config_path, _ = _build_repo(tmp_path, repo_root)
-    strategy = fake_root / "projects/generic-research/strategy.py"
+    fake_root, config_path, config = _build_repo(tmp_path, repo_root)
+    strategy = (
+        fake_root
+        / "projects/generic-research"
+        / f"{config['strategy']['module']}.py"
+    )
     marker = fake_root.parent / "parent-strategy-executed"
     source = strategy.read_text(encoding="utf-8")
     strategy.write_text(
@@ -1666,21 +1471,12 @@ def test_private_execute_bootstrap_loads_runner_from_frozen_repository(
         "scripts/research/__init__.py": "",
         "scripts/research/local_quant_research/__init__.py": "",
         "scripts/research/local_quant_research/runner.py": (
-            "from .adapter_guard import INSTALLED\n"
             "class ConfigurationError(ValueError):\n"
             "    def __init__(self, code, message):\n"
             "        super().__init__(message)\n"
             "        self.code = code\n"
             "def execute_frozen_inputs(_request, _staging):\n"
-            "    if not INSTALLED:\n"
-            "        raise RuntimeError('guard was not installed')\n"
             "    return {'status': 'complete', 'reasons': [], 'source': 'frozen'}\n"
-        ),
-        "scripts/research/local_quant_research/adapter_guard.py": (
-            "INSTALLED = False\n"
-            "def install_access_guard(*_args, **_kwargs):\n"
-            "    global INSTALLED\n"
-            "    INSTALLED = True\n"
         ),
         "scripts/research/local_quant_research/contracts.py": (
             "class StrategyEvidenceError(RuntimeError):\n"

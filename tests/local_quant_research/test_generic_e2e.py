@@ -47,7 +47,7 @@ def test_minimal_strategy_completes_reuses_and_rejects_digest_conflict(
     repo_root: Path,
 ) -> None:
     token = uuid.uuid4().hex
-    project_id = "minimal-fixture"
+    project_id = "minimal-fixture-b"
     project_root = repo_root / ".local/e2e-tests" / token
     output_project = repo_root / ".local/quant-research" / project_id
     attempts_root = output_project / ".attempts"
@@ -142,8 +142,8 @@ def test_minimal_strategy_completes_reuses_and_rejects_digest_conflict(
             "schema_version": 2,
             "project_id": project_id,
             "strategy": {
-                "root": "tests/local_quant_research/fixtures/minimal_strategy",
-                "module": "strategy",
+                "root": "tests/local_quant_research/fixtures",
+                "module": "minimal_strategy_b.strategy",
                 "symbol": "MODULE",
             },
             "snapshot_id": snapshot.snapshot_id,
@@ -184,7 +184,39 @@ def test_minimal_strategy_completes_reuses_and_rejects_digest_conflict(
         } == {"results", "balances", "positions", "orders"}
         assert (run_output / "report/execution-summary.md").is_file()
         assert (run_output / "report/metrics.json").is_file()
-        assert (run_output / "code/strategy.py").is_file()
+        expected_code = {
+            "minimal_strategy_b/__init__.py": (
+                repo_root
+                / "tests/local_quant_research/fixtures/minimal_strategy_b/__init__.py"
+            ),
+            "minimal_strategy_b/strategy.py": (
+                repo_root
+                / "tests/local_quant_research/fixtures/minimal_strategy_b/strategy.py"
+            ),
+        }
+        code_identity = json.loads(
+            (run_output / "config/code-identity.json").read_text(encoding="utf-8")
+        )
+        strategy_identity = {
+            item["path"]: item["sha256"]
+            for item in code_identity["files"]
+            if item["path"].startswith(
+                "tests/local_quant_research/fixtures/minimal_strategy_b/"
+            )
+        }
+        assert set(manifest["code"]) == set(expected_code)
+        assert set(strategy_identity) == {
+            source.relative_to(repo_root).as_posix()
+            for source in expected_code.values()
+        }
+        for relative, source in expected_code.items():
+            archived = run_output / "code" / relative
+            reference = manifest["code"][relative]
+            digest = _sha256(source)
+            assert archived.read_bytes() == source.read_bytes()
+            assert reference["path"] == f"code/{relative}"
+            assert reference["sha256"] == digest
+            assert strategy_identity[source.relative_to(repo_root).as_posix()] == digest
         performance = json.loads(
             (run_output / "evidence/performance.json").read_text(encoding="utf-8")
         )

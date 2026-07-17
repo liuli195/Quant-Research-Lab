@@ -4,11 +4,8 @@ import dataclasses
 import inspect
 import shutil
 import sys
-import threading
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from types import ModuleType
 from typing import get_type_hints
 
 import numpy as np
@@ -45,6 +42,12 @@ from scripts.research.local_quant_research.strategy_loader import (
 
 
 def _fixture_config(name: str) -> dict[str, str]:
+    if name == "minimal_strategy_b":
+        return {
+            "root": "tests/local_quant_research/fixtures",
+            "module": "minimal_strategy_b.strategy",
+            "symbol": "MODULE",
+        }
     return {
         "root": f"tests/local_quant_research/fixtures/{name}",
         "module": "strategy",
@@ -67,64 +70,8 @@ def temporary_strategy_root(repo_root: Path):
                 pass
 
 
-def _write_strategy(root: Path, source_files: tuple[str, ...]) -> None:
-    declared = ", ".join(f"Path({value!r})" for value in source_files)
-    if len(source_files) == 1:
-        declared += ","
-    (root / "strategy.py").write_text(
-        "\n".join(
-            (
-                "from pathlib import Path",
-                "from scripts.research.local_quant_research.contracts import StrategyDescriptor",
-                "class MinimalModule:",
-                "    descriptor = StrategyDescriptor(",
-                "        strategy_id='temporary-fixture',",
-                "        contract_version='1',",
-                f"        source_files=({declared}),",
-                "        extension_names=(),",
-                "        accounting={},",
-                "    )",
-                "    def prepare(self, snapshot, config): raise NotImplementedError",
-                "    def followup_program(self, prepared, primary_run): return None",
-                "    def build_extensions(self, prepared, execution): return ()",
-                "MODULE = MinimalModule()",
-                "",
-            )
-        ),
-        encoding="utf-8",
-    )
-
-
 def _relative_to_repo(path: Path, repo_root: Path) -> str:
     return path.relative_to(repo_root).as_posix()
-
-
-def _write_concurrent_strategy(root: Path, strategy_id: str) -> None:
-    root.mkdir()
-    (root / "strategy.py").write_text(
-        "\n".join(
-            (
-                "import time",
-                "from pathlib import Path",
-                "from scripts.research.local_quant_research.contracts import StrategyDescriptor",
-                "time.sleep(0.05)",
-                "class ConcurrentModule:",
-                "    descriptor = StrategyDescriptor(",
-                f"        strategy_id={strategy_id!r},",
-                "        contract_version='1',",
-                "        source_files=(Path('strategy.py'),),",
-                "        extension_names=(),",
-                "        accounting={},",
-                "    )",
-                "    def prepare(self, snapshot, config): raise NotImplementedError",
-                "    def followup_program(self, prepared, primary_run): return None",
-                "    def build_extensions(self, prepared, execution): return ()",
-                "MODULE = ConcurrentModule()",
-                "",
-            )
-        ),
-        encoding="utf-8",
-    )
 
 
 def test_contract_constants_and_namedtuple_fields_are_stable() -> None:
@@ -157,7 +104,6 @@ def test_new_contract_dataclasses_are_frozen_and_slotted() -> None:
     descriptor = StrategyDescriptor(
         strategy_id="example",
         contract_version="1",
-        source_files=(Path("strategy.py"),),
         extension_names=(),
         accounting={"basis": "cash"},
     )
@@ -190,6 +136,12 @@ def test_strategy_evidence_error_preserves_stable_code() -> None:
 
 
 def test_contract_shapes_and_strategy_protocol_are_exact() -> None:
+    assert [field.name for field in dataclasses.fields(StrategyDescriptor)] == [
+        "strategy_id",
+        "contract_version",
+        "extension_names",
+        "accounting",
+    ]
     assert [field.name for field in dataclasses.fields(LedgerInput)] == [
         "dates",
         "symbols",
@@ -283,33 +235,45 @@ def test_shared_loader_accepts_two_strategy_modules(repo_root: Path) -> None:
     )
     assert first.root != second.root
     assert first.source_paths == (first.root / "strategy.py",)
-    assert second.source_paths == (second.root / "strategy.py",)
+    assert tuple(path.relative_to(second.root).as_posix() for path in second.source_paths) == (
+        "minimal_strategy_b/__init__.py",
+        "minimal_strategy_b/strategy.py",
+    )
 
 
 def test_static_source_discovery_does_not_execute_strategy_and_captures_all_python(
     repo_root: Path,
     temporary_strategy_root: Path,
 ) -> None:
-    marker = temporary_strategy_root / "executed"
-    helper = temporary_strategy_root / "helper.py"
+    package = temporary_strategy_root / "fixture_package"
+    package.mkdir()
+    marker = package / "executed"
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    helper = package / "helper.py"
     helper.write_text("VALUE = 1\n", encoding="utf-8")
-    (temporary_strategy_root / "strategy.py").write_text(
+    strategy = package / "strategy.py"
+    strategy.write_text(
         "from pathlib import Path\n"
         f"Path({str(marker)!r}).write_text('executed', encoding='utf-8')\n",
         encoding="utf-8",
     )
+    adjacent = temporary_strategy_root / "adjacent"
+    adjacent.mkdir()
+    (adjacent / "ignored.py").write_text("VALUE = 2\n", encoding="utf-8")
+    archive = package / "research" / "archives"
+    archive.mkdir(parents=True)
+    (archive / "ignored.py").write_text("VALUE = 3\n", encoding="utf-8")
 
     discovered = strategy_loader.discover_strategy_sources(
-        repo_root,
-        {
-            "root": _relative_to_repo(temporary_strategy_root, repo_root),
-            "module": "strategy",
-            "symbol": "MODULE",
-        },
+        temporary_strategy_root,
+        "fixture_package.strategy",
     )
 
-    assert discovered.root == temporary_strategy_root.resolve()
-    assert discovered.source_paths == (helper.resolve(), (temporary_strategy_root / "strategy.py").resolve())
+    assert discovered == (
+        (package / "__init__.py").resolve(),
+        helper.resolve(),
+        strategy.resolve(),
+    )
     assert not marker.exists()
 
 
@@ -329,12 +293,8 @@ def test_static_source_discovery_rejects_linked_python_source(
     try:
         with pytest.raises(ConfigurationError) as caught:
             strategy_loader.discover_strategy_sources(
-                repo_root,
-                {
-                    "root": _relative_to_repo(temporary_strategy_root, repo_root),
-                    "module": "strategy",
-                    "symbol": "MODULE",
-                },
+                temporary_strategy_root,
+                "strategy",
             )
         assert caught.value.code == "unsafe_strategy_source_tree"
     finally:
@@ -342,21 +302,27 @@ def test_static_source_discovery_rejects_linked_python_source(
         external.unlink(missing_ok=True)
 
 
-def test_loader_restores_sys_path_and_conflicting_module_cache(repo_root: Path) -> None:
+def test_static_source_discovery_rejects_archive_as_strategy_root(
+    temporary_strategy_root: Path,
+) -> None:
+    archive_code = temporary_strategy_root / "research" / "archives" / "saved" / "code"
+    archive_code.mkdir(parents=True)
+    (archive_code / "strategy.py").write_text("MODULE = object()\n", encoding="utf-8")
+
+    with pytest.raises(ConfigurationError) as caught:
+        strategy_loader.discover_strategy_sources(archive_code, "strategy")
+
+    assert caught.value.code == "unsafe_strategy_source_tree"
+
+
+def test_loader_uses_standard_import_and_restores_sys_path(repo_root: Path) -> None:
     before_path = list(sys.path)
-    sentinel = ModuleType("strategy")
-    previous = sys.modules.get("strategy")
-    sys.modules["strategy"] = sentinel
-    try:
-        loaded = load_strategy(repo_root, _fixture_config("minimal_strategy"))
-        assert loaded.descriptor.strategy_id == "minimal-fixture"
-        assert sys.path == before_path
-        assert sys.modules["strategy"] is sentinel
-    finally:
-        if previous is None:
-            sys.modules.pop("strategy", None)
-        else:
-            sys.modules["strategy"] = previous
+    loaded = load_strategy(repo_root, _fixture_config("minimal_strategy"))
+
+    assert loaded.descriptor.strategy_id == "minimal-fixture"
+    assert loaded.module.__class__.__module__ == "strategy"
+    assert sys.path == before_path
+    assert Path(sys.modules["strategy"].__file__).resolve() == loaded.source_paths[0]
 
 
 def test_loader_supports_package_relative_imports(
@@ -373,19 +339,12 @@ def test_loader_supports_package_relative_imports(
     (package / "strategy.py").write_text(
         "\n".join(
             (
-                "from pathlib import Path",
                 "from .identity import STRATEGY_ID",
                 "from scripts.research.local_quant_research.contracts import StrategyDescriptor",
                 "class RelativeImportModule:",
                 "    descriptor = StrategyDescriptor(",
                 "        strategy_id=STRATEGY_ID,",
                 "        contract_version='1',",
-                (
-                    "        source_files=(Path('fixture_package/__init__.py'), "
-                    "Path('fixture_package/identity.py'), "
-                    "Path('fixture_package/strategy.py'))"
-                    ","
-                ),
                 "        extension_names=(),",
                 "        accounting={},",
                 "    )",
@@ -409,8 +368,8 @@ def test_loader_supports_package_relative_imports(
     )
 
     assert loaded.descriptor.strategy_id == "relative-import-fixture"
-    assert "fixture_package" not in sys.modules
-    assert "fixture_package.strategy" not in sys.modules
+    assert "fixture_package" in sys.modules
+    assert "fixture_package.strategy" in sys.modules
 
 
 def test_loader_rejects_external_parent_package_before_execution(
@@ -430,13 +389,11 @@ def test_loader_rejects_external_parent_package_before_execution(
     (package / "strategy.py").write_text(
         "\n".join(
             (
-                "from pathlib import Path",
                 "from scripts.research.local_quant_research.contracts import StrategyDescriptor",
                 "class ExternalParentModule:",
                 "    descriptor = StrategyDescriptor(",
                 "        strategy_id='external-parent-fixture',",
                 "        contract_version='1',",
-                "        source_files=(Path('external_parent/strategy.py'),),",
                 "        extension_names=(),",
                 "        accounting={},",
                 "    )",
@@ -478,13 +435,11 @@ def test_loaded_strategy_supports_delayed_relative_imports(
     (package / "strategy.py").write_text(
         "\n".join(
             (
-                "from pathlib import Path",
                 "from scripts.research.local_quant_research.contracts import StrategyDescriptor",
                 "class DelayedImportModule:",
                 "    descriptor = StrategyDescriptor(",
                 "        strategy_id='delayed-relative-import-fixture',",
                 "        contract_version='1',",
-                "        source_files=(Path('delayed_package/__init__.py'), Path('delayed_package/identity.py'), Path('delayed_package/strategy.py')),",
                 "        extension_names=(),",
                 "        accounting={},",
                 "    )",
@@ -510,48 +465,8 @@ def test_loaded_strategy_supports_delayed_relative_imports(
     )
 
     assert loaded.module.prepare(object(), {}) == "delayed-relative-import-fixture"
-    assert "delayed_package" not in sys.modules
-    assert "delayed_package.strategy" not in sys.modules
-
-
-def test_loader_concurrently_isolates_same_named_modules(
-    repo_root: Path,
-    temporary_strategy_root: Path,
-) -> None:
-    first_root = temporary_strategy_root / "first"
-    second_root = temporary_strategy_root / "second"
-    _write_concurrent_strategy(first_root, "concurrent-first")
-    _write_concurrent_strategy(second_root, "concurrent-second")
-    before_path = list(sys.path)
-    missing = object()
-    before_module = sys.modules.get("strategy", missing)
-    barrier = threading.Barrier(2)
-
-    def load(root: Path) -> LoadedStrategy:
-        barrier.wait(timeout=5)
-        return load_strategy(
-            repo_root,
-            {
-                "root": _relative_to_repo(root, repo_root),
-                "module": "strategy",
-                "symbol": "MODULE",
-            },
-        )
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        first_future = executor.submit(load, first_root)
-        second_future = executor.submit(load, second_root)
-        first = first_future.result(timeout=10)
-        second = second_future.result(timeout=10)
-
-    assert (first.descriptor.strategy_id, second.descriptor.strategy_id) == (
-        "concurrent-first",
-        "concurrent-second",
-    )
-    assert first.source_paths == (first_root.resolve() / "strategy.py",)
-    assert second.source_paths == (second_root.resolve() / "strategy.py",)
-    assert sys.path == before_path
-    assert sys.modules.get("strategy", missing) is before_module
+    assert "delayed_package" in sys.modules
+    assert "delayed_package.strategy" in sys.modules
 
 
 def test_loader_rejects_unknown_symbol(repo_root: Path) -> None:
@@ -599,34 +514,15 @@ def test_loader_does_not_execute_module_file_outside_strategy_root(
         external_module.unlink(missing_ok=True)
 
 
-@pytest.mark.parametrize(
-    ("source_files", "message"),
-    (
-        (("C:/outside.py",), "source_files"),
-        (("../outside.py",), "source_files"),
-        (("strategy.py", "./strategy.py"), "duplicate"),
-        (("missing.py",), "missing"),
-        (("source_dir",), "file"),
-    ),
-)
-def test_loader_rejects_unsafe_or_invalid_source_files(
-    repo_root: Path,
-    temporary_strategy_root: Path,
-    source_files: tuple[str, ...],
-    message: str,
-) -> None:
-    (temporary_strategy_root / "source_dir").mkdir()
-    _write_strategy(temporary_strategy_root, source_files)
+def test_strategy_loader_has_no_private_import_lifecycle() -> None:
+    source = inspect.getsource(strategy_loader)
 
-    with pytest.raises(ConfigurationError, match=message):
-        load_strategy(
-            repo_root,
-            {
-                "root": _relative_to_repo(temporary_strategy_root, repo_root),
-                "module": "strategy",
-                "symbol": "MODULE",
-            },
-        )
+    assert "threading" not in source
+    assert "uuid" not in source
+    assert "_PRIVATE_NAMESPACE" not in source
+    assert "spec_from_file_location" not in source
+    assert "module_from_spec" not in source
+    assert "sys.modules" not in source
 
 
 @pytest.mark.parametrize("fixture_name", ("minimal_strategy", "minimal_strategy_b"))
