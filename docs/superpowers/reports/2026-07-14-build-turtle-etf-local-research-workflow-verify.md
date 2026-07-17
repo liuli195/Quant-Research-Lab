@@ -1,130 +1,102 @@
 # 海龟 ETF 本地研究流程验证报告
 
-- 日期：2026-07-15
+- 验证日期：2026-07-18
 - Change（变更）：`build-turtle-etf-local-research-workflow`
-- 行情批次：`1923c902f5692d35bd84e2745620a06cb6c18666c4a4add724ce80d261d5f4e1`
-- 行情快照：`e88238cca420a8ae66b90adb6cda4dd6c38a07390a13b8ac2f471e534742e33e`
-- 准备标识：`ea78cf53997ad9e9db4e9bff473ae5ecfde67e42cca50a5084dadf19020263ba`
-- 分析标识：`b76821272f792bafe2557b72988d505d3c5d0e166ddf5337fd70c23ffcd06942`
-- 当前停止状态：`human_confirmation_required`
+- 验证提交：`3fc430611dec743fa880cc73ac04db30e2868847`
+- 分支状态：`main` 与 `origin/main` 一致，既有 PR（拉取请求）已处理
+- 工程验证结论：通过，有警告
+- 当前停止状态：`archive_confirmation_required`
 
 ## 结论
 
-实现门禁通过，但当前策略研究结论未通过：
+该 change（变更）的工程实现已完成并通过完整验证，可以进入归档前人工确认：
 
-- vectorbt（向量化回测框架）本地单场景研究、主 agent（代理）七次编排、聚宽现有结构兼容的标准分析数据包、完整确定性分析、Vibe-Trading（氛围量化）单体复核和报告均已真实运行。
-- 冻结基线累计收益 `117.44%`、年化收益 `5.87%`、最大回撤 `-12.07%`，Calmar（年化收益/最大回撤）为 `0.486`，低于 `0.5` 门槛。
-- 90 项证据中 52 项通过、38 项失败、0 项证据不足。推荐 `revise_and_reassess`，即修改后再评估。
-- `covariance-ewma-30d` 是唯一通过基础门槛的挑战场景，只能作为下一轮研究起点，不能自动替换、冻结或送入聚宽正式回测。
-- 本结果属于本地探索性研究，不是 JoinQuant（聚宽）正式回测、模拟交易或最终策略验收。
+- 34 项任务全部完成。验证阶段发现 task 2.2、3.3 及其 proposal/design（提案/设计）仍引用旧 `local-backtest/1` 和 `Portfolio.from_orders()`；现已最小修正为当前实现使用的 `local-research-package/2` 和统一 `Portfolio.from_order_func()`。
+- 30 个 Requirement（要求）、109 个 Scenario（场景）已逐项核对，没有未处理的 CRITICAL（阻断）实现缺口。
+- Build and Verify（构建与验证）完整模式真实运行，692 项 Pytest（测试框架）测试全部通过，OpenSpec（开放规格）8 项严格校验全部通过。
+- 所有测试均在本机进程及其子进程内完成，没有联网调用外部系统。
+- 工程实现通过不等于策略研究结论通过。既有真实 11 ETF 基线仍建议停止并等待人工确认，不进入聚宽正式复核。
 
-完整研究报告：[local-strategy-analysis-report.md](../../../.local/strategy-analysis/b76821272f792bafe2557b72988d505d3c5d0e166ddf5337fd70c23ffcd06942/local-strategy-analysis-report.md)
+## 完整验证证据
 
-## 公司行动与行情证据
+运行命令：
 
-| 验证项 | 实际结果 |
+```powershell
+.\.venv\Scripts\python.exe .build-and-verify\runtime\build_and_verify.py verify --project . --full
+```
+
+结果：
+
+| 检查 | 结果 | 耗时 |
+| --- | ---: | ---: |
+| Skill layout（技能布局） | 9 passed | 15.53 秒 |
+| Docs sync（文档同步） | 16 passed | 13.44 秒 |
+| Archive（归档能力） | 56 passed | 14.78 秒 |
+| Browser research（浏览器研究） | 49 passed | 12.75 秒 |
+| Query（查询） | 8 passed | 12.38 秒 |
+| Scheduler unit（调度单元） | 22 passed | 14.62 秒 |
+| Sync pipeline（同步流水线） | 70 passed | 17.84 秒 |
+| Self test（自测） | 3 passed | 11.83 秒 |
+| Local research unit（本地研究单元） | 451 passed | 95.56 秒 |
+| Local research E2E（本地研究端到端） | 8 passed | 126.66 秒 |
+| OpenSpec（开放规格） | 8 passed，0 failed | 2.55 秒 |
+
+- 完整命令墙钟时间：241.5 秒。
+- `full-not-run=false`，最终 `status=passed`。
+- 仅有 4 条 vectorbt（向量化回测框架）依赖触发的 Pandas（数据处理库）大小写日期单位弃用警告，不影响结果。
+- 文档纠偏后重新运行构建：`checked: build.placeholder`，`status: passed`。
+- 文档纠偏后重新运行 `openspec validate --all --strict --no-interactive`：8 passed，0 failed。
+
+## OpenSpec 对齐计分
+
+| 维度 | 结论 |
 | --- | --- |
-| 行情事实 | 23,938 行原始未复权日线，固化为 `market-data.parquet` |
-| 公司行动事实 | 37 行聚宽 `finance.FUND_DIVIDEND` 记录，固化为 `corporate-actions.parquet` |
-| 查询 | DuckDB（嵌入式分析数据库）只使用 `:memory:`，没有持久数据库副本 |
-| 连续因子 | 只由实际应用日的“上一交易日原始收盘 / 当日原始前收盘”计算 |
-| 元数据权限 | 公司行动元数据只授权和审计价格基准变化；官方拆分比例、每份现金不决定因子 |
-| 时点边界 | 晚公布记录标为 `retrospective_reconciliation`；生效日停牌时延后到首个复牌行情日 |
-| 取消状态 | 按取消日期与快照截止日重建；截止日后的取消不回写历史，缺少取消日期时停止导出 |
-| 精度边界 | 连续经济价格、经济单位、除权日隐含再投资；不模拟支付日现金、税费、真实份额和碎股 |
-| 失败关闭 | 未知状态、无效知识截止日或没有有效事件解释的价格基准变化会停止运行 |
+| Completeness（完整性） | 34/34；两项过时任务语义已同步到当前实现 |
+| Correctness（正确性） | 30 个要求、109 个场景均有实现或有效条件边界；无阻断缺口 |
+| Coherence（连贯性） | proposal/design/tasks 与 delta specs（增量规格）及当前代码已统一为 package/2 和单一 vectorbt 账本 |
 
-结果与报告明确声明 `point_in_time_total_return_approximation`，不能与聚宽逐日账户精确对账。
+## 归档合并安全验证
 
-## 实现与职责边界
+在固定临时目录中真实执行了一次 `openspec archive build-turtle-etf-local-research-workflow --yes` 预览，未修改工作区：
 
-| 验证项 | 实际结果 |
-| --- | --- |
-| 执行内核 | vectorbt 1.1.0 官方 `Portfolio.from_order_func()` 路径，Numba（即时编译器）0.66.0 |
-| 单场景 Skill（技能） | 每次只接受一个场景，输出一份兼容结果，以 `next_action=return_to_caller` 停止 |
-| 主 agent 编排 | 冻结基线加六个挑战，恰好七次；Skill 内没有候选循环或分析逻辑 |
-| 标准分析数据包 | 本地目录和清单尽量对齐聚宽现有 `backtests/<id>/` 结果；聚宽现有结果无需修改 |
-| 聚宽合法例外 | `gate.status=pass` 时仅放行既有 `attribution_log:missing_at_source`；其他未知例外仍拒绝 |
-| 策略分析 | 独立读取本地或聚宽来源，生成收益、回撤、双基准、归因、仓位、风险、稳健性、压力和 CVaR（条件风险价值） |
-| 归因契约 | `attribution_log` 使用 `turtle-etf-attribution/2`，覆盖订单、风险状态和公司行动应用 |
-| 流动性边界 | 最低成交额、订单参与率、单笔成交额占比和“成交额 1%”规则均已删除 |
-| 资金上限 | 被动超限采用“不得恶化”；不冻结其他证券，不新增策略外强制退出 |
-| 旧方案 | 旧逐日引擎、兼容层、专用报告和旧测试已删除，没有新旧双跑 |
+- 归档前已存在的 5 份主规格 SHA256（文件摘要）前后全部一致，包括最新的 `local-quant-research-runtime`、`local-research-result-package` 和 `local-research-archive-promotion`；旧 change 不会覆盖它们。
+- 归档只新增 `local-quant-research-workflow`、`standard-strategy-analysis-data`、`turtle-etf-local-research` 3 份互补能力规格，共 30 个要求。
+- 复审发现“必须生成新的结果包”与相同 `run_id` 复用既有结果包冲突；已修正为“生成或复用经重新校验的唯一不可变结果包”，与当前幂等实现一致。
+- 合并后扫描不到 `Portfolio.from_orders()`、`object.kind=local_backtest` 或 `source.kind=local_vectorbt` 等过时契约。
+- 合并后的 OpenSpec 严格校验为 10 passed、0 failed；临时预览目录已清理。
 
-## 七次真实本地回测
+关键实现证据：
 
-每个场景都从公开 Skill 入口单独调用；冷启动包含首次 JIT（即时编译），预热在同一进程运行。冷/热规范化摘要一致，全部低于 180 秒。
+- 本地结果写出 `local-research-package/2`：`scripts/research/local_quant_research/result_package.py`。
+- 即时和补充执行统一经过 `Portfolio.from_order_func()`：`scripts/research/local_quant_research/vectorbt_runtime.py`。
+- 延迟研究从主运行冻结动作生成后续订单程序：`joinquant/strategies/strategy-003/research/turtle_etf/_delayed.py`。
+- 历史 `local-backtest/1` 仅保留只读兼容：`scripts/research/analysis_data/manifest.py`。
 
-| 场景 | `run_id` 前缀 | 累计收益 | 年化收益 | 最大回撤 | Calmar | 平均仓位 | 冷启动 | 预热 | 结论 |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| baseline | `ad988e8a` | 117.44% | 5.87% | -12.07% | 0.486 | 44.07% | 30.94秒 | 5.29秒 | fail |
-| entry-40 | `fdf89621` | 100.37% | 5.24% | -15.32% | 0.342 | 48.43% | 31.21秒 | 5.70秒 | fail |
-| entry-60 | `d848d01e` | 106.49% | 5.47% | -13.44% | 0.407 | 43.47% | 30.72秒 | 5.21秒 | fail |
-| stop-1-5n | `205b098f` | 97.36% | 5.12% | -13.01% | 0.394 | 41.39% | 30.02秒 | 5.04秒 | fail |
-| stop-2-5n | `c2066eb2` | 133.99% | 6.44% | -13.69% | 0.471 | 47.81% | 30.31秒 | 5.51秒 | fail |
-| covariance-120d | `03ae9ca9` | 88.25% | 4.75% | -13.39% | 0.355 | 42.21% | 30.09秒 | 5.03秒 | fail |
-| covariance-ewma-30d | `50bcc27c` | 111.96% | 5.67% | -11.07% | 0.512 | 42.71% | 29.92秒 | 5.36秒 | pass |
+## 真实基线证据复核
 
-## 冻结基线结果
+本轮没有重复运行研究场景；只复核已固化的单次真实 11 ETF 基线及其报告：
 
-| 维度 | 结果 |
-| --- | ---: |
-| 累计收益 / 年化收益 | 117.44% / 5.87% |
-| 最大回撤 / 最长回撤期 | -12.07% / 915 个观察日 |
-| 年化波动率 | 6.89% |
-| Sharpe（夏普比率） / Sortino（索提诺比率） | 0.863 / 1.252 |
-| Calmar（卡玛比率） | 0.486，低于 0.5 门槛 |
-| 平均仓位 / 中位仓位 | 44.07% / 34.67% |
-| 低于半仓 / 接近满仓日期占比 | 55.19% / 11.36% |
-| 平均现金 / 最高仓位 | 55.93% / 100.00% |
-| 最高组合计划风险 / 风险预算 | 40.42% |
-| 最高 60 日已实现波动率 | 15.77% |
-| 高于目标波动率天数 | 440 天 |
-| 成交订单 / 平仓订单 / 胜率 | 1,270 / 570 / 60.53% |
-| 费用 | 22,417.34 元 |
-| 保护止损 / 风险约束事件 | 175 / 4,009 |
+- 范围：11 只 ETF、6 个资产组、55/20/20、4/6/12、全量仓位再分配。
+- 冷启动 26.00 秒、预热 2.40 秒，结果摘要一致，均通过 180 秒门禁。
+- 累计收益 120.07%，最大回撤 -34.66%，Calmar（卡玛比率）0.172。
+- 没有运行旧方案对照、17 ETF 扩展、7 个参数场景或稳健性矩阵。
+- 研究结论仍为“不推荐按当前规则进入聚宽复核；等待人工确认”。
 
-持有期存在单证券或资产组收盘权重高于入场上限的观察记录，但组合权重超限日期为 0。这是成交后市值诊断，价格上涨可以造成被动超限，不等同于下单风险门禁失效。
+权威研究报告：`docs/research/2026-07-16-turtle-full-position-redistribution-baseline-report.md`。
 
-## 双基准与归因
+## 剩余警告
 
-双基准只使用策略、沪深300人民币总回报和纳斯达克100人民币总回报的三方共同交易日：
+1. 同一 ETF 同日退出覆盖入场或加仓已有生产实现，但缺少针对该组合条件的直接回归测试；现有 E2E（端到端）和完整回归均通过。
+2. 行情中心已拒绝非 JoinQuant（聚宽）、非 ETF（交易型开放式指数基金）和非日线输入，但这些拒绝分支缺少直接单元断言。
 
-| 基准 | 同期策略收益 | 基准收益 | 主动收益 | Alpha（超额收益） | Beta（市场暴露） | 相关性 | 信息比率 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 沪深300人民币总回报 | 90.51% | 87.66% | 2.85% | 4.26% | 0.1317 | 0.4075 | -0.0984 |
-| 纳斯达克100人民币总回报 | 90.51% | 1,049.24% | -958.73% | 4.97% | 0.0109 | 0.0328 | -0.7283 |
+以上均不改变当前实现通过结论，属于测试深度改进项。
 
-归因为日度算术损益贡献，勾稽误差为 0；它不是几何链式归因，不能直接按复利累计收益逐项相加解释。
+## 工作区边界
 
-## 稳健性、挑战与 Vibe 复核
+- 本轮没有修改生产代码或测试。
+- `.superpowers/sdd/task-5-report.md` 是无引用的临时实施报告，当前删除属于本 change 收尾。
+- strategy-001/002 的 manifest（清单）、索引和 simulation-001（模拟交易）归档文件属于并行工作，未被修改、清理、暂存或纳入本报告结论。
 
-- 证据矩阵共 90 项：52 项通过、38 项失败、0 项证据不足。
-- 参数、时期、资产和资产组删除、成本与延迟、区块抽样、历史压力、持仓冲击和 CVaR 均已进入报告。
-- `covariance-ewma-30d` 通过基础门槛，但不能覆盖基线与其他场景的失败证据。
-- Vibe 0.1.10 通过公开单体 CLI（命令行入口）真实运行，运行标识 `20260715_203438_33_09ea02`，加载 `performance-attribution`、`risk-analysis`、`report-generate`。
-- Vibe 单体复核同意“保留研究价值、修改后再评估”；它只作定性审计，不改变任何确定性数值或门槛。
-- 已知有缺陷的 Vibe 群体分析、Vibe 回测和有前视偏差风险的组合优化器均未调用。
+## 归档建议
 
-## 自动验证
-
-- 公司行动、行情、输入、引擎、结果适配、清单和报告首轮定向回归：`95 passed`；聚宽合法例外与取消状态修复定向回归：`21 passed`。
-- 项目 `.venv` 最终全仓测试：`445 passed`。
-- Build and Verify（构建与验证）最终完整门禁：`status=passed`、`full-not-run=false`；11 组检查全部通过，其中本地研究单元测试 `166 passed`，公开入口 E2E（端到端）`2 passed`。
-- OpenSpec（开放规格）严格校验：当前变更通过；全仓规格 `5 passed, 0 failed`。
-- 代码身份文件中的全部 SHA256（文件摘要）与当前实现一致。
-- 旧执行模块、旧引擎符号、流动性规则扫描为 0。
-- `.local` 下暂存 CSV、持久 DuckDB、失败 `.attempts`、预热副本和测试临时产物为 0；行情传输目录为空。
-- 独立审查先发现“聚宽合法例外误拒绝”和“取消状态可能回写未来”两个 IMPORTANT（重要阻断）；均按 TDD 修复并重建七次结果，复审为 `No findings`。规格对齐审查同样为 `No findings`。
-- 策略 001/002 的外部同步归档未被本变更编辑、删除或纳入结论。
-
-## 未验证与禁止外推
-
-- 没有运行聚宽正式回测或模拟交易。
-- 没有精确还原公司行动后的真实 ETF 份额、支付日现金、税费、碎股和聚宽订单路径。
-- 没有接受候选参数，没有冻结策略。
-- 没有提交、推送、创建 PR（拉取请求）或合入主干。
-
-## 当前推荐
-
-保持 `candidate_accepted=false`，停止在 `human_confirmation_required`。建议人工确认是否以 `covariance-ewma-30d` 为下一轮“修改后再评估”的研究起点；确认不等于接受该候选，更不等于批准聚宽正式回测。
+验证阶段可以结束。归档安全预览已证明旧 change 不会覆盖最新主规格，合并后的规格与当前实现一致。下一步停在 Archive（归档）人工确认点。
