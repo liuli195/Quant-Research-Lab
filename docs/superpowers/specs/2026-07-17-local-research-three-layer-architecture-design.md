@@ -557,7 +557,8 @@ Windows 峰值进程内存使用标准库 `ctypes` 调用 `GetProcessMemoryInfo`
 8. 把晋升收敛为扫描、标准复制、摘要复核和原子发布，删除敌对并发树状态机。
 9. 建立通用 vectorbt 唯一账本 runtime，只用通用 primary/follow-up fixture 证明共享接线。
 10. 在海龟 Strategy Module 内同时迁移即时与延迟 OrderProgram，逐笔一致后删除手工账本。
-11. 单次切换生产配置和旧入口，再执行完整 E2E、真实性能和 Build and Verify（构建与验证）。
+11. 单次切换生产配置和旧入口，不保留兼容分支或第二套生产路径。
+12. 执行完整 E2E、真实性能和 Build and Verify（构建与验证）。
 
 每一步遵循 RED → GREEN → REFACTOR（失败测试→最小通过→整理），并形成可独立审查的提交。若某一步不能保持共享 CLI 可运行，则缩小该任务，不通过双生产 feature flag 绕过。
 

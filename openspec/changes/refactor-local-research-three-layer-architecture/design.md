@@ -141,16 +141,17 @@ joinquant/strategies/<strategy_id>/research/archives/<analysis_id>/
 ## Migration Plan
 
 1. 冻结当前主场景、扩展场景和延迟场景的结果、时间、内存及体积基线，增加分阶段计时。
-2. 抽取共享结果包和晋升能力，先让现有海龟执行结果通过新 writer 和归档端到端测试。
-3. 定义 Strategy Module 与执行 contracts，并用一个最小测试策略证明第二个 Adapter。
-4. 抽取共享单场景、性能和 CLI，仅让测试配置走新入口，生产配置留到单次切换任务。
-5. 收窄扩展表并把 writer 收敛为单次回读事实链，删除自定义递归 Arrow 解释器和内部 validator 双路径。
-6. 统一静态源码身份并改用标准 importlib，删除 descriptor 源码清单、UUID 命名空间和重复测试夹具内容。
-7. 把晋升收敛为扫描、标准复制、摘要复核和原子发布，删除敌对并发树状态机。
-8. 建立通用 vectorbt 唯一账本 runtime，只用通用 primary/follow-up fixture 证明共享接线。
-9. 在海龟 Strategy Module 内同时迁移即时与延迟 OrderProgram，逐笔一致后删除手工账本。
-10. 单次切换生产配置，更新测试、代码身份、Skill 文档和旧 OpenSpec 约束，删除所有旧生产文件。
-11. 运行共享 CLI → vectorbt → 标准结果包 → 自包含档案的完整端到端回归和真实规模性能验证。
+2. 定义 Strategy Module 与执行 contracts，并用一个最小测试策略证明第二个 Adapter。
+3. 抽取共享结果包，让现有海龟执行结果通过新 writer 和统一分析视图测试。
+4. 完成 archive-ready package 和 promote 端到端测试。
+5. 抽取共享单场景、性能和 CLI，仅让测试配置走新入口，生产配置留到单次切换任务。
+6. 收窄扩展表并把 writer 收敛为单次回读事实链，删除自定义递归 Arrow 解释器和内部 validator 双路径。
+7. 统一静态源码身份并改用标准 importlib，删除 descriptor 源码清单、UUID 命名空间和重复测试夹具内容。
+8. 把晋升收敛为扫描、标准复制、摘要复核和原子发布，删除敌对并发树状态机。
+9. 建立通用 vectorbt 唯一账本 runtime，只用通用 primary/follow-up fixture 证明共享接线。
+10. 在海龟 Strategy Module 内同时迁移即时与延迟 OrderProgram，逐笔一致后删除手工账本。
+11. 单次切换生产配置，更新测试、代码身份、Skill 文档和旧 OpenSpec 约束，删除所有旧生产文件。
+12. 运行共享 CLI → vectorbt → 标准结果包 → 自包含档案的完整端到端回归和真实规模性能验证。
 
 回滚以任务提交为单位进行：在旧生产入口尚未删除前，可回退最近迁移提交；删除旧入口后只允许整体回退到最后一个已验证提交，不提供运行时双路径开关。
 
