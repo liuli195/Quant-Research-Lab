@@ -6,6 +6,12 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from scripts.research.local_quant_research.contracts import (  # noqa: E402
+    ExecutionRun,
+    LedgerInput,
+    PreparedStrategy,
+)
+from scripts.research.local_quant_research.vectorbt_runtime import run_vectorbt  # noqa: E402
 
 RESEARCH_ROOT = (
     Path(__file__).resolve().parents[2]
@@ -16,7 +22,7 @@ RESEARCH_ROOT = (
 )
 sys.path.insert(0, str(RESEARCH_ROOT))
 
-from turtle_etf.vectorbt_callbacks import (  # noqa: E402
+from turtle_etf._kernel import (  # noqa: E402
     ACTION_ENTRY,
     ACTION_FULL_EXIT,
     ACTION_REDISTRIBUTION_BUY,
@@ -24,13 +30,14 @@ from turtle_etf.vectorbt_callbacks import (  # noqa: E402
     REASON_ENTRY_BREAKOUT,
     REASON_FULL_POSITION_REDISTRIBUTION,
     REASON_PROTECTIVE_STOP,
+    TurtleContext,
+    _params,
 )
-from turtle_etf.vectorbt_delayed import (  # noqa: E402
+from turtle_etf._delayed import (  # noqa: E402
     ADJUST_CASH_TRUNCATED,
     ADJUST_HOLDING_TRUNCATED,
     ADJUST_NONE,
-    freeze_order_plan,
-    run_delayed_execution,
+    build_delayed_program,
 )
 
 
@@ -88,17 +95,91 @@ def _run(
     *,
     initial_cash: float = 100_000.0,
 ):
-    plan = freeze_order_plan(inputs, immediate)
-    return plan, run_delayed_execution(
-        inputs,
-        plan,
+    config = {
+        "research": {"initial_cash": initial_cash},
+        "signal": {"add_step_n": 0.5, "stop_n": 2.0, "max_units": 4},
+        "risk": {
+            "lot_size": 100,
+            "unit_risk_per_n": 0.01,
+            "asset_group_unit_cap": 6.0,
+            "portfolio_unit_cap": 12.0,
+        },
+        "costs": {"commission_multiplier": 1.0, "one_way_slippage": 0.0},
+    }
+    _, params = _params(config)
+    rows, columns = inputs.close.shape
+    trace = {
+        **{
+            name: value
+            for name, value in vars(immediate).items()
+            if name != "filled_quantities"
+        },
+        "candidate_base_quantities": np.zeros((rows, columns), dtype=np.int64),
+        "event_group_scales": np.ones((rows, columns), dtype=np.float64),
+        "event_portfolio_scales": np.ones(rows, dtype=np.float64),
+        "event_cash_scales": np.ones(rows, dtype=np.float64),
+    }
+    ledger_input = LedgerInput(
+        dates=inputs.dates,
+        symbols=inputs.securities,
+        close=inputs.close,
         initial_cash=initial_cash,
-        lot_size=100,
-        stop_n=2.0,
-        commission_multiplier=1.0,
-        one_way_slippage=0.0,
-        delay_days=1,
+        group_ids=np.zeros(columns, dtype=np.int64),
+        cash_sharing=True,
+        frequency="1D",
     )
+    prepared = PreparedStrategy(
+        ledger_input=ledger_input,
+        primary_program=SimpleNamespace(),
+        context=TurtleContext(inputs, params, "delayed-test", 1, initial_cash),
+    )
+    primary_orders = []
+    for row, column in zip(*np.nonzero(immediate.filled_quantities > 0)):
+        primary_orders.append(
+            (
+                f"{np.datetime_as_string(inputs.dates[row], unit='D')}T09:30:00",
+                inputs.securities[column],
+                int(immediate.filled_quantities[row, column]),
+            )
+        )
+    primary = ExecutionRun(
+        ledger=SimpleNamespace(
+            orders=np.asarray(
+                primary_orders,
+                dtype=[("time", "U32"), ("security", "U64"), ("filled", "i8")],
+            )
+        ),
+        trace=trace,
+    )
+    program = build_delayed_program(prepared, primary)
+    assert program is not None
+    execution = run_vectorbt(ledger_input, program)
+    date_rows = {
+        np.datetime_as_string(value, unit="D"): index
+        for index, value in enumerate(inputs.dates)
+    }
+    security_columns = {
+        security: index for index, security in enumerate(inputs.securities)
+    }
+    filled = np.zeros((rows, columns), dtype=np.int64)
+    for order in execution.ledger.orders:
+        filled[
+            date_rows[str(order["time"])[:10]],
+            security_columns[str(order["security"])],
+        ] += int(order["filled"])
+    quantities = np.zeros((rows, columns), dtype=np.int64)
+    for asset in execution.ledger.assets:
+        quantities[
+            date_rows[str(asset["time"])[:10]],
+            security_columns[str(asset["security"])],
+        ] = int(round(float(asset["amount"])))
+    result = SimpleNamespace(
+        **execution.trace,
+        execution=execution,
+        filled_quantities=filled,
+        state_quantities=quantities,
+    )
+    return program.inputs, result
 
 
 def test_delayed_execution_freezes_original_action_target_reason_and_signal_n() -> None:
@@ -113,7 +194,7 @@ def test_delayed_execution_freezes_original_action_target_reason_and_signal_n() 
 
     plan, delayed = _run(inputs, immediate)
 
-    assert plan.signal_n[1, 0] == 1.5
+    assert plan.plan_signal_n[1, 0] == 1.5
     assert delayed.action_codes[2, 0] == ACTION_ENTRY
     assert delayed.reason_codes[2, 0] == REASON_ENTRY_BREAKOUT
     assert delayed.planned_quantities[2, 0] == 200
@@ -179,10 +260,8 @@ def test_delayed_queue_is_executed_in_original_priority_then_security_order() ->
 
     _, delayed = _run(inputs, immediate)
 
-    assert delayed.execution_sequence[2] == (
-        "queued-from-row-1:ETF-A",
-        "queued-from-row-1:ETF-B",
-    )
+    day = delayed.execution.ledger.orders
+    assert day["security"].tolist() == ["ETF-A", "ETF-B"]
 
 
 def test_vectorbt_ledger_uses_priority_sequence_not_inverse_column_ranks() -> None:
@@ -207,13 +286,12 @@ def test_vectorbt_ledger_uses_priority_sequence_not_inverse_column_ranks() -> No
 
     _, delayed = _run(inputs, immediate, initial_cash=10_005.0)
 
-    assert delayed.execution_sequence[2] == (
-        "queued-from-row-1:ETF-C",
-        "queued-from-row-1:ETF-A",
-        "queued-from-row-1:ETF-B",
-    )
+    day = delayed.execution.ledger.orders[
+        np.char.startswith(delayed.execution.ledger.orders["time"], "2026-01-07")
+    ]
+    assert day["security"].tolist() == ["ETF-C", "ETF-A", "ETF-B"]
     assert delayed.filled_quantities[2].tolist() == [100, 100, 100]
-    assert delayed.portfolio.orders.count() == 4
+    assert len(delayed.execution.ledger.orders) == 4
 
 
 def test_delayed_redistribution_keeps_units_and_stops_and_uses_priority() -> None:
@@ -251,11 +329,10 @@ def test_delayed_redistribution_keeps_units_and_stops_and_uses_priority() -> Non
 
     _, delayed = _run(inputs, immediate)
 
-    assert delayed.execution_sequence[2] == (
-        "queued-from-row-1:ETF-A",
-        "queued-from-row-1:ETF-B",
-        "queued-from-row-1:ETF-C",
-    )
+    day = delayed.execution.ledger.orders[
+        np.char.startswith(delayed.execution.ledger.orders["time"], "2026-01-07")
+    ]
+    assert day["security"].tolist() == ["ETF-A", "ETF-B", "ETF-C"]
     assert delayed.state_quantities[2].tolist() == [100, 100, 300]
     assert delayed.state_unit_counts[2].tolist() == [1, 1, 1]
     assert delayed.state_common_stop[2].tolist() == [8.0, 9.0, 8.0]

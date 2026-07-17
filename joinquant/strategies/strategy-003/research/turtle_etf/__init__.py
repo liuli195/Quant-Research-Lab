@@ -1,9 +1,6 @@
-"""Unadjusted-price Turtle ETF vectorbt research entry points."""
+"""Turtle ETF local-research strategy module."""
 
-from .indicators import breakout_levels, true_range, turtle_n
+from .strategy import MODULE
 
-__all__ = [
-    "breakout_levels",
-    "true_range",
-    "turtle_n",
-]
+
+__all__ = ["MODULE"]

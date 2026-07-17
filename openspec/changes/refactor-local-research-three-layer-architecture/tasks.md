@@ -60,10 +60,11 @@
 
 ## 10. 收敛海龟公开 Module 并迁移即时与延迟执行
 
-- [ ] 10.1 创建 `turtle_etf.strategy:MODULE` 唯一公开入口，把配置校验、输入准备、即时/后续 OrderProgram 和 ResultExtension 组合在公开 Interface 后
-- [ ] 10.2 将 Numba 内核、海龟归因和延迟冻结计划收敛到私有文件；即时和延迟实际账户变化都交给共享 `from_order_func()`
-- [ ] 10.3 用现有特征逐笔验证计划、成交、费用、现金、持仓、共同止损和原因码，删除 Python 手工账本与 `from_orders()` 重放路径
-- [ ] 10.4 在旧生产文件删除前重跑三个场景的引擎 3 冷/5 热采样，把历史整包体积拆为可比 `parquet_payload_bytes` 与单独固定开销；baseline fixture 顶层记录 `protocol_version=local-research-release/2` 和 `environment_identity_sha256`，每个独立旧完整 CLI 冷样本记录 scenario、`sample_type=full_cli_cold`、sample_index、PID、run_id、package_sha256、`reused=false`、`post_publish_validation=passed` 和 `cold_cli_total_seconds`；在删除旧入口前通过逐字段契约测试，baseline 文件自身 SHA256 由 Task 12 读取时计算并绑定外部报告，不自指写回 fixture
+- [x] 10.1 创建 `turtle_etf.strategy:MODULE` 唯一公开入口，把配置校验、输入准备、即时/后续 OrderProgram 和 ResultExtension 组合在公开 Interface 后
+- [x] 10.2 将 Numba 内核、海龟归因和延迟冻结计划收敛到私有文件；即时和延迟实际账户变化都交给共享 `from_order_func()`
+- [x] 10.3 用现有特征逐笔验证计划、成交、费用、现金、持仓、共同止损和原因码，删除 Python 手工账本与 `from_orders()` 重放路径
+- [x] 10.4 在旧生产文件删除前重跑三个场景的引擎 3 冷/5 热采样，把历史整包体积拆为可比 `parquet_payload_bytes` 与单独固定开销；baseline fixture 顶层记录 `protocol_version=local-research-release/2` 和 `environment_identity_sha256`，每个独立旧完整 CLI 冷样本记录 scenario、`sample_type=full_cli_cold`、sample_index、PID、run_id、package_sha256、`reused=false`、`post_publish_validation=passed` 和 `cold_cli_total_seconds`；在删除旧入口前通过逐字段契约测试，baseline 文件自身 SHA256 由 Task 12 读取时计算并绑定外部报告，不自指写回 fixture
+- [x] 10.5 用公开 `ExecutionLedger + ResultExtension` 冻结三个场景的 v2 等价性摘要并绑定历史 v1 fixture SHA256；环境摘要覆盖操作系统、CPU、内存与关键依赖并由测试重算；只恢复公司行动、延迟截断和加仓/清仓损益勾稽的最小边界测试，不保留旧核心结果适配器
 
 ## 11. 单次切换生产配置与入口
 

@@ -5,7 +5,6 @@ import json
 import sys
 from functools import lru_cache
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Iterable
 
 import numpy as np
@@ -23,15 +22,9 @@ RESEARCH_ROOT = (
 sys.path.insert(0, str(RESEARCH_ROOT))
 
 from scripts.research.market_data.query import open_snapshot  # noqa: E402
-from scripts.research.analysis_data import open_analysis_database  # noqa: E402
-from turtle_etf.result_adapter import (  # noqa: E402
-    LocalExecutionFacts,
-    to_joinquant_facts,
-    write_local_result,
-)
-from turtle_etf.vectorbt_cli import _market_frames  # noqa: E402
-from turtle_etf.vectorbt_engine import run_vectorbt_simulation  # noqa: E402
-from turtle_etf.vectorbt_inputs import prepare_simulation_inputs  # noqa: E402
+from scripts.research.local_quant_research.contracts import ExecutionBundle  # noqa: E402
+from scripts.research.local_quant_research.vectorbt_runtime import run_vectorbt  # noqa: E402
+from turtle_etf.strategy import MODULE  # noqa: E402
 
 
 SCENARIOS = (
@@ -62,6 +55,10 @@ _ANALYSIS_VIEWS = (
     "period_risks",
     "strategy_daily_returns",
     "source_benchmark_returns",
+)
+_V1_FIXTURE = "tests/local_quant_research/fixtures/local-research-v1-baseline.json"
+_MODULE_FIXTURE = (
+    "tests/local_quant_research/fixtures/strategy-module-v1-baseline.json"
 )
 
 
@@ -113,11 +110,35 @@ def _table_digest(table: pa.Table, fields: tuple[str, ...]) -> dict[str, object]
     return {"rows": table.num_rows, "sha256": digest.hexdigest()}
 
 
-def _state_digest(facts: LocalExecutionFacts) -> dict[str, object]:
+def _structured_array_digest(
+    array: np.ndarray,
+    fields: tuple[str, ...] | None = None,
+) -> dict[str, object]:
+    records = np.asarray(array)
+    names = tuple(records.dtype.names or ())
+    selected = names if fields is None else fields
+    if not selected or not set(selected).issubset(names):
+        raise AssertionError("structured public ledger array fields are incomplete")
+    digest = hashlib.sha256()
+    digest.update(_canonical_json_bytes({"fields": selected, "rows": len(records)}))
+    for name in selected:
+        values = records[name]
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        if np.issubdtype(values.dtype, np.floating):
+            _update_array_digest(digest, values.tolist(), floating=True)
+        elif np.issubdtype(values.dtype, np.integer):
+            _update_array_digest(digest, values.tolist(), floating=False)
+        else:
+            digest.update(_canonical_json_bytes(values.tolist()))
+    return {"rows": len(records), "sha256": digest.hexdigest()}
+
+
+def _state_digest(attribution: pa.Table) -> dict[str, object]:
     identities: list[dict[str, object]] = []
     unit_counts: list[object] = []
     common_stops: list[object] = []
-    for row in facts.attribution.to_pylist():
+    for row in attribution.to_pylist():
         details = json.loads(str(row["details_json"]))
         if "unit_count_before" not in details:
             continue
@@ -140,10 +161,10 @@ def _state_digest(facts: LocalExecutionFacts) -> dict[str, object]:
     return {"events": len(identities), "sha256": digest.hexdigest()}
 
 
-def logic_digest(facts: LocalExecutionFacts) -> str:
+def logic_digest(orders: np.ndarray, attribution: pa.Table) -> str:
     orders = [
         {
-            key: row[key]
+            key: row[key].item() if isinstance(row[key], np.generic) else row[key]
             for key in (
                 "action",
                 "amount",
@@ -156,47 +177,38 @@ def logic_digest(facts: LocalExecutionFacts) -> str:
                 "type",
             )
         }
-        for row in facts.orders.to_pylist()
+        for row in np.asarray(orders)
     ]
-    attribution = []
-    for row in facts.attribution.to_pylist():
+    attribution_rows = []
+    for row in attribution.to_pylist():
         normalized = dict(row)
         normalized["details_json"] = json.loads(str(row["details_json"]))
-        attribution.append(normalized)
+        attribution_rows.append(normalized)
     return hashlib.sha256(
-        _canonical_json_bytes({"attribution": attribution, "orders": orders})
+        _canonical_json_bytes(
+            {"attribution": attribution_rows, "orders": orders}
+        )
     ).hexdigest()
 
 
-def _summarize_facts(
-    facts: LocalExecutionFacts, scenario: str
+def _summarize_public_result(
+    execution: ExecutionBundle,
+    extension: object,
+    scenario: str,
 ) -> dict[str, object]:
-    value_digest = hashlib.sha256()
-    value_digest.update(
-        _canonical_json_bytes(
-            _table_digest(facts.balances, ("time", "total_value", "net_value"))
-        )
-    )
-    value_digest.update(
-        _canonical_json_bytes(_table_digest(facts.results, ("time", "returns")))
-    )
+    ledger = execution.final.ledger
+    attribution = extension.table
     return {
-        "schema_version": 1,
         "scenario": scenario,
-        "orders": _table_digest(facts.orders, tuple(facts.orders.schema.names)),
-        "fees": _table_digest(
-            facts.orders, ("match_time", "security", "commission")
+        "orders": _structured_array_digest(ledger.orders),
+        "fees": _structured_array_digest(
+            ledger.orders, ("match_time", "security", "commission")
         ),
-        "cash": _table_digest(facts.balances, ("time", "cash", "aval_cash")),
-        "positions": _table_digest(
-            facts.positions, tuple(facts.positions.schema.names)
-        ),
-        "value": {
-            "rows": facts.results.num_rows,
-            "sha256": value_digest.hexdigest(),
-        },
-        "state": _state_digest(facts),
-        "logic": logic_digest(facts),
+        "cash": _structured_array_digest(ledger.cash),
+        "positions": _structured_array_digest(ledger.assets),
+        "value": _structured_array_digest(ledger.value),
+        "state": _state_digest(attribution),
+        "logic": logic_digest(ledger.orders, attribution),
     }
 
 
@@ -230,98 +242,45 @@ def _require_fixed_machine_snapshots(repo_root: Path) -> None:
 
 
 @lru_cache(maxsize=None)
-def _actual_facts(
+def _actual_execution(
     repo_root_text: str, scenario: str
-) -> tuple[LocalExecutionFacts, dict[str, object], str]:
+) -> tuple[ExecutionBundle, object, dict[str, object], str]:
     repo_root = Path(repo_root_text)
     _require_fixed_machine_snapshots(repo_root)
     config = _scenario_config(scenario)
     snapshot = open_snapshot(
         _SNAPSHOTS[scenario], root=repo_root / ".local/market-data"
     )
-    prepared = prepare_simulation_inputs(
-        _market_frames(snapshot.rows, config),
-        config,
-        corporate_actions=snapshot.corporate_actions,
-        corporate_actions_digest=snapshot.corporate_actions_digest,
-    )
-    simulation = run_vectorbt_simulation(prepared, config)
-    facts = to_joinquant_facts(prepared, simulation, scenario)
-    return facts, config, prepared.corporate_actions_digest
+    prepared = MODULE.prepare(snapshot, config)
+    primary = run_vectorbt(prepared.ledger_input, prepared.primary_program)
+    followup = MODULE.followup_program(prepared, primary)
+    if followup is None:
+        execution = ExecutionBundle(primary, primary, ("primary",))
+    else:
+        final = run_vectorbt(prepared.ledger_input, followup)
+        execution = ExecutionBundle(primary, final, ("primary", "followup"))
+    extension = MODULE.build_extensions(prepared, execution)[0]
+    return execution, extension, config, snapshot.corporate_actions_digest
 
 
 def _actual_scenario(repo_root_text: str, scenario: str) -> dict[str, object]:
-    facts, _, _ = _actual_facts(repo_root_text, scenario)
-    return _summarize_facts(facts, scenario)
-
-
-def _materialized_summary(
-    target: Path,
-    *,
-    facts: LocalExecutionFacts,
-    config: dict[str, object],
-    scenario: str,
-    corporate_actions_sha256: str,
-) -> tuple[dict[str, object], dict[str, list[list[str]]]]:
-    package = write_local_result(
-        target,
-        facts=facts,
-        run_id=f"task-1-{scenario}",
-        local_backtest_id=f"local-{scenario}",
-        scenario_id=scenario,
-        snapshot_id=_SNAPSHOTS[scenario],
-        corporate_actions_sha256=corporate_actions_sha256,
-        code_path=RESEARCH_ROOT / "turtle_etf/vectorbt_cli.py",
-        params=config,
-        performance={
-            "schema_version": "task-1-materialization/1",
-            "status": "pass",
-        },
-    )
-    manifest = json.loads(
-        (package.root / "manifest.json").read_text(encoding="utf-8")
-    )
-    with open_analysis_database(package.root) as database:
-        views = {
-            name: [
-                [str(row[0]), str(row[1])]
-                for row in database.connection.sql(f'describe "{name}"').fetchall()
-            ]
-            for name in _ANALYSIS_VIEWS
-        }
-    return (
-        {
-            "manifest": {
-                "schema_version": manifest["schema_version"],
-                "sha256": hashlib.sha256(_canonical_json_bytes(manifest)).hexdigest(),
-            },
-            "config_identity": manifest["params"],
-            "code_identity": manifest["code"],
-            "analysis_data_views_sha256": hashlib.sha256(
-                _canonical_json_bytes(views)
-            ).hexdigest(),
-        },
-        views,
-    )
+    execution, extension, _, _ = _actual_execution(repo_root_text, scenario)
+    return _summarize_public_result(execution, extension, scenario)
 
 
 def assert_equivalent(
     actual: dict[str, object], expected: dict[str, object]
 ) -> None:
-    assert actual["schema_version"] == 1
     assert actual["scenario"] == expected["scenario"]
     for key in ("orders", "fees", "cash", "positions", "value", "state", "logic"):
         assert actual[key] == expected[key]
 
 
-def test_all_reference_scenarios_have_complete_equivalence_fixtures(
+def test_historical_v1_fixture_keeps_materialized_contract_provenance(
     repo_root: Path,
 ) -> None:
     fixture = json.loads(
-        (
-            repo_root
-            / "tests/local_quant_research/fixtures/local-research-v1-baseline.json"
-        ).read_text(encoding="utf-8")
+        (repo_root / _V1_FIXTURE).read_text(encoding="utf-8")
     )
 
     assert fixture["schema_version"] == 1
@@ -371,18 +330,58 @@ def test_all_reference_scenarios_have_complete_equivalence_fixtures(
         )
 
 
-def test_logic_digest_covers_complete_attribution_rows_and_details() -> None:
-    order = {
-        "action": "open",
-        "amount": 100,
-        "comment": "entry",
-        "filled": 100,
-        "security": "ETF-A",
-        "side": "long",
-        "status": "held",
-        "time": "2026-01-05",
-        "type": "market",
+def test_strategy_module_fixture_covers_only_public_ledger_and_extension(
+    repo_root: Path,
+) -> None:
+    fixture = json.loads(
+        (repo_root / _MODULE_FIXTURE).read_text(encoding="utf-8")
+    )
+    v1_bytes = (repo_root / _V1_FIXTURE).read_bytes()
+
+    assert fixture["schema_version"] == "strategy-module-baseline/1"
+    assert fixture["public_contract"] == {
+        "ledger": "ExecutionLedger",
+        "extension": "ResultExtension:turtle_etf",
     }
+    assert fixture["migrated_from"] == {
+        "path": _V1_FIXTURE,
+        "sha256": hashlib.sha256(v1_bytes).hexdigest(),
+    }
+    assert tuple(item["scenario"] for item in fixture["scenarios"]) == SCENARIOS
+    assert all(
+        set(item)
+        == {"scenario", "orders", "fees", "cash", "positions", "value", "state", "logic"}
+        for item in fixture["scenarios"]
+    )
+
+
+def test_logic_digest_covers_complete_attribution_rows_and_details() -> None:
+    order = np.array(
+        [
+            (
+                "open",
+                100,
+                "entry",
+                100,
+                "ETF-A",
+                "long",
+                "held",
+                "2026-01-05",
+                "market",
+            )
+        ],
+        dtype=[
+            ("action", "U16"),
+            ("amount", "i8"),
+            ("comment", "U64"),
+            ("filled", "i8"),
+            ("security", "U64"),
+            ("side", "U16"),
+            ("status", "U16"),
+            ("time", "U32"),
+            ("type", "U16"),
+        ],
+    )
     attribution = {
         "time": "2026-01-05",
         "event_id": "event-1",
@@ -409,11 +408,7 @@ def test_logic_digest_covers_complete_attribution_rows_and_details() -> None:
 
     def digest(**changes: object) -> str:
         row = {**attribution, **changes}
-        facts = SimpleNamespace(
-            orders=pa.Table.from_pylist([order]),
-            attribution=pa.Table.from_pylist([row]),
-        )
-        return logic_digest(facts)
+        return logic_digest(order, pa.Table.from_pylist([row]))
 
     assert len(
         {
@@ -445,31 +440,15 @@ def test_missing_private_snapshots_are_an_explicit_fixed_machine_gate(
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS)
-def test_old_vectorbt_path_matches_frozen_equivalence_fixture(
+def test_strategy_module_matches_frozen_equivalence_fixture(
     repo_root: Path,
-    tmp_path: Path,
     scenario: str,
 ) -> None:
     fixture = json.loads(
-        (
-            repo_root
-            / "tests/local_quant_research/fixtures/local-research-v1-baseline.json"
-        ).read_text(encoding="utf-8")
+        (repo_root / _MODULE_FIXTURE).read_text(encoding="utf-8")
     )
     expected = next(
         item for item in fixture["scenarios"] if item["scenario"] == scenario
     )
 
-    facts, config, corporate_actions_sha256 = _actual_facts(
-        str(repo_root), scenario
-    )
-    assert_equivalent(_summarize_facts(facts, scenario), expected)
-    materialized, views = _materialized_summary(
-        tmp_path / f"local-{scenario}",
-        facts=facts,
-        config=config,
-        scenario=scenario,
-        corporate_actions_sha256=corporate_actions_sha256,
-    )
-    assert materialized == expected["materialized"]
-    assert views == fixture["materialized_contract"]["analysis_data_views"]
+    assert_equivalent(_actual_scenario(str(repo_root), scenario), expected)

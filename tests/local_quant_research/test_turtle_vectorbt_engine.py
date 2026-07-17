@@ -19,8 +19,7 @@ RESEARCH_ROOT = (
 )
 sys.path.insert(0, str(RESEARCH_ROOT))
 
-from turtle_etf.vectorbt_callbacks import CallbackInputs, CallbackParams  # noqa: E402
-from turtle_etf.vectorbt_engine import _params  # noqa: E402
+from turtle_etf._kernel import CallbackInputs, CallbackParams, _params  # noqa: E402
 
 
 def test_vectorbt_runtime_is_pinned_and_available(repo_root: Path) -> None:

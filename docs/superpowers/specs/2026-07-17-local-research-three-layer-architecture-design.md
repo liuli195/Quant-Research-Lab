@@ -303,7 +303,7 @@ turtle_etf/
 - `_kernel.py`：指标、海龟状态、Numba hooks、动作码和原因码。
 - `_attribution.py`：海龟扩展 Schema、事实构造、覆盖率和盈亏勾稽。
 - `_delayed.py`：冻结计划、执行日调整和到期证据，不维护账户。
-- `__init__.py`：保持轻量，不导入 PyArrow、vectorbt 或执行大数组准备。
+- `__init__.py`：只直接重新导出 `MODULE`，不导入 vectorbt 或执行大数组准备；PyArrow 只通过共享 contract 和 `_attribution.py` 使用。
 
 迁移映射：
 
@@ -486,7 +486,7 @@ analysis_id 只存在于目标目录名，包内 run_id 和所有字节不改变
 - 引擎冷启动：3 个全新进程，中位数；
 - 引擎预热：同一进程 5 次，中位数；
 - 完整 CLI 发布：3 个独立冷进程，每个样本使用独立输出根和非复用 run，计时从 CLI 进程启动到父进程原子发布及发布后校验完成；不伪造“同一进程 warm CLI 启动”指标；
-- 可比基线：Task 10 在旧入口删除前按同一完整 CLI 协议采集；协议、环境、起止点或 baseline 摘要不一致时拒绝比较；
+- 可比基线：Task 10 在旧入口删除前按同一完整 CLI 协议采集；协议、环境、起止点或 baseline 摘要不一致时拒绝比较；环境身份固定 Python、关键依赖、Windows 版本、CPU 架构/型号、逻辑核心数和物理内存字节数，并从规范化 JSON 重算 SHA256；
 - 场景：3,432 日 × 11 ETF、3,432 日 × 17 ETF、延迟 1 日；
 - 正确性：Schema、行数、成交、费用、现金、持仓、净值和逻辑摘要零差异；
 - 相对门禁：时间、峰值进程内存和同逻辑核心/扩展 Parquet payload（列式数据载荷）体积不超过基线 5%；固定代码、配置、证据与报告开销单独报告，不与旧 v1 整包直接比较；
@@ -532,7 +532,7 @@ Windows 峰值进程内存使用标准库 `ctypes` 调用 `GetProcessMemoryInfo`
 - 延迟计划日、执行日、调整码、稳定顺序和到期订单；
 - 四表行数、逻辑摘要、归因覆盖及逐证券损益勾稽。
 
-这些测试先针对旧 Interface 通过；迁移任务把同一 fixture（夹具）转向新公开 Interface，期望值不改。
+历史 v1 fixture 保留为来源证据；迁移任务另从公开 `ExecutionLedger + ResultExtension` 生成 v2 摘要，并绑定 v1 fixture SHA256。这样裁判覆盖相同行为，但不需要保留旧核心结果适配器。
 
 ### 12.3 E2E（端到端）
 

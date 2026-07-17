@@ -175,9 +175,26 @@ def test_local_research_performance_baseline_freezes_release_gate(
     )
 
     assert fixture["schema_version"] == 1
-    assert fixture["environment"] == {"python": "3.12", "vectorbt": "1.1.0"}
+    assert fixture["environment"] == {
+        "architecture": "AMD64",
+        "dependencies": {
+            "numba": "0.66.0",
+            "numpy": "2.4.6",
+            "pandas": "3.0.3",
+            "pyarrow": "23.0.1",
+            "vectorbt": "1.1.0",
+        },
+        "logical_cpu_count": 20,
+        "os": "Windows",
+        "os_release": "11",
+        "os_version": "10.0.26200",
+        "physical_memory_bytes": 34163961856,
+        "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+        "python": "3.12.10",
+    }
     assert fixture["sampling"] == {
         "cold_processes": 3,
+        "full_cli_cold_processes": 3,
         "warm_runs": 5,
         "statistic": "median",
     }
