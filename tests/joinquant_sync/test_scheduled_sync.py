@@ -194,6 +194,23 @@ def test_prepare_worktree_accepts_clean_automation_branch(tmp_path: Path) -> Non
     assert _git(prepared, "branch", "--show-current") == AUTOMATION_BRANCH
 
 
+def test_prepare_worktree_rejects_worktree_from_another_repository(
+    tmp_path: Path,
+) -> None:
+    from joinquant_sync.scheduled_sync import ScheduledSyncError, _prepare_worktree
+
+    first, first_head = _repository(tmp_path / "first")
+    second, second_head = _repository(tmp_path / "second")
+    runtime_root = tmp_path / "runtime"
+    _prepare_worktree(first, runtime_root)
+
+    with pytest.raises(ScheduledSyncError, match="worktree_repository_mismatch"):
+        _prepare_worktree(second, runtime_root)
+
+    assert _git(first, "rev-parse", "HEAD") == first_head
+    assert _git(second, "rev-parse", "HEAD") == second_head
+
+
 @pytest.mark.parametrize("dirty", [False, True])
 def test_prepare_worktree_rejects_unknown_or_dirty_state(
     tmp_path: Path, dirty: bool
@@ -245,6 +262,14 @@ def _run_scenario(
                 return 0, {"status": "verified", "gate": {"status": "fail"}}
             return 0, {"status": "verified", "gate": {"status": "pass"}}
         assert action == "sync-active-simulations"
+        invalid_results = {
+            "missing_results": {"status": "complete"},
+            "null_results": {"status": "complete", "results": None},
+            "string_results": {"status": "complete", "results": "bad"},
+            "dict_results": {"status": "complete", "results": {}},
+        }
+        if name in invalid_results:
+            return 0, invalid_results[name]
         worktree = runtime_root / "worktree"
         archive = (
             worktree
@@ -271,7 +296,11 @@ def _run_scenario(
             "checks_failed",
         }:
             (archive / "manifest.json").write_text("changed\n", encoding="utf-8")
-        if name == "sync_failed":
+        if name in {
+            "sync_failed",
+            "rollback_restore_failed",
+            "rollback_unlink_failed",
+        }:
             (archive / "partial.json").write_text("partial\n", encoding="utf-8")
             (worktree / "outside.txt").write_text("preserve\n", encoding="utf-8")
             failed = {
@@ -285,6 +314,15 @@ def _run_scenario(
         return 0, {"status": "complete", "results": [result]}
 
     monkeypatch.setattr(scheduled_sync, "_run_json", run_json, raising=False)
+    if name in {"rollback_restore_failed", "rollback_unlink_failed"}:
+
+        def fail_rollback(*_args: object, **_kwargs: object) -> str:
+            if name == "rollback_restore_failed":
+                raise scheduled_sync.ScheduledSyncError("git_failed")
+            raise OSError("denied")
+
+        monkeypatch.setattr(scheduled_sync, "_rollback", fail_rollback)
+
     def run_pr_flow(
         _python_exe: Path,
         _script: Path,
@@ -367,6 +405,43 @@ def test_partial_sync_rolls_back_only_identified_archive_paths(
     assert not result["untracked_archive"].exists()
     assert result["out_of_scope"].read_text(encoding="utf-8") == "preserve\n"
     assert result["head"] == result["baseline"]
+
+
+@pytest.mark.parametrize(
+    "name", ["missing_results", "null_results", "string_results", "dict_results"]
+)
+def test_invalid_sync_results_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str
+) -> None:
+    result = _run_scenario(name, tmp_path, monkeypatch)
+    assert result["code"] != 0
+    assert result["state"]["status"] == "failed"
+    assert result["state"]["reason"] == "sync_failed"
+    assert result["head"] == result["baseline"]
+
+
+@pytest.mark.parametrize(
+    ("name", "rollback_reason"),
+    [
+        ("rollback_restore_failed", "git_failed"),
+        ("rollback_unlink_failed", "rollback_io_failed"),
+    ],
+)
+def test_rollback_failure_preserves_original_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    name: str,
+    rollback_reason: str,
+) -> None:
+    result = _run_scenario(name, tmp_path, monkeypatch)
+    state = result["state"]
+    assert result["code"] != 0
+    assert state["phase"] == "sync"
+    assert state["reason"] == "sync_failed"
+    assert state["rollback_status"] == "failed"
+    assert state["rollback_reason"] == rollback_reason
+    assert state["run_id"]
+    assert state["recovery_command"]
 
 
 def test_out_of_scope_change_blocks_commit_and_is_preserved(

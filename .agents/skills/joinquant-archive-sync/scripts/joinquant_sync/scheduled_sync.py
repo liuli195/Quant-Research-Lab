@@ -145,6 +145,14 @@ def _prepare_worktree(repository: Path, root: Path) -> Path:
         worktree.parent.mkdir(parents=True, exist_ok=True)
         _git(repository, "worktree", "add", "--detach", str(worktree), "origin/main")
         return worktree
+    repository_common = Path(_git(repository, "rev-parse", "--git-common-dir"))
+    if not repository_common.is_absolute():
+        repository_common = repository / repository_common
+    worktree_common = Path(_git(worktree, "rev-parse", "--git-common-dir"))
+    if not worktree_common.is_absolute():
+        worktree_common = worktree / worktree_common
+    if repository_common.resolve() != worktree_common.resolve():
+        raise ScheduledSyncError("worktree_repository_mismatch")
     if _git(worktree, "status", "--porcelain"):
         raise ScheduledSyncError("worktree_dirty")
     branch = _git(worktree, "branch", "--show-current")
@@ -242,9 +250,16 @@ def _batch_failure(
         "rollback_status": "pending",
     }
     _write_state(root, state)
-    state["rollback_status"] = _rollback(
-        worktree, baseline, tracked, untracked, files, directories
-    )
+    try:
+        state["rollback_status"] = _rollback(
+            worktree, baseline, tracked, untracked, files, directories
+        )
+    except ScheduledSyncError as error:
+        state["rollback_status"] = "failed"
+        state["rollback_reason"] = str(error)
+    except OSError:
+        state["rollback_status"] = "failed"
+        state["rollback_reason"] = "rollback_io_failed"
     _write_state(root, state)
     return 1, state
 
@@ -369,15 +384,13 @@ def _run_new_batch(
         cwd=cli.resolve().parent,
     )
     raw_results = sync.get("results")
-    results = (
-        [item for item in raw_results if isinstance(item, dict)]
-        if isinstance(raw_results, list)
-        else []
-    )
+    if not isinstance(raw_results, list):
+        return _batch_failure(root, worktree, baseline, "sync_failed", [])
+    results = [item for item in raw_results if isinstance(item, dict)]
     if (
         sync_code != 0
         or sync.get("status") != "complete"
-        or len(results) != len(raw_results or [])
+        or len(results) != len(raw_results)
         or any(item.get("status") == "failed" for item in results)
     ):
         return _batch_failure(root, worktree, baseline, "sync_failed", results)
