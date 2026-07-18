@@ -285,20 +285,28 @@ def _run_scenario(
         return 0, {"status": "complete", "results": [result]}
 
     monkeypatch.setattr(scheduled_sync, "_run_json", run_json, raising=False)
-    monkeypatch.setattr(
-        scheduled_sync,
-        "_run_pr_flow",
-        lambda *_args, command, pr=None, **_kwargs: (
-            (1, {"status": "CHECKS_FAILED", "details": {"pr": 123}})
-            if name == "checks_failed"
-            else (0, {"status": "cleanup_complete", "details": {"pr": 123}})
-        ),
-        raising=False,
-    )
-    code, state = scheduled_sync.run_scheduled_sync(
-        repository,
-        python_exe=Path(sys.executable),
-        cli=Path("jq_sync.py"),
+    def run_pr_flow(
+        _python_exe: Path,
+        _script: Path,
+        worktree: Path,
+        *,
+        command: str,
+        pr: object = None,
+    ) -> tuple[int, dict[str, object]]:
+        if name == "checks_failed":
+            return 1, {"status": "CHECKS_FAILED", "details": {"pr": 123}}
+        if name == "valid":
+            _git(worktree, "push", "origin", "HEAD:main")
+            _git(worktree, "checkout", "--detach", "origin/main")
+            _git(worktree, "branch", "-d", scheduled_sync.AUTOMATION_BRANCH)
+        return 0, {"status": "cleanup_complete", "details": {"pr": pr or 123}}
+
+    monkeypatch.setattr(scheduled_sync, "_run_pr_flow", run_pr_flow, raising=False)
+    import jq_sync
+
+    code = jq_sync.main(["scheduled-sync-pr", "--repository", str(repository)])
+    state = json.loads(
+        (runtime_root / "last-run.json").read_text(encoding="utf-8")
     )
     worktree = runtime_root / "worktree"
     return {
@@ -343,9 +351,7 @@ def test_valid_archive_change_creates_exact_commit(
     assert result["code"] == 0
     assert result["state"]["status"] == "complete"
     assert result["head"] != result["baseline"]
-    assert _git(result["worktree"], "branch", "--show-current") == (
-        "codex/joinquant-archive-auto"
-    )
+    assert _git(result["worktree"], "branch", "--show-current") == ""
     assert _git(result["worktree"], "show", "--format=", "--name-only", "HEAD") == (
         "joinquant/strategies/strategy-001/simulations/simulation-001/manifest.json"
     )
@@ -445,6 +451,29 @@ def test_joinquant_auth_failure_stops_before_sync(
     assert code != 0
     assert state["reason"] == "auth_required"
     assert calls == ["auth"]
+
+
+def test_final_state_has_recovery_fields_without_external_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = _run_scenario("noop", tmp_path, monkeypatch)
+    state = result["state"]
+    assert {
+        "run_id",
+        "started_at",
+        "finished_at",
+        "phase",
+        "status",
+        "reason",
+        "worktree",
+        "branch",
+        "pr",
+        "recovery_command",
+        "rollback_status",
+    } <= state.keys()
+    serialized = json.dumps(state)
+    assert "token" not in serialized.lower()
+    assert "cookie" not in serialized.lower()
 
 
 def _run_recovery_scenario(

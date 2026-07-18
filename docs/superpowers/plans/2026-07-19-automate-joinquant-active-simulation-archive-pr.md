@@ -402,7 +402,7 @@ Expected: PASS。
 - Consumes: 完整 `scheduled-sync-pr` CLI、临时 Git 远端、可控 JoinQuant/GitHub/PR Flow 边界
 - Produces: 四条完整发布路径证据、临时 Windows 计划任务发布形态证据、Full Verify 覆盖。
 
-- [ ] **Step 1: 从真实 CLI 分派补齐四条端到端场景**
+- [x] **Step 1: 从真实 CLI 分派补齐四条端到端场景**
 
 每个场景调用：
 
@@ -421,7 +421,7 @@ sync failure   → 无提交、已识别归档回滚、范围外文件保留
 checks failure → 不合并、固定分支保留、下次只恢复 PR Flow
 ```
 
-- [ ] **Step 2: 让现有 Full Verify 执行新测试**
+- [x] **Step 2: 让现有 Full Verify 执行新测试**
 
 只把现有命令改为：
 
@@ -431,11 +431,11 @@ checks failure → 不合并、固定分支保留、下次只恢复 PR Flow
 
 不得新增 check、依赖或超时配置。
 
-- [ ] **Step 3: 更新 Skill 与恢复说明**
+- [x] **Step 3: 更新 Skill 与恢复说明**
 
 只增加：`scheduled-sync-pr` 用途、`noop/run_locked/failed`、`last-run.json`、同一命令恢复、Codex 优先/Claude 回退、生产任务迁移需另行授权。保留 `sync-active-simulations` 手动入口，不改认证和 `.venv` 说明。
 
-- [ ] **Step 4: 运行发布入口与临时计划任务验证**
+- [x] **Step 4: 运行发布入口与临时计划任务验证**
 
 ```powershell
 & .\.venv\Scripts\python.exe -m pytest tests\joinquant_sync\test_scheduled_sync.py -q
@@ -448,7 +448,7 @@ checks failure → 不合并、固定分支保留、下次只恢复 PR Flow
 & .\.venv\Scripts\python.exe -m pytest tests\joinquant_sync\test_scheduler.py::test_schtasks_runs_self_test -q
 ```
 
-- [ ] **Step 5: 运行组件回归和 Full Verify**
+- [x] **Step 5: 运行组件回归和 Full Verify**
 
 ```powershell
 & .\.venv\Scripts\python.exe -m pytest tests\joinquant_sync -q
@@ -458,7 +458,7 @@ checks failure → 不合并、固定分支保留、下次只恢复 PR Flow
 
 Expected: 全部通过；真实 JoinQuant、真实 GitHub PR 和生产任务迁移若未执行，必须明确记录为未在线验证。
 
-- [ ] **Step 6: 完成任务清单并提交**
+- [x] **Step 6: 完成任务清单并提交**
 
 逐项验收后勾选 `tasks.md`，不得提前勾选未运行的临时任务或 Full Verify。
 

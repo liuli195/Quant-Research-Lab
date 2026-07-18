@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .archive import ObjectLocked, object_lock
@@ -439,6 +440,8 @@ def run_scheduled_sync(
     repository: Path, *, python_exe: Path, cli: Path
 ) -> tuple[int, dict[str, object]]:
     root = _runtime_root()
+    run_id = uuid.uuid4().hex
+    started_at = datetime.now(timezone.utc).isoformat()
     try:
         with object_lock(root):
             pr_flow = _discover_pr_flow()
@@ -446,7 +449,7 @@ def run_scheduled_sync(
             worktree = _prepare_worktree(repository, root)
             if _git(worktree, "branch", "--show-current") == AUTOMATION_BRANCH:
                 command, pr = _recovery_action(worktree)
-                return _pr_flow_result(
+                code, state = _pr_flow_result(
                     root,
                     worktree,
                     python_exe,
@@ -454,26 +457,47 @@ def run_scheduled_sync(
                     command=command,
                     pr=pr,
                 )
-            return _run_new_batch(
-                root,
-                worktree,
-                python_exe=python_exe,
-                cli=cli,
-                pr_flow=pr_flow,
-            )
+            else:
+                code, state = _run_new_batch(
+                    root,
+                    worktree,
+                    python_exe=python_exe,
+                    cli=cli,
+                    pr_flow=pr_flow,
+                )
     except ObjectLocked:
         state = {
             "phase": "lock",
             "status": "skipped",
             "reason": "run_locked",
         }
-        _write_state(root, state)
-        return 0, state
+        code = 0
     except ScheduledSyncError as error:
         state = {
             "phase": "preflight",
             "status": "failed",
             "reason": str(error),
         }
-        _write_state(root, state)
-        return 1, state
+        code = 1
+    state.update(
+        {
+            "run_id": run_id,
+            "started_at": started_at,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "recovery_command": subprocess.list2cmdline(
+                [
+                    str(python_exe),
+                    str(cli),
+                    "scheduled-sync-pr",
+                    "--repository",
+                    str(repository.resolve()),
+                ]
+            ),
+        }
+    )
+    state.setdefault("worktree", str(root / "worktree"))
+    state.setdefault("branch", "")
+    state.setdefault("pr", None)
+    state.setdefault("rollback_status", None)
+    _write_state(root, state)
+    return code, state
