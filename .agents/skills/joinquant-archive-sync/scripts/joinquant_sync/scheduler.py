@@ -150,10 +150,13 @@ def _owned_task(root: ElementTree.Element, name: str) -> bool:
         / "scripts"
         / "jq_sync.py"
     )
-    expected_action = (
-        ["self-test", "--repo-root"]
+    expected_actions = (
+        {("self-test", "--repo-root")}
         if name.startswith(f"{TASK_PREFIX}-SelfTest-")
-        else ["sync-active-simulations", "--repository"]
+        else {
+            ("sync-active-simulations", "--repository"),
+            ("scheduled-sync-pr", "--repository"),
+        }
     )
     paths_match = (
         _same_path(cli, expected_cli)
@@ -166,7 +169,7 @@ def _owned_task(root: ElementTree.Element, name: str) -> bool:
     return bool(
         description == f"{name}: {TASK_MARKER}"
         and paths_match
-        and arguments[1:3] == expected_action
+        and tuple(arguments[1:3]) in expected_actions
         and calendar.findtext("t:StartBoundary", namespaces=namespace)
         == "2000-01-01T04:00:00"
         and calendar.findtext("t:Enabled", namespaces=namespace) in {None, "true"}

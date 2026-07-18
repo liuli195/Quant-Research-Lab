@@ -2052,6 +2052,21 @@ def test_production_simulation_core_runs_incrementally_in_memory(
         "committed",
         "unchanged",
     ]
+    assert third[0]["strategy_id"] == "strategy-001"
+    assert third[0]["simulation_id"] == "simulation-001"
+
+    update_strategy_latest = pipeline._update_strategy_latest
+
+    def fail_after_identity(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("test failure after identity")
+
+    monkeypatch.setattr(pipeline, "_update_strategy_latest", fail_after_identity)
+    failed = pipeline.sync_all_active_simulations(object(), tmp_path)
+    assert failed[0]["status"] == "failed"
+    assert failed[0]["strategy_id"] == "strategy-001"
+    assert failed[0]["simulation_id"] == "simulation-001"
+    monkeypatch.setattr(pipeline, "_update_strategy_latest", update_strategy_latest)
+
     assert calls[:2] == [{}, {}]
     assert calls[2]["results"] == "2026-01-01 16:00:00"
     assert browser_states[0] is None

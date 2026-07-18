@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -38,6 +39,7 @@ from joinquant_sync.scheduler import (
     scheduler_status,
     uninstall_scheduler,
 )
+from joinquant_sync.scheduled_sync import run_scheduled_sync
 from joinquant_sync.selftest import run_self_test
 from joinquant_sync.sync_pipeline import (
     commit_paid_log_supplement,
@@ -89,6 +91,9 @@ def build_parser() -> argparse.ArgumentParser:
     active_sync = commands.add_parser("sync-active-simulations")
     active_sync.add_argument("--repository", default=".")
     active_sync.add_argument("--profile")
+
+    scheduled_sync = commands.add_parser("scheduled-sync-pr")
+    scheduled_sync.add_argument("--repository", required=True)
 
     list_targets = commands.add_parser("list-targets")
     list_targets.add_argument("--strategy", required=True)
@@ -167,6 +172,14 @@ def main(argv: list[str] | None = None) -> int:
         except ProfileError as error:
             print(json.dumps({"status": "invalid_profile", "message": str(error)}))
             return 2
+    if args.command == "scheduled-sync-pr":
+        code, state = run_scheduled_sync(
+            Path(args.repository).resolve(),
+            python_exe=Path(sys.executable),
+            cli=Path(__file__).resolve(),
+        )
+        print(json.dumps(state, ensure_ascii=False))
+        return code
     if args.command == "auth":
         try:
             return _run_auth(args)
@@ -463,7 +476,7 @@ def main(argv: list[str] | None = None) -> int:
         command = [
             str(root / ".venv" / "Scripts" / "python.exe"),
             str(Path(__file__).resolve()),
-            "sync-active-simulations",
+            "scheduled-sync-pr",
             "--repository",
             str(root),
         ]

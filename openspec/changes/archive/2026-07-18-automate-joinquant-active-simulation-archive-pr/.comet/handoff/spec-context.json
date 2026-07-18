@@ -1,0 +1,30 @@
+{
+  "change": "automate-joinquant-active-simulation-archive-pr",
+  "phase": "design",
+  "mode": "beta",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "8558af469f6216103c01c0eca21e9e59037350602eb9e6b31e8ac49ad8941875",
+  "files": [
+    {
+      "path": "openspec/changes/automate-joinquant-active-simulation-archive-pr/proposal.md",
+      "sha256": "f662a5a7b534fd341d0d79027e7d5d8f6bdf032961914a8610dac7803c0e54e9",
+      "role": "supporting"
+    },
+    {
+      "path": "openspec/changes/automate-joinquant-active-simulation-archive-pr/design.md",
+      "sha256": "cec20be779286734310b1110ba08088ecc887447d04da2b45f2e8716cf7f1f58",
+      "role": "supporting"
+    },
+    {
+      "path": "openspec/changes/automate-joinquant-active-simulation-archive-pr/tasks.md",
+      "sha256": "8fbe78df39faba8deffc5fa743df450ff93f5fe75998597246a3e9b95d322408",
+      "role": "supporting"
+    },
+    {
+      "path": "openspec/changes/automate-joinquant-active-simulation-archive-pr/specs/joinquant-archive-sync/spec.md",
+      "sha256": "c8373c4674f2276bf76ca4ff086af2da96432a2daf274bd05c0ebc53b69dd8a4",
+      "role": "spec"
+    }
+  ]
+}

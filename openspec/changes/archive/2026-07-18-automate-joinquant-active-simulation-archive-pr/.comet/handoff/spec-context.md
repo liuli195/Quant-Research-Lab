@@ -1,0 +1,131 @@
+# Comet Spec Context
+
+- Change: automate-joinquant-active-simulation-archive-pr
+- Phase: design
+- Mode: beta
+- Context hash: 8558af469f6216103c01c0eca21e9e59037350602eb9e6b31e8ac49ad8941875
+
+Generated-by: comet-handoff.sh
+
+OpenSpec remains the canonical capability spec. This beta context pack verbatim-projects spec files and references supporting artifacts by hash, not an agent-authored summary.
+
+## Source References
+
+- Source: openspec/changes/automate-joinquant-active-simulation-archive-pr/proposal.md
+- SHA256: f662a5a7b534fd341d0d79027e7d5d8f6bdf032961914a8610dac7803c0e54e9
+- Source: openspec/changes/automate-joinquant-active-simulation-archive-pr/design.md
+- SHA256: cec20be779286734310b1110ba08088ecc887447d04da2b45f2e8716cf7f1f58
+- Source: openspec/changes/automate-joinquant-active-simulation-archive-pr/tasks.md
+- SHA256: 8fbe78df39faba8deffc5fa743df450ff93f5fe75998597246a3e9b95d322408
+- Source: openspec/changes/automate-joinquant-active-simulation-archive-pr/specs/joinquant-archive-sync/spec.md
+- SHA256: c8373c4674f2276bf76ca4ff086af2da96432a2daf274bd05c0ebc53b69dd8a4
+
+## Acceptance Projection
+
+## openspec/changes/automate-joinquant-active-simulation-archive-pr/specs/joinquant-archive-sync/spec.md
+
+- Source: openspec/changes/automate-joinquant-active-simulation-archive-pr/specs/joinquant-archive-sync/spec.md
+- Lines: 1-96
+- SHA256: c8373c4674f2276bf76ca4ff086af2da96432a2daf274bd05c0ebc53b69dd8a4
+
+```md
+## MODIFIED Requirements
+
+### Requirement: 活动模拟交易必须按北京时间增量同步
+系统 SHALL 使用 Windows Task Scheduler（Windows 任务计划程序）每天北京时间 04:00 调用仓库 Skill（技能）内同一计划任务发布入口，扫描并增量同步全部活动模拟交易。发布入口 MUST 在任何归档写入前获取跨进程运行锁，检查 JoinQuant（聚宽）登录状态、GitHub 凭证和远端 `main` 基线，并只在仓库外的自动化专用 worktree（工作树）中执行同步、验证和 Git 操作；用户当前工作区无论是否有修改都 MUST NOT 被切换、暂存、提交或清理。
+
+失败后 MUST 每 30 分钟重试，最多 3 次；仍失败时 MUST 记录失败并在次日从已验证游标继续。若本次同步在开始时干净的自动化 worktree 中产生部分变化后失败，系统 MUST 在记录失败后只回滚本次运行产生且位于已识别归档范围内的变化，使下一次重试回到相同已验证 Git 基线；运行前已存在的脏状态或范围外路径 MUST 原样保留并阻止自动清理。模拟交易关闭后 MUST 执行一次最终同步并停止跟踪。
+
+#### Scenario: 正常的每日增量同步
+- **WHEN** 04:00 计划任务发现两个活动模拟交易
+- **THEN** 系统在专用 worktree 中分别从各自已验证游标同步新增代码版本、快照、数据和日志，验证两个对象后才允许进入 Git 发布阶段
+
+#### Scenario: 用户当前工作区有未提交修改
+- **WHEN** 计划任务触发时用户当前工作区包含已跟踪或未跟踪修改
+- **THEN** 系统仍只在专用 worktree 中运行，不读取这些修改作为归档输入，也不切换、暂存、提交或清理用户当前工作区
+
+#### Scenario: 同一任务发生并发调用
+- **WHEN** 计划任务、重试或手动命令在已有同步运行持锁时再次调用发布入口
+- **THEN** 后来的调用以结构化 `run_locked` 状态安全跳过，不启动第二次同步、Git 或 PR 操作
+
+#### Scenario: 前置认证或远端基线检查失败
+- **WHEN** JoinQuant 登录、GitHub 凭证、PR Flow runtime（运行时）或远端 `main` 任一项不可用
+- **THEN** 系统在任何归档写入前返回失败状态和恢复入口，不创建提交、分支或 PR
+
+#### Scenario: 连续三次重试失败
+- **WHEN** 首次同步及之后三次 30 分钟间隔重试均失败
+- **THEN** 系统保留最后完整版本、记录每次失败阶段和最终恢复入口，并在次日从该版本继续而不覆盖已验证数据
+
+#### Scenario: 当前批次部分写入后失败
+- **WHEN** 一个活动对象已产生归档变化而另一个活动对象同步失败
+- **THEN** 系统不暂存或提交任何对象，记录失败后只回滚本次运行在自动化专用 worktree 中产生的已识别归档变化，使后续重试从批次开始前的已验证 Git 基线重新采集
+
+#### Scenario: 模拟交易关闭
+- **WHEN** 已跟踪模拟交易由活动变为关闭
+- **THEN** 系统完成一次包含结束状态的最终同步，验证归因 `run_end`（如源端实现），然后停止每日跟踪
+
+## ADDED Requirements
+
+### Requirement: 自动归档只能发布通过严格门禁的归档变化
+系统 MUST 通过现有 `sync-active-simulations` 发布入口同步全部活动模拟交易，并 MUST 对每个发生变化的模拟交易调用现有 `verify` 门禁。只有当全部同步结果均未失败、每个变化对象的 `gate.status=pass`、manifest 引用文件摘要匹配，且 Git 变化仅属于策略索引、对应策略清单/默认代码及对应模拟交易归档目录时，系统才能暂存和提交精确路径。系统 MUST NOT 使用未受范围门禁约束的全仓库暂存。
+
+#### Scenario: 所有归档变化通过门禁
+- **WHEN** 所有活动对象同步成功，变化对象的 manifest、文件摘要和 Git 路径范围均通过校验
+- **THEN** 系统只暂存已校验路径并创建一个简体中文说明的归档提交
+
+#### Scenario: manifest 或文件摘要失败
+- **WHEN** 任一变化对象无法通过现有 `verify`，或 manifest 引用文件的实际摘要不匹配
+- **THEN** 系统不暂存、不提交、不推送且不创建或合并 PR，并记录失败对象和恢复入口
+
+#### Scenario: 出现归档范围外变化
+- **WHEN** 同步后 Git 状态包含不属于允许归档路径的已跟踪或未跟踪文件
+- **THEN** 系统停止整个批次、原样保留范围外路径且不得使用自动清理掩盖该变化
+
+### Requirement: 有效归档变化必须通过唯一 PR Flow 闭环进入主干
+没有归档变化且没有待恢复 PR 时，系统 MUST 以成功无操作状态结束，不创建提交、分支或 PR。有有效归档变化时，系统 MUST 使用固定 ASCII（英文字符）分支 `codex/joinquant-archive-auto` 和简体中文提交说明，并 MUST 调用现有 PR Flow `complete`（完成流程）创建或更新该分支唯一活动 PR。PR MUST 等待 Full Verify（完整验证）、CodeQL（代码扫描）和 GitHub review gate（审查门禁）；全部通过后才能自动合并并安全清理源分支。系统 MUST NOT 无人值守直推 `main`、绕过检查、调用第二套合并逻辑或强制推送。
+
+#### Scenario: 同步没有产生归档变化
+- **WHEN** 全部活动对象返回未变化且 Git 状态为空，并且没有待恢复的自动化 PR
+- **THEN** 系统记录 `noop` 并成功退出，不创建本地提交、远端分支或 PR
+
+#### Scenario: 有效变化完成自动合并
+- **WHEN** 已校验归档提交推送后，唯一自动化 PR 的 Full Verify、CodeQL 和 review gate 全部通过
+- **THEN** PR Flow 合并该 PR、删除远端和本地自动化分支，并使专用 worktree 回到最新远端 `main`
+
+#### Scenario: 已有自动化 PR 尚未完成
+- **WHEN** 新一次计划任务启动时固定自动化分支已有唯一活动 PR
+- **THEN** 系统先对同一 PR 重试 PR Flow 的检查、审查、合并或清理，不启动新的同步批次且不创建第二个 PR
+
+#### Scenario: 检查或审查阻止合并
+- **WHEN** Full Verify、CodeQL、review gate 或 GitHub 合并规则任一失败、待处理或超时
+- **THEN** 系统不得合并，保留唯一 PR 和干净分支，记录 PR Flow stop state（停止状态）及其恢复命令供后续重试
+
+### Requirement: 自动归档失败状态必须可恢复且不得包含凭证
+计划任务发布入口 MUST 原子保存最后一次运行的结构化状态，最少包含运行编号、时间、阶段、状态、原因、worktree、分支、PR 编号和恢复命令。任一前置检查、同步、验证、提交、推送、检查、审查、合并或清理失败都 MUST 阻止后续合并并返回非成功状态；锁冲突 MUST 返回不会触发重复工作的结构化跳过状态。状态、日志、提交和 PR 内容 MUST NOT 包含账号、密码、token（访问令牌）、Cookie（浏览器凭证）、浏览器 profile（配置目录）、环境变量或未经筛选的完整外部命令输出。
+
+#### Scenario: 同步失败产生恢复状态
+- **WHEN** JoinQuant 同步返回失败或完整性异常
+- **THEN** 最后运行状态记录 `sync` 或 `verify` 阶段、无敏感信息的原因和下一条恢复命令，且不存在提交、推送或合并
+
+#### Scenario: PR Flow 返回停止状态
+- **WHEN** PR Flow 因检查失败、审查阻塞、远端分叉或清理异常而停止
+- **THEN** 最后运行状态引用同一 PR、分支和 PR Flow 恢复命令，不复制敏感外部输出且不启动替代合并路径
+
+#### Scenario: 凭证出现在子进程环境中
+- **WHEN** JoinQuant、GitHub 或 Git 子进程通过当前用户环境访问凭证
+- **THEN** 系统只使用凭证完成对应调用，不把凭证值、完整环境或浏览器状态写入仓库、最后运行状态、提交或 PR
+
+### Requirement: 自动归档闭环必须从计划任务发布命令端到端回归
+实现完成前 MUST 从计划任务实际调用的 `scheduled-sync-pr` 发布命令运行端到端回归。回归 MUST 使用临时 Git 远端和可控的 JoinQuant/PR Flow 外部边界运行完整本地编排，至少覆盖无变化、成功合并、同步失败和检查失败；不得用若干只测试内部函数的单元测试拼接替代。Windows 验收 MUST 通过临时计划任务验证同一发布命令的任务 XML（配置文本）、工作目录、参数和返回状态，且不得访问真实 JoinQuant、创建真实 GitHub PR 或加载历史归档。
+
+#### Scenario: 四条发布路径端到端回归
+- **WHEN** 验收依次向同一发布命令提供无变化、有效归档变化、同步失败和 PR 检查失败的可控外部结果
+- **THEN** 四条路径分别产生 `noop`、合并并清理、同步阶段失败且无提交、检查阶段失败且不合并的完整可复核运行结果
+
+#### Scenario: Windows 计划任务发布形态回归
+- **WHEN** 验收安装并运行 Skill 拥有的临时 Windows 计划任务
+- **THEN** 任务使用仓库 `.venv`、同一 `scheduled-sync-pr` CLI、专用工作目录和安全测试边界返回预期状态，验收后只删除该临时任务
+
+```
+
+Full source files remain canonical. If a required heading or scenario is missing here, regenerate the handoff or read the source spec directly. Supporting files (proposal, design, tasks) are referenced by hash only.

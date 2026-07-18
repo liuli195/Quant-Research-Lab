@@ -2563,6 +2563,8 @@ def sync_all_active_simulations(
         candidate["status"] = "closed"
         candidates.append(candidate)
     for candidate in candidates:
+        strategy_id: str | None = None
+        simulation_id: str | None = None
         try:
             strategy = fetch_strategy_default_code(page, str(candidate["name"]))
             strategy_id = str(candidate.get("strategy_id") or "") or _strategy_id(
@@ -2728,7 +2730,14 @@ def sync_all_active_simulations(
                 simulation_id,
             )
             if synced["status"] == "unchanged":
-                results.append({"name": candidate["name"], "status": "unchanged"})
+                results.append(
+                    {
+                        "name": candidate["name"],
+                        "status": "unchanged",
+                        "strategy_id": strategy_id,
+                        "simulation_id": simulation_id,
+                    }
+                )
                 continue
             manifest = synced["manifest"]
             results.append(
@@ -2747,6 +2756,10 @@ def sync_all_active_simulations(
                 "error": type(error).__name__,
                 "message": str(error),
             }
+            if strategy_id is not None:
+                failure["strategy_id"] = strategy_id
+            if simulation_id is not None:
+                failure["simulation_id"] = simulation_id
             if isinstance(error, FreeLogIncomplete):
                 evidence = persist_failure_evidence(
                     repository,

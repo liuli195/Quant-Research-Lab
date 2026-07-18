@@ -112,7 +112,7 @@
       },
       {
         "id": "verify.scheduler-unit",
-        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\joinquant_sync\\test_scheduler.py -k \"not schtasks_runs_self_test\"",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\joinquant_sync\\test_scheduler.py tests\\joinquant_sync\\test_scheduled_sync.py -k \"not schtasks_runs_self_test\"",
         "paths": [".agents/skills/joinquant-archive-sync/**", "tests/joinquant_sync/**", "requirements*.txt"],
         "inputs": [".agents/skills/joinquant-archive-sync/**", "tests/joinquant_sync/**", "requirements.txt", "requirements-dev.txt"],
         "checkParallel": true
