@@ -3,8 +3,6 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import os
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +41,11 @@ def _load_json(path: Path, *, label: str) -> dict[str, Any]:
 
 def _resolve_plan_path(repo_root: Path, path: str | Path) -> Path:
     candidate = Path(path)
-    return candidate.resolve() if candidate.is_absolute() else (repo_root / candidate).resolve()
+    return (
+        candidate.resolve()
+        if candidate.is_absolute()
+        else (repo_root / candidate).resolve()
+    )
 
 
 def _resolve_repo_file(repo_root: Path, value: object, *, label: str) -> Path:
@@ -86,7 +88,9 @@ def _validate_plan(document: dict[str, Any]) -> None:
         raise AnalysisPlanError(f"analysis plan schema validation failed at {paths}")
 
 
-def expand_analysis_plan(repo_root: str | Path, plan_path: str | Path) -> dict[str, Any]:
+def expand_analysis_plan(
+    repo_root: str | Path, plan_path: str | Path
+) -> dict[str, Any]:
     root = Path(repo_root).resolve()
     plan_file = _resolve_plan_path(root, plan_path)
     plan = _load_json(plan_file, label="analysis plan")
@@ -101,13 +105,22 @@ def expand_analysis_plan(repo_root: str | Path, plan_path: str | Path) -> dict[s
     if baseline.get("project_id") != plan["strategy_id"]:
         raise AnalysisPlanError("baseline project_id must match strategy_id")
 
-    expected_universe = {
-        item.get("security"): item.get("asset_group")
-        for item in baseline.get("universe", [])
-        if isinstance(item, dict)
-    }
-    if expected_universe != plan["universe"]:
-        raise AnalysisPlanError("analysis plan universe must match baseline universe")
+    baseline_universe = baseline.get("universe")
+    if not isinstance(baseline_universe, list) or not baseline_universe:
+        raise AnalysisPlanError("baseline universe must be a non-empty list")
+    try:
+        universe = {
+            item["security"]: item["asset_group"]
+            for item in baseline_universe
+            if isinstance(item, dict)
+        }
+    except (KeyError, TypeError) as exc:
+        raise AnalysisPlanError("baseline universe is invalid") from exc
+    if len(universe) != len(baseline_universe) or any(
+        not isinstance(value, str) or not value
+        for value in (*universe.keys(), *universe.values())
+    ):
+        raise AnalysisPlanError("baseline universe is invalid")
 
     scenarios = plan["scenarios"]
     scenario_ids = [scenario["scenario_id"] for scenario in scenarios]
@@ -115,14 +128,6 @@ def expand_analysis_plan(repo_root: str | Path, plan_path: str | Path) -> dict[s
         raise AnalysisPlanError("scenario_id values must be unique")
     if scenarios[0]["scenario_id"] != "baseline" or scenarios[0]["overrides"]:
         raise AnalysisPlanError("baseline must be first and have empty overrides")
-    if plan["expected"]["scenario_runs"] != len(scenarios):
-        raise AnalysisPlanError("expected.scenario_runs must match scenarios")
-
-    bootstrap = plan["analyses"]["bootstrap"]
-    if plan["expected"]["bootstrap_paths"] != bootstrap.get("paths"):
-        raise AnalysisPlanError("expected.bootstrap_paths must match analyses.bootstrap.paths")
-    if plan["expected"]["seed"] != bootstrap.get("seed"):
-        raise AnalysisPlanError("expected.seed must match analyses.bootstrap.seed")
 
     expanded_scenarios: list[dict[str, Any]] = []
     for scenario in scenarios:
@@ -147,30 +152,8 @@ def expand_analysis_plan(repo_root: str | Path, plan_path: str | Path) -> dict[s
         "analysis_plan_sha256": _sha256(plan),
         "baseline_config": baseline_file.relative_to(root).as_posix(),
         "baseline_config_sha256": _sha256(baseline),
-        "expected": copy.deepcopy(plan["expected"]),
-        "universe": copy.deepcopy(plan["universe"]),
+        "universe": universe,
         "analyses": copy.deepcopy(plan["analyses"]),
         "thresholds": copy.deepcopy(plan["thresholds"]),
         "scenarios": expanded_scenarios,
     }
-
-
-def write_analysis_scenarios(document: dict[str, Any], output_path: str | Path) -> None:
-    target = Path(output_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    payload = _canonical_bytes(document) + b"\n"
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{target.name}.",
-        suffix=".tmp",
-        dir=target.parent,
-    )
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_name, target)
-    finally:
-        temporary = Path(temporary_name)
-        if temporary.exists():
-            temporary.unlink()

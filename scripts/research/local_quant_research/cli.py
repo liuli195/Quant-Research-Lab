@@ -28,14 +28,6 @@ _ATTEMPT_ID = re.compile(r"[0-9a-f]{32}")
 _FILE_ATTRIBUTE_REPARSE_POINT = 0x0400
 
 
-def _inside(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-    except ValueError:
-        return False
-    return True
-
-
 def _absolute_path(value: object) -> Path:
     if not isinstance(value, (str, os.PathLike)):
         raise _BootstrapError("unsafe_frozen_inputs")
@@ -161,22 +153,6 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def promote_archive(
-    repo_root: Path,
-    strategy_id: str,
-    run_id: str,
-    analysis_id: str,
-):
-    if __package__ in {None, ""}:
-        from scripts.research.local_quant_research.archive import (
-            promote_archive as implementation,
-        )
-    else:
-        from .archive import promote_archive as implementation
-
-    return implementation(repo_root, strategy_id, run_id, analysis_id)
-
-
 def _private_execute(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--frozen-inputs", type=Path, required=True)
@@ -265,6 +241,11 @@ def main(argv: list[str] | None = None) -> int:
         return _private_execute(values[1:])
     args = _parser().parse_args(values)
     if args.action == "promote":
+        if __package__ in {None, ""}:
+            from scripts.research.local_quant_research.archive import promote_archive
+        else:
+            from .archive import promote_archive
+
         result = promote_archive(
             REPO_ROOT,
             args.strategy_id,

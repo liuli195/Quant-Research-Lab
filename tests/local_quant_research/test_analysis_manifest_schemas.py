@@ -10,7 +10,6 @@ import pytest
 from scripts.research.analysis_data.manifest import (
     AnalysisManifestError,
     open_analysis_source,
-    validate_analysis_source,
     validate_local_manifest_document,
 )
 
@@ -102,7 +101,10 @@ def _local_manifest() -> dict[str, object]:
             "bytes": 100,
         },
         "datasets": {
-            **{name: _dataset(name) for name in ("results", "balances", "positions", "orders")},
+            **{
+                name: _dataset(name)
+                for name in ("results", "balances", "positions", "orders")
+            },
             "risk": {
                 "required": False,
                 "status": "missing_at_source",
@@ -147,8 +149,14 @@ def test_local_manifest_schema_is_strict_and_excludes_joinquant_evidence(
         ).read_text(encoding="utf-8")
     )
     assert schema["properties"]["schema_version"]["const"] == "local-backtest/1"
-    assert schema["properties"]["object"]["properties"]["kind"]["const"] == "local_backtest"
-    assert schema["properties"]["source"]["properties"]["kind"]["const"] == "local_vectorbt"
+    assert (
+        schema["properties"]["object"]["properties"]["kind"]["const"]
+        == "local_backtest"
+    )
+    assert (
+        schema["properties"]["source"]["properties"]["kind"]["const"]
+        == "local_vectorbt"
+    )
     assert schema["properties"]["authority"]["const"] == "local_research"
     assert set(schema["required"]) >= {
         "authority",
@@ -208,6 +216,31 @@ def test_local_missing_source_references_are_not_fake_physical_tables() -> None:
         validate_local_manifest_document(invalid)
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda manifest: manifest["datasets"]["results"].update(
+            {"verified_empty": True}
+        ),
+        lambda manifest: manifest["datasets"]["results"]["time_range"].update(
+            {"start": "2024-01-03", "end": "2024-01-02"}
+        ),
+        lambda manifest: manifest["datasets"]["results"]["files"][0].update(
+            {"rows": 2}
+        ),
+        lambda manifest: manifest["params"]["version"].update({"sha256": "b" * 64}),
+        lambda manifest: manifest["source_benchmark_returns"].update({"null_rows": 2}),
+        lambda manifest: manifest["gate"].update({"exceptions": ["unexpected"]}),
+    ],
+)
+def test_local_manifest_cross_field_integrity_is_checked(mutation) -> None:
+    manifest = _local_manifest()
+    mutation(manifest)
+
+    with pytest.raises(AnalysisManifestError):
+        validate_local_manifest_document(manifest)
+
+
 def test_reader_selects_only_by_top_level_version_and_never_falls_back(
     tmp_path: Path,
 ) -> None:
@@ -232,16 +265,18 @@ def test_existing_joinquant_backtest_validates_without_modification(
     before = _tree_digest(root)
 
     source = open_analysis_source(root)
-    result = validate_analysis_source(source)
 
     assert source.kind == "joinquant_backtest"
-    assert result.status == "pass"
-    assert tuple(result.datasets) == (
-        "results",
-        "balances",
-        "positions",
-        "orders",
-        "risk",
-        "period_risks",
+    datasets = source.manifest["datasets"]
+    assert all(
+        datasets[name]["status"] == "complete"
+        for name in (
+            "results",
+            "balances",
+            "positions",
+            "orders",
+            "risk",
+            "period_risks",
+        )
     )
     assert _tree_digest(root) == before

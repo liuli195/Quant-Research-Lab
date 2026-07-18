@@ -11,19 +11,6 @@
     {"scenario_id": "group-unit-cap-5", "dimension": "parameter", "overrides": {"risk": {"asset_group_unit_cap": 5.0}}},
     {"scenario_id": "portfolio-unit-cap-10", "dimension": "parameter", "overrides": {"risk": {"portfolio_unit_cap": 10.0}}}
   ],
-  "universe": {
-    "159819.XSHE": "china_sync_equity",
-    "510300.XSHG": "china_sync_equity",
-    "511010.XSHG": "treasury_bond",
-    "512100.XSHG": "china_sync_equity",
-    "512480.XSHG": "china_sync_equity",
-    "513100.XSHG": "cross_border_tech_equity",
-    "513180.XSHG": "cross_border_tech_equity",
-    "515180.XSHG": "china_dividend",
-    "516080.XSHG": "china_innovative_drug",
-    "516160.XSHG": "china_sync_equity",
-    "518880.XSHG": "gold"
-  },
   "analyses": {
     "fixed_periods": [
       {"id": "2015-2018", "start": "2015-01-01", "end": "2018-12-31"},
@@ -31,7 +18,6 @@
       {"id": "2023-end", "start": "2023-01-01", "end": "2026-07-13"}
     ],
     "rolling": {"window_years": 3, "step_months": 3},
-    "deletions": {"each_security": true, "each_asset_group": true},
     "cost_execution": [
       {"id": "double-commission", "commission_multiplier": 2.0, "slippage": 0.0005, "delay_days": 0},
       {"id": "high-slippage", "commission_multiplier": 1.0, "slippage": 0.001, "delay_days": 0},
@@ -80,6 +66,5 @@
       {"id": "cvar-5d-95", "horizon_days": 5, "confidence": 0.95, "maximum_loss_abs_max": 0.05, "minimum_tail_observations": 20}
     ]
   },
-  "expected": {"scenario_runs": 7, "benchmarks": 2, "bootstrap_paths": 10000, "seed": 20260714},
   "thresholds": {"cagr_min_exclusive": 0.0, "max_drawdown_abs_max": 0.2, "calmar_min": 0.5}
 }

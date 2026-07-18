@@ -14,11 +14,6 @@ if TYPE_CHECKING:
 
 RunStatus = Literal["complete", "evidence_insufficient", "failed"]
 RUN_OUTPUT_ROOT = Path(".local/quant-research")
-RUN_STATUSES: tuple[RunStatus, ...] = (
-    "complete",
-    "evidence_insufficient",
-    "failed",
-)
 
 SIDE_NONE = 0
 SIDE_BUY = 1
@@ -204,12 +199,6 @@ class StrategyModule(Protocol):
         prepared: PreparedStrategy,
         execution: ExecutionBundle,
     ) -> tuple[ResultExtension, ...]: ...
-
-
-@dataclass(frozen=True)
-class OutputSpec:
-    path: str
-    format: Literal["json", "csv", "markdown", "text", "parquet", "directory"]
 
 
 @dataclass(frozen=True, slots=True)

@@ -84,13 +84,10 @@ def build_scenario_run_documents(
         if not scenario_id or not isinstance(params, Mapping):
             raise AnalysisOrchestrationError("expanded scenario identity is invalid")
         run_config = copy.deepcopy(dict(run_template))
-        run_config["project_config"] = (
+        run_config["scenario_config"] = (
             f".local/strategy-analysis-preparations/{preparation_id}/scenario-configs/"
             f"{scenario_id}/params.json"
         )
-        run_config["required_outputs"] = [
-            {"path": f"backtests/local-{scenario_id}", "format": "directory"}
-        ]
         documents.append(
             {
                 "scenario_id": scenario_id,

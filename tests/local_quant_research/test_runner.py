@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import gc
 import importlib
-import inspect
 import json
 import os
 import shutil
@@ -223,11 +222,6 @@ def test_v2_config_has_only_strategy_snapshot_scenario_and_declared_inputs(
         document=document,
     )
     assert contracts.RUN_OUTPUT_ROOT == Path(".local/quant-research")
-    assert contracts.RUN_STATUSES == (
-        "complete",
-        "evidence_insufficient",
-        "failed",
-    )
 
 
 @pytest.mark.parametrize("legacy_field", LEGACY_RUN_FIELDS)
@@ -567,22 +561,6 @@ def test_freezing_copies_every_captured_shared_runtime_source(
         "scripts/research/local_quant_research/scenario.py",
         "scripts/research/market_data/query.py",
     }.issubset(observed)
-    assert "scripts/research/local_quant_research/adapter_guard.py" not in observed
-
-
-def test_v2_bootstrap_does_not_install_adapter_guard(repo_root: Path) -> None:
-    from scripts.research.local_quant_research import cli, runner
-
-    private_execute = inspect.getsource(cli._private_execute)
-    assert "adapter_guard" not in private_execute
-    assert "install_access_guard" not in private_execute
-    assert "sys.modules" not in private_execute
-
-    _, runtime_sources = runner._runtime_lock(repo_root)
-    assert (
-        repo_root / "scripts/research/local_quant_research/adapter_guard.py"
-        not in runtime_sources
-    )
 
 
 def test_parent_runner_never_executes_strategy_top_level_before_frozen_child(

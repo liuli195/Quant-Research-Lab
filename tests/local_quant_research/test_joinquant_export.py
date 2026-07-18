@@ -7,40 +7,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-
-FIELDS = (
-    "date",
-    "security",
-    "open",
-    "high",
-    "low",
-    "close",
-    "pre_close",
-    "volume",
-    "money",
-    "factor",
-    "paused",
-    "high_limit",
-    "low_limit",
+from scripts.research.market_data.contracts import (
+    CORPORATE_ACTION_FIELDS,
+    MARKET_DATA_FIELDS as FIELDS,
 )
-
-CORPORATE_ACTION_FIELDS = (
-    "source_event_id",
-    "security",
-    "event_type",
-    "announcement_date",
-    "record_date",
-    "ex_date",
-    "effective_date",
-    "pay_date",
-    "status",
-    "knowledge_cutoff_date",
-    "split_ratio",
-    "cash_per_share",
-    "source",
-    "source_record_sha256",
-)
-
 
 def _manifest() -> dict[str, object]:
     return {

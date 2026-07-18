@@ -43,14 +43,6 @@ class LoadedStrategy:
     descriptor: StrategyDescriptor
 
 
-def _inside(path: Path, root: Path) -> bool:
-    try:
-        path.resolve().relative_to(root.resolve())
-    except ValueError:
-        return False
-    return True
-
-
 def _is_reparse_point(path: Path, metadata: os.stat_result | None = None) -> bool:
     try:
         details = os.lstat(path) if metadata is None else metadata
@@ -99,7 +91,7 @@ def _resolve_strategy_root(repo_root: Path, value: object) -> Path:
         ) from exc
     _reject_reparse_components(unresolved, repo_root)
     resolved = unresolved.resolve()
-    if not _inside(resolved, repo_root):
+    if not resolved.is_relative_to(repo_root.resolve()):
         raise ConfigurationError(
             "unsafe_strategy_root",
             "strategy_root escapes the repository",
@@ -131,7 +123,7 @@ def _plain_file(path: Path, strategy_root: Path) -> Path | None:
     if _is_reparse_point(path, metadata) or not stat.S_ISREG(metadata.st_mode):
         raise _module_source_error(unsafe=True)
     resolved = path.resolve()
-    if not _inside(resolved, strategy_root):
+    if not resolved.is_relative_to(strategy_root.resolve()):
         raise _module_source_error(unsafe=True)
     return resolved
 
@@ -145,7 +137,7 @@ def _plain_directory(path: Path, strategy_root: Path) -> bool:
         raise _module_source_error(unsafe=True) from exc
     if _is_reparse_point(path, metadata) or not stat.S_ISDIR(metadata.st_mode):
         raise _module_source_error(unsafe=True)
-    if not _inside(path.resolve(), strategy_root):
+    if not path.resolve().is_relative_to(strategy_root.resolve()):
         raise _module_source_error(unsafe=True)
     return True
 
@@ -269,7 +261,7 @@ def _validate_module_file(imported: ModuleType, strategy_root: Path) -> None:
             "strategy module file is missing",
         )
     resolved = Path(module_file).resolve()
-    if not resolved.is_file() or not _inside(resolved, strategy_root):
+    if not resolved.is_file() or not resolved.is_relative_to(strategy_root.resolve()):
         raise ConfigurationError(
             "unsafe_strategy_module_file",
             "strategy module file must be inside strategy_root",

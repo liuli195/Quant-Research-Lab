@@ -161,23 +161,37 @@ def _config(
 
 
 def test_group_and_portfolio_unit_scales_follow_confirmed_formula() -> None:
-    risk_scales = callbacks._risk_scales_nb
-    group_scales, portfolio_scale = risk_scales(
+    risk_scales_into = getattr(
+        callbacks._risk_scales_into_nb,
+        "py_func",
+        callbacks._risk_scales_into_nb,
+    )
+    group_units = np.empty(2, dtype=np.float64)
+    group_scales = np.empty(2, dtype=np.float64)
+    portfolio_scale = risk_scales_into(
         np.asarray([4, 4, 4], dtype=np.int64),
         np.asarray([0, 0, 1], dtype=np.int64),
+        0,
         2,
         6.0,
         12.0,
+        group_units,
+        group_scales,
     )
     assert group_scales.tolist() == pytest.approx([0.75, 1.0])
     assert portfolio_scale == pytest.approx(1.0)
 
-    group_scales, portfolio_scale = risk_scales(
+    group_units = np.empty(4, dtype=np.float64)
+    group_scales = np.empty(4, dtype=np.float64)
+    portfolio_scale = risk_scales_into(
         np.asarray([4, 4, 4, 4], dtype=np.int64),
         np.asarray([0, 1, 2, 3], dtype=np.int64),
+        0,
         4,
         6.0,
         12.0,
+        group_units,
+        group_scales,
     )
     assert group_scales.tolist() == pytest.approx([1.0, 1.0, 1.0, 1.0])
     assert portfolio_scale == pytest.approx(0.75)
@@ -190,15 +204,29 @@ def test_target_rounding_is_uniform_and_input_order_invariant() -> None:
     scales = np.asarray([1.0, 1.0])
     locked = np.asarray([-1, -1], dtype=np.int64)
 
-    targets_for_scale = getattr(
-        callbacks._targets_for_scale_nb, "py_func", callbacks._targets_for_scale_nb
+    targets_for_scale_into = getattr(
+        callbacks._targets_for_scale_into_nb,
+        "py_func",
+        callbacks._targets_for_scale_into_nb,
     )
-    targets = targets_for_scale(
-        bases, counts, groups, scales, 1.0, 0.55, locked, 100
+    targets = np.empty(2, dtype=np.int64)
+    targets_for_scale_into(
+        bases, counts, groups, 0, scales, 1.0, 0.55, locked, 100, targets
     )
-    permuted = targets_for_scale(
-        bases[::-1], counts[::-1], groups[::-1], scales, 1.0, 0.55, locked, 100
-    )[::-1]
+    permuted = np.empty(2, dtype=np.int64)
+    targets_for_scale_into(
+        bases[::-1],
+        counts[::-1],
+        groups[::-1],
+        0,
+        scales,
+        1.0,
+        0.55,
+        locked,
+        100,
+        permuted,
+    )
+    permuted = permuted[::-1]
 
     assert targets.tolist() == [500, 1100]
     assert targets.tolist() == permuted.tolist()

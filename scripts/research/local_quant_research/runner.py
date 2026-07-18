@@ -26,7 +26,6 @@ from .evidence import (
 )
 
 
-_STOP_STATES = ("complete", "evidence_insufficient", "failed")
 _PROJECT_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _REASON_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}")
@@ -67,14 +66,6 @@ def _publish_directory(source: Path, target: Path) -> None:
     os.replace(source, target)
 
 
-def _inside(path: Path, root: Path) -> bool:
-    try:
-        path.resolve().relative_to(root.resolve())
-    except ValueError:
-        return False
-    return True
-
-
 def _resolve_repo_path(value: object, *, repo_root: Path, field: str) -> Path:
     if not isinstance(value, str) or not value.strip():
         raise ConfigurationError("invalid_path", f"{field} must be a repository path")
@@ -82,7 +73,7 @@ def _resolve_repo_path(value: object, *, repo_root: Path, field: str) -> Path:
     if candidate.is_absolute():
         raise ConfigurationError("unsafe_path", f"{field} must be repository-relative")
     resolved = (repo_root / candidate).resolve()
-    if not _inside(resolved, repo_root):
+    if not resolved.is_relative_to(repo_root.resolve()):
         raise ConfigurationError("unsafe_path", f"{field} escapes the repository")
     return resolved
 
@@ -102,7 +93,7 @@ def _contains_sensitive_key(value: object) -> bool:
 
 def _load_raw_config(path: Path, *, repo_root: Path) -> dict[str, object]:
     config_path = Path(path).resolve()
-    if not _inside(config_path, repo_root):
+    if not config_path.is_relative_to(repo_root.resolve()):
         raise ConfigurationError("unsafe_config_path", "config path is outside repository")
     try:
         value = json.loads(config_path.read_text(encoding="utf-8"))
@@ -257,7 +248,10 @@ def _repo_state(
             name
             for name in names
             if name not in ignored_names
-            and not any(_inside(root / name, ignored_root) for ignored_root in ignored)
+            and not any(
+                (root / name).resolve().is_relative_to(ignored_root)
+                for ignored_root in ignored
+            )
         ]
         for name in files:
             if name in ignored_names:
@@ -387,8 +381,6 @@ def _resolve_output_run_dir(
 
 
 def load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
-    from .contracts import RUN_STATUSES
-
     repo_root = Path(repo_root).resolve()
     document = _load_raw_config(path, repo_root=repo_root)
     if _contains_sensitive_key(document):
@@ -464,8 +456,6 @@ def load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
         raise ConfigurationError("invalid_inputs", "declared_inputs must be unique")
     if any(not item.is_file() for item in declared_inputs):
         raise ConfigurationError("missing_declared_input", "a declared input is missing")
-    if tuple(RUN_STATUSES) != _STOP_STATES:
-        raise RuntimeError("shared run statuses are inconsistent")
     return RunConfig(
         project_id=project_id,
         strategy_root=strategy_root,
@@ -671,7 +661,10 @@ def _copy_v2_inputs(
             relative = Path(str(item.get("path", "")))
             expected = str(item.get("sha256", ""))
             source = (repo_root / relative).resolve()
-            if not _inside(source, repo_root) or _SHA256_PATTERN.fullmatch(expected) is None:
+            if (
+                not source.is_relative_to(repo_root.resolve())
+                or _SHA256_PATTERN.fullmatch(expected) is None
+            ):
                 raise InputIntegrityError(
                     "run_input_changed",
                     "captured run identity is invalid",

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import builtins
 import hashlib
 import importlib
@@ -153,31 +152,6 @@ def _tree_directories(root: Path) -> tuple[str, ...]:
         for path in sorted(root.rglob("*"))
         if path.is_dir()
     )
-
-
-def test_archive_has_no_descriptor_or_inode_state_machine(repo_root: Path) -> None:
-    source = (
-        repo_root / "scripts/research/local_quant_research/archive.py"
-    ).read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    functions = {
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    os_calls = {
-        node.func.attr
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "os"
-    }
-
-    assert functions.isdisjoint(
-        {"_open_verified_descriptor", "_descriptor_identity", "_file_identity"}
-    )
-    assert os_calls.isdisjoint({"open", "dup", "fdopen", "fstat"})
 
 
 @pytest.mark.parametrize(
@@ -956,7 +930,7 @@ def test_promote_cli_uses_exact_arguments_sorted_json_and_exit_codes(
     status: str,
     exit_code: int,
 ) -> None:
-    from scripts.research.local_quant_research import cli
+    from scripts.research.local_quant_research import archive, cli
 
     source = isolated_repo / ".local/quant-research/strategy-003" / RUN_ID
     target = (
@@ -981,7 +955,7 @@ def test_promote_cli_uses_exact_arguments_sorted_json_and_exit_codes(
         )
 
     monkeypatch.setattr(cli, "REPO_ROOT", isolated_repo)
-    monkeypatch.setattr(cli, "promote_archive", fake_promote)
+    monkeypatch.setattr(archive, "promote_archive", fake_promote)
 
     actual = cli.main(
         [

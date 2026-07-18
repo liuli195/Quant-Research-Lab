@@ -8,14 +8,12 @@ from pathlib import Path
 import numpy as np
 
 from scripts.research.local_quant_research.contracts import ExecutionBundle
-from scripts.research.local_quant_research.vectorbt_runtime import run_vectorbt
-from scripts.research.market_data.economic_returns import (
-    canonical_corporate_actions_digest,
-)
-from scripts.research.market_data.query import SnapshotView
 from scripts.research.local_quant_research.strategy_loader import (
     discover_strategy_sources,
 )
+from scripts.research.local_quant_research.vectorbt_runtime import run_vectorbt
+from scripts.research.market_data.contracts import corporate_actions_digest
+from scripts.research.market_data.query import SnapshotView
 
 
 RESEARCH_ROOT = (
@@ -60,24 +58,6 @@ def test_turtle_private_strategy_sources_do_not_import_vectorbt() -> None:
         assert all(not item.startswith("vectorbt") for item in imports)
 
 
-def test_attribution_module_does_not_define_a_second_core_result_adapter() -> None:
-    tree = ast.parse(
-        (RESEARCH_ROOT / "turtle_etf/_attribution.py").read_text(encoding="utf-8")
-    )
-    definitions = {
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.ClassDef, ast.FunctionDef))
-    }
-
-    assert {
-        "LocalExecutionFacts",
-        "to_joinquant_facts",
-        "_validate_common_facts",
-        "validate_turtle_attribution",
-    }.isdisjoint(definitions)
-
-
 def test_turtle_source_identity_includes_private_implementation() -> None:
     sources = discover_strategy_sources(RESEARCH_ROOT, "turtle_etf.strategy")
     relative = {path.relative_to(RESEARCH_ROOT).as_posix() for path in sources}
@@ -119,7 +99,7 @@ def _snapshot() -> SnapshotView:
         digest="1" * 64,
         corporate_action_fields=(),
         corporate_actions=(),
-        corporate_actions_digest=canonical_corporate_actions_digest(()),
+        corporate_actions_digest=corporate_actions_digest(()),
     )
 
 

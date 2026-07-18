@@ -514,17 +514,6 @@ def test_loader_does_not_execute_module_file_outside_strategy_root(
         external_module.unlink(missing_ok=True)
 
 
-def test_strategy_loader_has_no_private_import_lifecycle() -> None:
-    source = inspect.getsource(strategy_loader)
-
-    assert "threading" not in source
-    assert "uuid" not in source
-    assert "_PRIVATE_NAMESPACE" not in source
-    assert "spec_from_file_location" not in source
-    assert "module_from_spec" not in source
-    assert "sys.modules" not in source
-
-
 @pytest.mark.parametrize("fixture_name", ("minimal_strategy", "minimal_strategy_b"))
 def test_minimal_strategy_prepares_two_days_one_column_without_orders(
     repo_root: Path,

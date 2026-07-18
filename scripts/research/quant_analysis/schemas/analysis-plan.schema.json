@@ -3,7 +3,7 @@
   "$id": "https://local.vibe-trading/analysis-plan.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "strategy_id", "baseline_config", "scenarios", "universe", "analyses", "expected", "thresholds"],
+  "required": ["schema_version", "strategy_id", "baseline_config", "scenarios", "analyses", "thresholds"],
   "properties": {
     "schema_version": {"const": "strategy-analysis-plan/1"},
     "strategy_id": {"type": "string", "minLength": 1},
@@ -22,14 +22,9 @@
         }
       }
     },
-    "universe": {
-      "type": "object",
-      "additionalProperties": {"type": "string", "minLength": 1},
-      "minProperties": 1
-    },
     "analyses": {
       "type": "object",
-      "required": ["fixed_periods", "rolling", "deletions", "cost_execution", "bootstrap", "historical_stress", "position_shocks", "cvar"],
+      "required": ["fixed_periods", "rolling", "cost_execution", "bootstrap", "historical_stress", "position_shocks", "cvar"],
       "additionalProperties": false,
       "properties": {
         "fixed_periods": {
@@ -53,15 +48,6 @@
           "properties": {
             "window_years": {"type": "integer", "minimum": 1},
             "step_months": {"type": "integer", "minimum": 1}
-          }
-        },
-        "deletions": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["each_security", "each_asset_group"],
-          "properties": {
-            "each_security": {"const": true},
-            "each_asset_group": {"const": true}
           }
         },
         "cost_execution": {
@@ -154,17 +140,6 @@
             }
           }
         }
-      }
-    },
-    "expected": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["scenario_runs", "benchmarks", "bootstrap_paths", "seed"],
-      "properties": {
-        "scenario_runs": {"type": "integer", "minimum": 1},
-        "benchmarks": {"const": 2},
-        "bootstrap_paths": {"type": "integer", "minimum": 1},
-        "seed": {"type": "integer"}
       }
     },
     "thresholds": {

@@ -6,45 +6,15 @@ from types import MappingProxyType
 
 import pytest
 
-from scripts.research.market_data.contracts import SnapshotSelection
+from scripts.research.market_data.contracts import (
+    CORPORATE_ACTION_FIELDS,
+    MARKET_DATA_FIELDS as FIELDS,
+    SnapshotSelection,
+)
 from scripts.research.market_data.storage import (
     MarketDataIntegrityError,
     create_snapshot,
     import_batch,
-)
-
-
-FIELDS = (
-    "date",
-    "security",
-    "open",
-    "high",
-    "low",
-    "close",
-    "pre_close",
-    "volume",
-    "money",
-    "factor",
-    "paused",
-    "high_limit",
-    "low_limit",
-)
-
-CORPORATE_ACTION_FIELDS = (
-    "source_event_id",
-    "security",
-    "event_type",
-    "announcement_date",
-    "record_date",
-    "ex_date",
-    "effective_date",
-    "pay_date",
-    "status",
-    "knowledge_cutoff_date",
-    "split_ratio",
-    "cash_per_share",
-    "source",
-    "source_record_sha256",
 )
 
 

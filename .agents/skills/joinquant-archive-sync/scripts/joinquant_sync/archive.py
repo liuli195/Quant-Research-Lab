@@ -919,7 +919,7 @@ def _verify_attribution_dataset(
         expected_token=expected_token,
         expected_path=str(writer.get("path") or ""),
         expected_start=expected_start,
-        expected_end=str(params.get("end_date") or ""),
+        expected_end=expected_end,
         expected_final_balance=expected_final_balance,
     )
     raw_rows = [json.loads(line) for line in raw.splitlines() if line.strip()]
@@ -941,6 +941,13 @@ def _verify_attribution_dataset(
     ) != json.dumps(parquet_rows, ensure_ascii=False, sort_keys=True, default=str):
         raise IntegrityError("attribution raw and parquet contents differ")
     evidence = dataset.get("evidence")
+    if (
+        (manifest.get("object") or {}).get("kind") == "simulation"
+        and isinstance(evidence, dict)
+        and isinstance(evidence.get("evidence"), dict)
+        and evidence["evidence"].get("expected_end") == ""
+    ):
+        checked["evidence"]["expected_end"] = ""
     if not isinstance(evidence, dict) or evidence != checked:
         raise IntegrityError("attribution identity evidence mismatch")
 

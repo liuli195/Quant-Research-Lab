@@ -9,9 +9,7 @@ import pytest
 
 from scripts.research.local_quant_research.contracts import ExecutionBundle
 from scripts.research.local_quant_research.vectorbt_runtime import run_vectorbt
-from scripts.research.market_data.economic_returns import (
-    canonical_corporate_actions_digest,
-)
+from scripts.research.market_data.contracts import corporate_actions_digest
 from scripts.research.market_data.query import SnapshotView
 
 
@@ -67,7 +65,7 @@ def _snapshot(closes: tuple[float, ...]) -> SnapshotView:
         digest="1" * 64,
         corporate_action_fields=(),
         corporate_actions=(),
-        corporate_actions_digest=canonical_corporate_actions_digest(()),
+        corporate_actions_digest=corporate_actions_digest(()),
     )
 
 
@@ -116,7 +114,7 @@ def _split_snapshot() -> SnapshotView:
         digest="2" * 64,
         corporate_action_fields=tuple(action),
         corporate_actions=actions,
-        corporate_actions_digest=canonical_corporate_actions_digest(actions),
+        corporate_actions_digest=corporate_actions_digest(actions),
     )
 
 

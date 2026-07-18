@@ -37,7 +37,6 @@ _BATCH_FILES = {
     "corporate-actions.parquet",
     "validation.json",
 }
-_LEGACY_BATCH_FILES = {"manifest.json", "market-data.csv", "validation.json"}
 _BASE_MANIFEST_FIELDS = {
     "schema_version",
     "source",
@@ -54,10 +53,6 @@ _STORED_MANIFEST_FIELDS = _REQUIRED_MANIFEST_FIELDS | {
     "parquet",
     "securities",
     "writer",
-}
-_LEGACY_STORED_MANIFEST_FIELDS = _BASE_MANIFEST_FIELDS | {
-    "csv",
-    "securities",
 }
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _PARQUET_SCHEMA = pa.schema(
@@ -698,20 +693,6 @@ def _batch_identity(
     }
 
 
-def _legacy_batch_identity(
-    manifest: Mapping[str, object], csv_sha256: str
-) -> dict[str, object]:
-    return {
-        "source": manifest["source"],
-        "asset_type": manifest["asset_type"],
-        "frequency": manifest["frequency"],
-        "fields": manifest["fields"],
-        "price_semantics": manifest["price_semantics"],
-        "export_code_sha256": manifest["export_code_sha256"],
-        "csv_sha256": csv_sha256,
-    }
-
-
 def _dataset_identity(manifest: Mapping[str, object]) -> tuple[bytes, object, object]:
     return (
         _canonical_bytes(manifest["source"]),
@@ -739,18 +720,6 @@ def _validation_document() -> dict[str, object]:
     }
 
 
-def _legacy_validation_document() -> dict[str, object]:
-    return {
-        "schema_version": 1,
-        "status": "complete",
-        "checks": {
-            "field_order": True,
-            "nonempty": True,
-            "unique_date_security": True,
-        },
-    }
-
-
 def _load_json(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -766,10 +735,6 @@ def _validate_batch_dir(batch_dir: Path) -> dict[str, Any]:
     if not batch_dir.is_dir():
         raise MarketDataIntegrityError(f"batch does not exist: {batch_dir.name}")
     names = {path.name for path in batch_dir.iterdir()}
-    if names == _LEGACY_BATCH_FILES:
-        raise MarketDataIntegrityError(
-            f"legacy CSV batch requires migration: {batch_dir.name}"
-        )
     if names != _BATCH_FILES:
         raise MarketDataIntegrityError(
             f"batch file set is invalid: {batch_dir.name}"
@@ -913,59 +878,6 @@ def _existing_rows(
     return {(str(row["security"]), str(row["date"])): row for row in rows}
 
 
-def _legacy_batch_for_overlap(
-    batch_dir: Path,
-) -> tuple[dict[str, object], dict[tuple[str, str], dict[str, object]]]:
-    manifest = _load_json(batch_dir / "manifest.json")
-    if set(manifest) != _LEGACY_STORED_MANIFEST_FIELDS:
-        raise MarketDataIntegrityError("legacy batch manifest structure is invalid")
-    if manifest.get("schema_version") != 1:
-        raise MarketDataIntegrityError("legacy batch schema_version must be 1")
-    declared = _validate_manifest_input(
-        manifest, require_corporate_actions=False
-    )
-    csv_evidence = manifest.get("csv")
-    if not isinstance(csv_evidence, Mapping) or set(csv_evidence) != {
-        "sha256",
-        "bytes",
-        "rows",
-    }:
-        raise MarketDataIntegrityError("legacy batch is missing CSV evidence")
-    csv_path = batch_dir / "market-data.csv"
-    csv_bytes = csv_path.read_bytes()
-    csv_sha256 = _sha256_bytes(csv_bytes)
-    if csv_sha256 != csv_evidence.get("sha256"):
-        raise MarketDataIntegrityError(
-            f"legacy CSV SHA256 mismatch for batch {batch_dir.name}"
-        )
-    if len(csv_bytes) != csv_evidence.get("bytes"):
-        raise MarketDataIntegrityError(
-            f"legacy CSV byte count mismatch for batch {batch_dir.name}"
-        )
-    if _load_json(batch_dir / "validation.json") != _legacy_validation_document():
-        raise MarketDataIntegrityError(
-            f"legacy batch validation evidence is invalid: {batch_dir.name}"
-        )
-    raw_rows, securities = _read_csv(csv_path, declared["fields"])
-    rows = _normalize_rows(raw_rows)
-    if len(rows) != csv_evidence.get("rows") or securities != manifest.get(
-        "securities"
-    ):
-        raise MarketDataIntegrityError(
-            f"legacy batch coverage evidence is invalid: {batch_dir.name}"
-        )
-    expected_id = _sha256_bytes(
-        _canonical_bytes(_legacy_batch_identity(declared, csv_sha256))
-    )
-    if expected_id != batch_dir.name:
-        raise MarketDataIntegrityError(
-            f"legacy batch identity mismatch: {batch_dir.name}"
-        )
-    return declared, {
-        (str(row["security"]), str(row["date"])): row for row in rows
-    }
-
-
 def _reject_conflicting_overlap(
     *,
     batches_dir: Path,
@@ -980,12 +892,8 @@ def _reject_conflicting_overlap(
     for batch_dir in sorted(batches_dir.iterdir()):
         if not batch_dir.is_dir() or batch_dir.name.startswith("."):
             continue
-        names = {path.name for path in batch_dir.iterdir()}
-        if names == _LEGACY_BATCH_FILES:
-            existing_manifest, existing_by_key = _legacy_batch_for_overlap(batch_dir)
-        else:
-            existing_manifest = _validate_batch_dir(batch_dir)
-            existing_by_key = _existing_rows(batch_dir, existing_manifest)
+        existing_manifest = _validate_batch_dir(batch_dir)
+        existing_by_key = _existing_rows(batch_dir, existing_manifest)
         if _dataset_identity(existing_manifest) != _dataset_identity(incoming_manifest):
             continue
         overlap = sorted(incoming_by_key.keys() & existing_by_key.keys())
@@ -1468,129 +1376,10 @@ def validate_snapshot(snapshot_id: str, *, root: Path) -> SnapshotRecord:
     )
 
 
-def _validate_legacy_snapshot_for_audit(
-    snapshot_id: str,
-    *,
-    root: Path,
-    legacy_batch_ids: set[str],
-) -> None:
-    """Validate an immutable schema-v1 snapshot without making it runnable."""
-
-    _require_identifier(snapshot_id, "snapshot")
-    snapshot_path = Path(root) / "snapshots" / f"{snapshot_id}.json"
-    document = _load_json(snapshot_path)
-    if document.get("snapshot_id") != snapshot_id:
-        raise MarketDataIntegrityError("snapshot identity does not match its path")
-    payload = {key: value for key, value in document.items() if key != "snapshot_id"}
-    if _sha256_bytes(_canonical_bytes(payload)) != snapshot_id:
-        raise MarketDataIntegrityError("snapshot identity digest mismatch")
-    if document.get("schema_version") != 1:
-        raise MarketDataIntegrityError("legacy snapshot schema_version must be 1")
-
-    batch_ids = document.get("batch_ids")
-    evidence_rows = document.get("batches")
-    if not isinstance(batch_ids, list) or not isinstance(evidence_rows, list):
-        raise MarketDataIntegrityError("snapshot batch evidence is missing")
-    if (
-        batch_ids != sorted(set(batch_ids))
-        or not batch_ids
-        or not set(batch_ids).issubset(legacy_batch_ids)
-    ):
-        raise MarketDataIntegrityError("legacy snapshot batch ids are invalid")
-    evidence_by_id = {
-        item.get("batch_id"): item
-        for item in evidence_rows
-        if isinstance(item, Mapping)
-    }
-    if list(evidence_by_id) != batch_ids or len(evidence_rows) != len(batch_ids):
-        raise MarketDataIntegrityError("snapshot canonical batch evidence is invalid")
-
-    manifests: list[Mapping[str, object]] = []
-    rows_by_security: dict[str, dict[str, dict[str, object]]] = {}
-    for batch_id in batch_ids:
-        batch_dir = Path(root) / "batches" / batch_id
-        manifest, rows = _legacy_batch_for_overlap(batch_dir)
-        evidence = evidence_by_id[batch_id]
-        expected = {
-            "batch_id": batch_id,
-            "manifest_sha256": _sha256_path(batch_dir / "manifest.json"),
-            "csv_sha256": _sha256_path(batch_dir / "market-data.csv"),
-            "validation_sha256": _sha256_path(batch_dir / "validation.json"),
-            "export_code_sha256": manifest["export_code_sha256"],
-        }
-        if evidence != expected:
-            raise MarketDataIntegrityError(
-                f"legacy snapshot batch evidence mismatch: {batch_id}"
-            )
-        manifests.append(manifest)
-        for (security, current_date), row in rows.items():
-            existing = rows_by_security.setdefault(security, {}).get(current_date)
-            if existing is not None and existing != row:
-                raise MarketDataConflict(
-                    f"snapshot batches conflict at {security} {current_date}"
-                )
-            rows_by_security[security][current_date] = row
-
-    selection_document = document.get("selection")
-    if not isinstance(selection_document, Mapping):
-        raise MarketDataIntegrityError("snapshot selection is missing")
-    try:
-        source_identity = selection_document["source"]
-        if not isinstance(source_identity, Mapping):
-            raise TypeError("source must be a mapping")
-        selection = SnapshotSelection(
-            source=source_identity,
-            asset_type=str(selection_document["asset_type"]),
-            frequency=str(selection_document["frequency"]),
-            securities=selection_document["securities"],
-            start_date=str(selection_document["start_date"]),
-            end_date=str(selection_document["end_date"]),
-            fields=selection_document["fields"],
-            price_semantics=selection_document["price_semantics"],
-        )
-    except (KeyError, TypeError) as exc:
-        raise MarketDataIntegrityError("snapshot selection is incomplete") from exc
-
-    for manifest in manifests:
-        if (
-            manifest["source"] != dict(selection.source)
-            or manifest["asset_type"] != selection.asset_type
-            or manifest["frequency"] != selection.frequency
-            or manifest["price_semantics"] != dict(selection.price_semantics)
-            or not set(selection.fields).issubset(manifest["fields"])
-        ):
-            raise MarketDataIntegrityError(
-                "legacy snapshot selection does not match its batch"
-            )
-
-    coverage: list[dict[str, object]] = []
-    for security in sorted(selection.securities):
-        dates = sorted(
-            current_date
-            for current_date in rows_by_security.get(security, {})
-            if selection.start_date <= current_date <= selection.end_date
-        )
-        if not dates or dates[-1] != selection.end_date:
-            raise MarketDataIntegrityError(
-                f"legacy snapshot coverage is incomplete for {security}"
-            )
-        coverage.append(
-            {
-                "security": security,
-                "start_date": dates[0],
-                "end_date": dates[-1],
-                "rows": len(dates),
-            }
-        )
-    if document.get("coverage") != coverage:
-        raise MarketDataIntegrityError("legacy snapshot coverage evidence is invalid")
-
-
 def audit_store(*, root: Path) -> dict[str, object]:
     """Read and validate every stored batch and snapshot without mutating the store."""
 
     storage_root = Path(root)
-    legacy_batch_ids: list[str] = []
     parquet_batch_ids: list[str] = []
     batches_dir = storage_root / "batches"
     if batches_dir.exists():
@@ -1601,16 +1390,10 @@ def audit_store(*, root: Path) -> dict[str, object]:
                 raise MarketDataIntegrityError(
                     f"unexpected batch-store entry: {batch_dir.name}"
                 )
-            names = {path.name for path in batch_dir.iterdir()}
-            if names == _LEGACY_BATCH_FILES:
-                _legacy_batch_for_overlap(batch_dir)
-                legacy_batch_ids.append(batch_dir.name)
-            else:
-                _validate_batch_dir(batch_dir)
-                parquet_batch_ids.append(batch_dir.name)
+            _validate_batch_dir(batch_dir)
+            parquet_batch_ids.append(batch_dir.name)
 
     snapshot_ids: list[str] = []
-    legacy_snapshot_ids: list[str] = []
     snapshots_dir = storage_root / "snapshots"
     if snapshots_dir.exists():
         for snapshot_path in sorted(snapshots_dir.iterdir()):
@@ -1621,29 +1404,12 @@ def audit_store(*, root: Path) -> dict[str, object]:
                     f"unexpected snapshot-store entry: {snapshot_path.name}"
                 )
             snapshot_id = snapshot_path.stem
-            document = _load_json(snapshot_path)
-            referenced = document.get("batch_ids")
-            if (
-                document.get("schema_version") == 1
-                and isinstance(referenced, list)
-                and referenced
-                and set(referenced).issubset(set(legacy_batch_ids))
-            ):
-                _validate_legacy_snapshot_for_audit(
-                    snapshot_id,
-                    root=storage_root,
-                    legacy_batch_ids=set(legacy_batch_ids),
-                )
-                legacy_snapshot_ids.append(snapshot_id)
-            else:
-                validate_snapshot(snapshot_id, root=storage_root)
-                snapshot_ids.append(snapshot_id)
+            validate_snapshot(snapshot_id, root=storage_root)
+            snapshot_ids.append(snapshot_id)
 
     return {
         "schema_version": 1,
         "status": "complete",
-        "legacy_batch_ids": legacy_batch_ids,
         "parquet_batch_ids": parquet_batch_ids,
-        "legacy_snapshot_ids": legacy_snapshot_ids,
         "snapshot_ids": snapshot_ids,
     }

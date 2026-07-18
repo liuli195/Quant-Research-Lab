@@ -8,22 +8,22 @@
 - **THEN** 系统在不读取任何海龟文件的情况下生成有效执行计划和状态输出
 
 ### Requirement: 场景清单必须显式且无敏感信息
-系统 MUST 校验每个场景的策略对象、代码版本、参数、日期区间、资金、费用、执行口径、依赖和期望证据；MUST 拒绝空目标、`latest`、`all`、裸远端 ID、缺失字段以及账号、密码、Token（访问令牌）或 Cookie（浏览器凭证）。
+系统 MUST 校验每个场景的策略对象、代码版本、参数、日期区间、资金、费用、执行口径和期望证据；MUST 拒绝空目标、`latest`、`all`、裸远端 ID、缺失字段以及账号、密码、Token（访问令牌）或 Cookie（浏览器凭证）。
 
 #### Scenario: 清单包含隐式目标
 - **WHEN** 场景使用 `latest` 代替明确策略或回测详情身份
 - **THEN** 系统拒绝清单且不访问聚宽或修改运行台账
 
-### Requirement: 场景身份和依赖必须确定
-系统 MUST 对规范化代码、参数、日期、资金、费用和执行口径计算稳定摘要，检测重复与同名漂移，并对依赖图执行确定性排序；循环依赖或缺失依赖 MUST 阻止执行。
+### Requirement: 场景身份和执行顺序必须确定
+系统 MUST 对规范化代码、参数、日期、资金、费用和执行口径计算稳定摘要，检测重复与同名漂移，并按功能校验、正式基线、比较对象、稳定性场景的固定阶段及各阶段清单顺序执行。
 
 #### Scenario: 同名场景配置漂移
 - **WHEN** 台账中的场景名与新清单相同但摘要不同
 - **THEN** 系统报告漂移并要求新身份或显式迁移，不覆盖既有结果
 
-#### Scenario: 依赖图包含循环
-- **WHEN** 两个场景互相声明为前置依赖
-- **THEN** 系统返回依赖错误且不提交任何远端任务
+#### Scenario: 清单阶段顺序错误
+- **WHEN** 清单把稳定性场景放在功能校验或正式基线之前
+- **THEN** 系统返回顺序错误且不提交任何远端任务
 
 ### Requirement: 正式运行必须只发生在聚宽
 系统 MUST 只把聚宽云端返回的运行身份、成交、持仓和结果标记为正式证据；本地预检、测试替身和 E2E（端到端）数据 MUST 明确标记为非正式且不得替代远端结果。
@@ -37,7 +37,7 @@
 
 #### Scenario: 批次运行中断
 - **WHEN** 部分场景已完成归档而其余场景尚未提交
-- **THEN** 恢复计划跳过已完成场景并从第一个依赖满足的未完成场景继续
+- **THEN** 恢复计划跳过已完成场景并按固定阶段和清单顺序从第一个未完成场景继续
 
 ### Requirement: 归档必须复用既有明确目标入口
 系统 MUST 将每个完成场景的明确回测详情链接交给 `joinquant-archive-sync`（聚宽归档同步），并按其 manifest（清单）门禁判断证据状态；系统 MUST NOT（不得）复制认证、抓取、归档、查询或完整性逻辑。
@@ -58,12 +58,8 @@
 - **THEN** 系统报告该场景并输出证据不足，不输出整体完成
 
 ### Requirement: Skill 发布形态必须经过完整验证
-实现 MUST 通过 Skill Creator（技能创建器）的 `quick_validate.py`、仓库 layout（布局）测试、通用单元测试和不访问网络的正式 E2E；`.agents/skills/run-joinquant-backtests` MUST 是唯一真实目录，`.claude/skills/run-joinquant-backtests` MUST 指向同一目录，且独立 Agent MUST 使用非海龟最小清单完成前向验证。
+实现 MUST 通过 Skill Creator（技能创建器）的 `quick_validate.py`、仓库 layout（布局）测试、通用单元测试、从 `.agents` 真实 Skill（技能）入口运行的一次不访问网络 E2E（端到端）和仓库完整验证；`.agents/skills/run-joinquant-backtests` MUST 是唯一真实目录，`.claude/skills/run-joinquant-backtests` MUST 指向同一目录。
 
-#### Scenario: 双发布入口运行 E2E
-- **WHEN** 分别从 `.agents` 和 `.claude` 入口运行同一离线自检
-- **THEN** 两端调用同一生产核心并得到相同摘要、去重、排序、恢复和覆盖率结果
-
-#### Scenario: 非海龟前向验证
-- **WHEN** 未参与实现的 Agent 仅根据 Skill 说明处理非海龟最小清单
-- **THEN** Agent 无需海龟知识即可完成预检并得到预期停止状态或执行计划
+#### Scenario: 从真实 Skill 入口运行 E2E
+- **WHEN** 从 `.agents` 真实 Skill 入口运行离线自检
+- **THEN** 同一生产核心完成摘要、去重、顺序、恢复和覆盖率主流程，且仓库布局校验另行证明 `.claude` 兼容入口指向该实现

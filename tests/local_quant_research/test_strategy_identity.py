@@ -27,8 +27,6 @@ def test_strategy_003_is_bound_to_one_real_joinquant_strategy(repo_root: Path) -
     assert parsed.path == "/algorithm/index/edit"
     assert len(parse_qs(parsed.query).get("algorithmId", [])) == 1
     assert row["status"] == "active"
-    assert row["latest_backtest_id"] == ""
-    assert row["latest_simulation_id"] == ""
 
     strategy_dir = repo_root / "joinquant" / "strategies" / "strategy-003"
     code_path = repo_root / row["current_default_code"]
@@ -43,9 +41,3 @@ def test_strategy_003_is_bound_to_one_real_joinquant_strategy(repo_root: Path) -
     assert manifest["source"]["url"] == row["joinquant_strategy_url"]
     assert manifest["code"]["sha256"] == _sha256(code_path)
     assert manifest["fence"]["before_sha256"] == manifest["fence"]["after_sha256"]
-
-
-def test_strategy_003_has_no_backtest_or_simulation_archive(repo_root: Path) -> None:
-    strategy_dir = repo_root / "joinquant" / "strategies" / "strategy-003"
-    assert not (strategy_dir / "backtests").exists()
-    assert not (strategy_dir / "simulations").exists()

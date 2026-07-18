@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-from pathlib import Path
 from types import MappingProxyType
 
 import numpy as np
@@ -11,12 +9,9 @@ import pytest
 from scripts.research.local_quant_research.contracts import (
     ExecutionBundle,
     ExecutionRun,
-    OutputSpec,
-    ResultExtension,
 )
 from scripts.research.local_quant_research.evidence import (
     EvidenceError,
-    collect_output_evidence,
     compute_run_id,
     execution_digest,
 )
@@ -35,58 +30,6 @@ def test_run_id_is_stable_and_binds_all_three_input_digests() -> None:
     assert first != compute_run_id(snapshot, "4" * 64, code)
     assert first != compute_run_id(snapshot, config, "4" * 64)
     assert len(first) == 64
-
-
-@pytest.mark.parametrize(
-    "content",
-    [
-        'a,b\n"unterminated\n',
-        "a,b\n1,2,3\n",
-    ],
-    ids=["unterminated-quote", "wrong-column-count"],
-)
-def test_csv_evidence_rejects_malformed_data_rows(
-    content: str,
-    tmp_path: Path,
-) -> None:
-    output = tmp_path / "result.csv"
-    output.write_text(content, encoding="utf-8")
-
-    with pytest.raises(EvidenceError, match="CSV"):
-        collect_output_evidence(
-            tmp_path,
-            (OutputSpec(path="result.csv", format="csv"),),
-        )
-
-
-def test_directory_evidence_binds_dynamic_result_files(tmp_path: Path) -> None:
-    package = tmp_path / "backtests" / "local-baseline"
-    (package / "data").mkdir(parents=True)
-    manifest = package / "manifest.json"
-    attribution = package / "data" / f"attribution_log-{'a' * 64}.parquet"
-    manifest.write_text('{"status":"complete"}\n', encoding="utf-8")
-    attribution.write_bytes(b"dynamic")
-
-    evidence = collect_output_evidence(
-        tmp_path,
-        (OutputSpec(path="backtests/local-baseline", format="directory"),),
-    )
-
-    assert evidence[0]["path"] == "backtests/local-baseline"
-    assert evidence[0]["format"] == "directory"
-    assert evidence[0]["files"] == [
-        {
-            "path": "data/attribution_log-" + "a" * 64 + ".parquet",
-            "bytes": attribution.stat().st_size,
-            "sha256": hashlib.sha256(attribution.read_bytes()).hexdigest(),
-        },
-        {
-            "path": "manifest.json",
-            "bytes": manifest.stat().st_size,
-            "sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
-        },
-    ]
-    assert len(evidence[0]["sha256"]) == 64
 
 
 def test_execution_digest_scans_shared_run_and_arrays_once(
