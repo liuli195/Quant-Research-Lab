@@ -26,6 +26,7 @@ PASS。#17 的根因修复、真实归档复现和发布入口回归均通过，
 - 发布入口 E2E（端到端）：`.venv/Scripts/python.exe .agents/skills/joinquant-archive-sync/scripts/jq_sync.py self-test`，门禁通过，生产编排场景提交成功。
 - OpenSpec（开放规格）严格校验：`openspec validate fix-active-simulation-results-overlap --type change --strict`，通过。
 - 真实活动模拟交易：两份归档首次同步均提交成功，结果高水位推进至 `2026-07-17 17:00:00`；紧接着再次同步均为 `unchanged`（无变化）。
+- 2026-07-18 17:15 再次扫描源端：两份活动模拟交易仍为 `unchanged`，只更新观察时间和远端别名；随后严格校验通过。
 - 真实清单严格校验：`strategy-001/simulations/simulation-001` 和 `strategy-002/simulations/simulation-001` 均为 `verified`，门禁通过。
 - Git LFS（大文件存储）：`git lfs fsck` 通过；提交区间 `git diff --check` 通过。
 - `review_mode: off`：按 hotfix（热修复）配置跳过自动代理代码审查。
