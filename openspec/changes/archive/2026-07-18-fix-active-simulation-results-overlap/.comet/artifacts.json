@@ -2,5 +2,6 @@
   "openspec_proposal": "openspec/changes/fix-active-simulation-results-overlap/proposal.md",
   "openspec_design": "openspec/changes/fix-active-simulation-results-overlap/design.md",
   "openspec_tasks": "openspec/changes/fix-active-simulation-results-overlap/tasks.md",
-  "openspec_delta_spec": "openspec/changes/fix-active-simulation-results-overlap/specs/joinquant-archive-sync/spec.md"
+  "openspec_delta_spec": "openspec/changes/fix-active-simulation-results-overlap/specs/joinquant-archive-sync/spec.md",
+  "archive_directory": "openspec/changes/archive/2026-07-18-fix-active-simulation-results-overlap"
 }

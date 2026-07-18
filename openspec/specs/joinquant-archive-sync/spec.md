@@ -49,7 +49,7 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 - **THEN** 系统按远端顺序增量保存所有新增版本及摘要，并保留每条历史记录的 `sourceBacktestId`、操作时间、历史顺序到完整代码文件的可离线复核映射；此前版本不得重复下载或丢失
 
 ### Requirement: 结构化数据必须按运行状态校验
-系统 MUST 对已完成回测保存并校验结果、资金、持仓、订单、自定义记录、风险和分期风险数据。对于失败或取消运行，系统 MUST 根据远端状态验证允许为空的数据集，而不能伪造空表为成功结果。分页 MUST 持续到接口提供明确终止条件。每个运行 MUST 保存 Research 单次原始返回包，并把其 SHA256 绑定到所有结构化数据集；模拟交易增量 MUST 保留不可变来源链，严格验证 MUST 对照原始返回、压缩 JSON 和 Parquet 内容，要求累计行有来源覆盖并从文件复算数据流摘要。
+系统 MUST 对已完成回测保存并校验结果、资金、持仓、订单、自定义记录、风险和分期风险数据。对于失败或取消运行，系统 MUST 根据远端状态验证允许为空的数据集，而不能伪造空表为成功结果。分页 MUST 持续到接口提供明确终止条件。每个运行 MUST 保存 Research 单次原始返回包，并把其 SHA256 绑定到所有结构化数据集；模拟交易增量 MUST 保留不可变来源链，严格验证 MUST 对照原始返回、压缩 JSON 和 Parquet 内容，要求累计行有来源覆盖并从文件复算数据流摘要。活动模拟交易的 `results`（结果）请求重叠点 MUST 来自已验证来源链中的稳定前序时间；清单最高时间行从后续源响应消失时，系统 MUST 使用该前序重叠或安全全量刷新证明连续，同时保持累计事实和数据流高水位单调不回退。
 
 #### Scenario: 已完成回测数据完整
 - **WHEN** 已完成回测的结果、资金、持仓、订单、风险和分期风险分页全部返回
@@ -66,6 +66,10 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 #### Scenario: 任一分页未明确结束
 - **WHEN** 某数据集达到页大小或接口上限且未取得明确空页、总数或结束游标
 - **THEN** 系统不得把该数据集标记为 `complete`
+
+#### Scenario: 活动结果临时游标行消失
+- **WHEN** 已归档 `results` 同时包含稳定前序行和更晚的临时行，后续 Research 响应不再返回该临时最高时间但包含新增结果
+- **THEN** 系统只在已验证来源链提供稳定前序重叠或安全全量刷新能够证明连续时合并提交，保留全部既有已验证事实和新来源事实且不产生业务键重复；否则失败且不推进游标
 
 ### Requirement: 每种预期数据都必须有独立完整性状态
 每个归档对象的 `manifest.json` MUST 列出全部预期数据集，并为每个数据集记录来源、行数或字节数、时间范围、分页证据、文件 SHA256 和 `complete`、`capped_free`、`missing_at_source`、`unsupported_api_version` 或 `failed` 状态。对象只有在必需核心数据均为 `complete` 且其余预期数据均具有可接受的显式状态时才能通过完整性门禁。具有稳定采集围栏但未通过门禁的对象 MUST 使用 `gate.status=fail` 原子保留已验证文件、失败数据集状态和失败证据。部分归档 MUST NOT 通过默认查询或导出路径访问，也 MUST NOT 报告为完整。
