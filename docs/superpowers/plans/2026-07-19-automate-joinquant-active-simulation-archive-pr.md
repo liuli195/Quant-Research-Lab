@@ -100,7 +100,7 @@ git commit -m "完善活动模拟交易同步身份"
 - Produces: `run_scheduled_sync(repository: Path, *, python_exe: Path, cli: Path) -> tuple[int, dict[str, object]]`
 - Internal: `_runtime_root() -> Path`、`_write_state(root, payload) -> None`、`_discover_pr_flow() -> Path`、`_prepare_worktree(repository, root) -> Path`
 
-- [ ] **Step 1: 写运行锁、状态和插件发现失败测试**
+- [x] **Step 1: 写运行锁、状态和插件发现失败测试**
 
 创建 `tests/joinquant_sync/test_scheduled_sync.py`，至少包含：
 
@@ -121,7 +121,7 @@ def test_locked_run_skips_without_external_work(monkeypatch, tmp_path):
 
 另覆盖：Codex 成功时不调用 Claude；Codex 失败后 Claude 成功；两端失败为 `pr_flow_unavailable`；原子状态可被 `json.loads` 读取且不含原始子进程输出。
 
-- [ ] **Step 2: 写 worktree 身份测试并确认失败**
+- [x] **Step 2: 写 worktree 身份测试并确认失败**
 
 用临时 Git 仓库覆盖首次创建、干净 detached HEAD（分离头）、固定自动化分支、未知分支和预先脏状态。关键断言：
 
@@ -139,7 +139,7 @@ assert git(prepared, "rev-parse", "HEAD").stdout.strip() == origin_main
 
 Expected: FAIL，模块尚不存在。
 
-- [ ] **Step 3: 实现无抽象层的最小运行基础**
+- [x] **Step 3: 实现无抽象层的最小运行基础**
 
 ```python
 AUTOMATION_BRANCH = "codex/joinquant-archive-auto"
@@ -168,7 +168,7 @@ def _write_state(root: Path, payload: dict[str, object]) -> None:
 
 `_discover_pr_flow` 严格匹配官方清单的插件 ID、安装/启用状态和脚本相对路径，不扫描目录。`_prepare_worktree` 只用显式 `git -C <repo> worktree add --detach`、`fetch origin main`、`status --porcelain` 和 `rev-parse`，不读取或修改用户工作区状态。
 
-- [ ] **Step 4: 运行目标测试**
+- [x] **Step 4: 运行目标测试**
 
 ```powershell
 & .\.venv\Scripts\python.exe -m pytest tests\joinquant_sync\test_scheduled_sync.py -k "locked or discovery or worktree" -q
@@ -176,7 +176,7 @@ def _write_state(root: Path, payload: dict[str, object]) -> None:
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```powershell
 git add .agents/skills/joinquant-archive-sync/scripts/joinquant_sync/scheduled_sync.py tests/joinquant_sync/test_scheduled_sync.py
