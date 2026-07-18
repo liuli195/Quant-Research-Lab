@@ -248,12 +248,100 @@ def _batch_failure(
     return 1, state
 
 
+def _run_pr_flow(
+    python_exe: Path,
+    script: Path,
+    worktree: Path,
+    *,
+    command: str,
+    pr: object = None,
+) -> tuple[int, dict[str, object]]:
+    arguments = [
+        str(python_exe),
+        str(script),
+        command,
+        "--project",
+        str(worktree),
+    ]
+    if command == "complete":
+        arguments.extend(
+            ["--summary", "活动模拟交易归档", "--scope", "joinquant/strategies"]
+        )
+    elif command == "cleanup" and pr is not None:
+        arguments.extend(["--pr", str(pr)])
+    else:
+        raise ScheduledSyncError("pr_flow_state_invalid")
+    result = subprocess.run(
+        arguments,
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+        errors="replace",
+    )
+    status_path = worktree / ".pr-flow" / "last-status.json"
+    try:
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+    return result.returncode, payload if isinstance(payload, dict) else {}
+
+
+def _pr_flow_result(
+    root: Path,
+    worktree: Path,
+    python_exe: Path,
+    script: Path,
+    *,
+    command: str,
+    pr: object = None,
+) -> tuple[int, dict[str, object]]:
+    code, payload = _run_pr_flow(
+        python_exe, script, worktree, command=command, pr=pr
+    )
+    details = payload.get("details")
+    details = details if isinstance(details, dict) else {}
+    pr_number = details.get("pr") or pr
+    state: dict[str, object] = {
+        "phase": "pr_flow",
+        "status": "complete" if code == 0 else "failed",
+        "reason": "pr_flow_complete" if code == 0 else "pr_flow_stopped",
+        "worktree": str(worktree),
+        "branch": _git(worktree, "branch", "--show-current"),
+        "pr": pr_number,
+        "rollback_status": None,
+    }
+    _write_state(root, state)
+    return (0 if code == 0 else 1), state
+
+
+def _recovery_action(worktree: Path) -> tuple[str, object]:
+    try:
+        payload = json.loads(
+            (worktree / ".pr-flow" / "last-status.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, json.JSONDecodeError):
+        return "complete", None
+    details = payload.get("details") if isinstance(payload, dict) else None
+    if (
+        isinstance(details, dict)
+        and payload.get("command") == "cleanup"
+        and details.get("sourceBranch") == AUTOMATION_BRANCH
+        and details.get("pr") is not None
+    ):
+        return "cleanup", details["pr"]
+    return "complete", None
+
+
 def _run_new_batch(
     root: Path,
     worktree: Path,
     *,
     python_exe: Path,
     cli: Path,
+    pr_flow: Path,
 ) -> tuple[int, dict[str, object]]:
     baseline = _git(worktree, "rev-parse", "HEAD")
     auth_code, auth = _run_json(
@@ -338,17 +426,13 @@ def _run_new_batch(
     _git(worktree, "switch", "-c", AUTOMATION_BRANCH)
     _git(worktree, "add", "--", *sorted(changed))
     _git(worktree, "commit", "-m", "归档活动模拟交易更新")
-    state = {
-        "phase": "commit",
-        "status": "complete",
-        "reason": "commit_created",
-        "worktree": str(worktree),
-        "branch": AUTOMATION_BRANCH,
-        "pr": None,
-        "rollback_status": None,
-    }
-    _write_state(root, state)
-    return 0, state
+    return _pr_flow_result(
+        root,
+        worktree,
+        python_exe,
+        pr_flow,
+        command="complete",
+    )
 
 
 def run_scheduled_sync(
@@ -357,16 +441,25 @@ def run_scheduled_sync(
     root = _runtime_root()
     try:
         with object_lock(root):
-            _discover_pr_flow()
+            pr_flow = _discover_pr_flow()
             _command_ok(["gh", "auth", "status"], reason="gh_auth_required")
             worktree = _prepare_worktree(repository, root)
             if _git(worktree, "branch", "--show-current") == AUTOMATION_BRANCH:
-                raise ScheduledSyncError("pr_flow_recovery_pending")
+                command, pr = _recovery_action(worktree)
+                return _pr_flow_result(
+                    root,
+                    worktree,
+                    python_exe,
+                    pr_flow,
+                    command=command,
+                    pr=pr,
+                )
             return _run_new_batch(
                 root,
                 worktree,
                 python_exe=python_exe,
                 cli=cli,
+                pr_flow=pr_flow,
             )
     except ObjectLocked:
         state = {

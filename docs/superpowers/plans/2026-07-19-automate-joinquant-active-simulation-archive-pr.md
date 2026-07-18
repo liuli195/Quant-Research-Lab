@@ -291,7 +291,7 @@ Expected: PASS。
 - Produces: CLI `scheduled-sync-pr --repository <repo>`；旧/新任务动作都可严格识别；PR Flow stop state 提升到 `last-run.json`。
 - Test helper: 继续使用 Task 3 定义的 `run_scenario(name, tmp_path, monkeypatch) -> dict[str, object]`。
 
-- [ ] **Step 1: 写固定分支优先恢复和 PR Flow 失败测试**
+- [x] **Step 1: 写固定分支优先恢复和 PR Flow 失败测试**
 
 ```python
 def test_fixed_branch_without_pr_status_resumes_complete_without_sync(
@@ -323,7 +323,7 @@ def test_pr_flow_stop_is_recoverable_and_never_uses_alternate_merge(
 
 另覆盖：只有最新 `origin/main` 的干净 detached HEAD 才同步；固定分支不查询 PR 数量；运行期 PR 参数不含 `--fixes` 或 `#11`；成功后 worktree 为 detached HEAD。
 
-- [ ] **Step 2: 写 CLI 与任务兼容测试并确认失败**
+- [x] **Step 2: 写 CLI 与任务兼容测试并确认失败**
 
 ```python
 assert installed[0][1][2:] == [
@@ -343,7 +343,7 @@ assert args.command == "scheduled-sync-pr"
 
 Expected: FAIL。
 
-- [ ] **Step 3: 只把固定分支交回现有 `complete` 或 `cleanup`**
+- [x] **Step 3: 只把固定分支交回现有 `complete` 或 `cleanup`**
 
 默认只调用：
 
@@ -364,7 +364,7 @@ Expected: FAIL。
 
 其他固定分支状态（包括没有状态文件、提交后尚未创建 PR、push/检查失败）都重跑 `complete`。不得执行状态文件中的命令文本，不得直接查询 PR 数量，不得传 `--fixes`，不得调用 `gh pr merge`。非零退出只读取 `<worktree>/.pr-flow/last-status.json` 的必要字段。
 
-- [ ] **Step 4: 接入 CLI，保持调度架构不变**
+- [x] **Step 4: 接入 CLI，保持调度架构不变**
 
 `jq_sync.py` 只新增 parser/调用/JSON 输出并替换 `schedule-install` 动作名。`scheduler._owned_task` 的生产动作集合只允许：
 
@@ -377,7 +377,7 @@ Expected: FAIL。
 
 其他 XML、Python 路径、CLI 路径、工作目录、时区和重试判断逐字保留。
 
-- [ ] **Step 5: 运行目标回归并提交**
+- [x] **Step 5: 运行目标回归并提交**
 
 ```powershell
 & .\.venv\Scripts\python.exe -m pytest tests\joinquant_sync\test_scheduled_sync.py tests\joinquant_sync\test_scheduler.py -q

@@ -167,7 +167,7 @@ def test_cli_installs_statuses_and_uninstalls_scheduler(
     )
     assert installed[0][0] == "JoinQuantArchiveSync-Test"
     assert installed[0][1][2:] == [
-        "sync-active-simulations",
+        "scheduled-sync-pr",
         "--repository",
         str(tmp_path.resolve()),
     ]
@@ -190,6 +190,16 @@ def test_cli_exposes_active_simulation_command() -> None:
         ["sync-active-simulations", "--repository", "D:/repo"]
     )
     assert args.command == "sync-active-simulations"
+    assert args.repository == "D:/repo"
+
+
+def test_cli_exposes_scheduled_sync_pr_command() -> None:
+    from jq_sync import build_parser
+
+    args = build_parser().parse_args(
+        ["scheduled-sync-pr", "--repository", "D:/repo"]
+    )
+    assert args.command == "scheduled-sync-pr"
     assert args.repository == "D:/repo"
 
 
@@ -218,7 +228,7 @@ def test_scheduler_marker_in_arguments_does_not_grant_ownership(
     assert scheduler.scheduler_status("JoinQuantArchiveSync")["owned"] is False
 
 
-def _scheduled_xml(tmp_path: Path) -> str:
+def _scheduled_xml(tmp_path: Path, action: str = "sync-active-simulations") -> str:
     from joinquant_sync.scheduler import scheduler_xml
 
     root = tmp_path / "repo"
@@ -231,7 +241,7 @@ def _scheduled_xml(tmp_path: Path) -> str:
         / "scripts"
         / "jq_sync.py",
         "JoinQuantArchiveSync",
-        ["sync-active-simulations", "--repository", str(root.resolve())],
+        [action, "--repository", str(root.resolve())],
     )
 
 
@@ -241,6 +251,20 @@ def test_scheduler_status_accepts_exact_production_contract(
     import joinquant_sync.scheduler as scheduler
 
     xml = _scheduled_xml(tmp_path)
+    monkeypatch.setattr(
+        scheduler.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, xml, ""),
+    )
+    assert scheduler.scheduler_status("JoinQuantArchiveSync")["owned"] is True
+
+
+def test_scheduler_status_accepts_new_scheduled_sync_contract(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import joinquant_sync.scheduler as scheduler
+
+    xml = _scheduled_xml(tmp_path, "scheduled-sync-pr")
     monkeypatch.setattr(
         scheduler.subprocess,
         "run",

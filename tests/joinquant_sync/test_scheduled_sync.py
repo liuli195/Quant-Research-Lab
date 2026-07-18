@@ -49,7 +49,10 @@ def _repository(tmp_path: Path) -> tuple[Path, str]:
     )
     archive.mkdir(parents=True)
     (archive / "manifest.json").write_text("baseline\n", encoding="utf-8")
-    _git(repository, "add", "README.md", "joinquant")
+    pr_flow = repository / ".pr-flow"
+    pr_flow.mkdir()
+    (pr_flow / ".gitignore").write_text("/last-status.json\n", encoding="utf-8")
+    _git(repository, "add", "README.md", "joinquant", ".pr-flow/.gitignore")
     _git(repository, "commit", "-m", "baseline")
     _git(repository, "remote", "add", "origin", str(remote))
     _git(repository, "push", "-u", "origin", "main")
@@ -265,6 +268,7 @@ def _run_scenario(
             "sync_failed",
             "verify_command_failed",
             "verify_gate_failed",
+            "checks_failed",
         }:
             (archive / "manifest.json").write_text("changed\n", encoding="utf-8")
         if name == "sync_failed":
@@ -281,6 +285,16 @@ def _run_scenario(
         return 0, {"status": "complete", "results": [result]}
 
     monkeypatch.setattr(scheduled_sync, "_run_json", run_json, raising=False)
+    monkeypatch.setattr(
+        scheduled_sync,
+        "_run_pr_flow",
+        lambda *_args, command, pr=None, **_kwargs: (
+            (1, {"status": "CHECKS_FAILED", "details": {"pr": 123}})
+            if name == "checks_failed"
+            else (0, {"status": "cleanup_complete", "details": {"pr": 123}})
+        ),
+        raising=False,
+    )
     code, state = scheduled_sync.run_scheduled_sync(
         repository,
         python_exe=Path(sys.executable),
@@ -431,3 +445,81 @@ def test_joinquant_auth_failure_stops_before_sync(
     assert code != 0
     assert state["reason"] == "auth_required"
     assert calls == ["auth"]
+
+
+def _run_recovery_scenario(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[int, dict[str, object], list[str]]:
+    from joinquant_sync import scheduled_sync
+
+    repository, _ = _repository(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(scheduled_sync, "_runtime_root", lambda: runtime_root)
+    worktree = scheduled_sync._prepare_worktree(repository, runtime_root)
+    _git(worktree, "switch", "-c", scheduled_sync.AUTOMATION_BRANCH)
+    if name == "cleanup":
+        (worktree / ".pr-flow" / "last-status.json").write_text(
+            json.dumps(
+                {
+                    "status": "EXCEPTION_REQUIRED",
+                    "command": "cleanup",
+                    "details": {
+                        "sourceBranch": scheduled_sync.AUTOMATION_BRANCH,
+                        "pr": 123,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(
+        scheduled_sync, "_discover_pr_flow", lambda: tmp_path / "pr_flow.py"
+    )
+    monkeypatch.setattr(scheduled_sync, "_command_ok", lambda *_a, **_k: None)
+    sync_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        scheduled_sync,
+        "_run_json",
+        lambda command, **_kwargs: sync_calls.append(command),
+    )
+    pr_calls: list[str] = []
+
+    def run_pr_flow(
+        *_args: object, command: str, pr: object = None, **_kwargs: object
+    ) -> tuple[int, dict[str, object]]:
+        pr_calls.append(f"{command}:{pr}" if pr is not None else command)
+        return 0, {"status": "cleanup_complete", "details": {"pr": pr or 123}}
+
+    monkeypatch.setattr(scheduled_sync, "_run_pr_flow", run_pr_flow, raising=False)
+    code, state = scheduled_sync.run_scheduled_sync(
+        repository, python_exe=Path(sys.executable), cli=Path("jq_sync.py")
+    )
+    assert sync_calls == []
+    return code, state, pr_calls
+
+
+def test_fixed_branch_without_pr_status_resumes_complete_without_sync(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    code, state, calls = _run_recovery_scenario("complete", tmp_path, monkeypatch)
+    assert code == 0
+    assert state["status"] == "complete"
+    assert calls == ["complete"]
+
+
+def test_merged_cleanup_state_resumes_cleanup_without_sync(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    code, state, calls = _run_recovery_scenario("cleanup", tmp_path, monkeypatch)
+    assert code == 0
+    assert state["status"] == "complete"
+    assert calls == ["cleanup:123"]
+
+
+def test_pr_flow_stop_is_recoverable_and_never_uses_alternate_merge(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = _run_scenario("checks_failed", tmp_path, monkeypatch)
+    assert result["code"] != 0
+    assert result["state"]["reason"] == "pr_flow_stopped"
+    assert result["state"]["pr"] == 123
