@@ -36,7 +36,7 @@ base-ref: b015eaa757a8a14c30cc8cb33b9471844322ea7a
 - Consumes: `sync_all_active_simulations(page, repository) -> list[dict[str, object]]`
 - Produces: `committed` 和 `unchanged` 结果都包含 `strategy_id: str`、`simulation_id: str`；`failed` 结果包含异常发生前已经确定的身份字段；其他字段和状态语义不变。
 
-- [ ] **Step 1: 扩展现有增量测试，先证明缺失身份**
+- [x] **Step 1: 扩展现有增量测试，先证明缺失身份**
 
 在 `test_active_simulation_sync_is_incremental` 的第三次 `unchanged` 断言后加入：
 
@@ -47,7 +47,7 @@ assert third[0]["simulation_id"] == "simulation-001"
 
 新增 `test_failed_result_keeps_identified_ids`：让 `_update_strategy_latest` 在身份已确定后抛出测试异常，再调用一次同步并断言 `failed` 结果仍包含两个 ID；这条测试证明失败对象自身的部分写入可被 Task 3 归属和回滚。
 
-- [ ] **Step 2: 运行目标测试并确认失败**
+- [x] **Step 2: 运行目标测试并确认失败**
 
 ```powershell
 & .\.venv\Scripts\python.exe -m pytest tests\joinquant_sync\test_sync_pipeline.py -k "active_simulation_sync_is_incremental or failed_result_keeps_identified_ids" -q
@@ -55,7 +55,7 @@ assert third[0]["simulation_id"] == "simulation-001"
 
 Expected: FAIL，`unchanged` 和身份已确定的 `failed` 结果缺少对应 ID。
 
-- [ ] **Step 3: 最小扩展 `unchanged` 和 `failed` 结构化结果**
+- [x] **Step 3: 最小扩展 `unchanged` 和 `failed` 结构化结果**
 
 ```python
 if synced["status"] == "unchanged":
@@ -72,7 +72,7 @@ if synced["status"] == "unchanged":
 
 每个 candidate（候选对象）进入 `try` 前把 `strategy_id`、`simulation_id` 初始化为 `None`，异常处理只把已经赋值的字段复制到现有 `failure` 字典。不得移动写入顺序、改变 `commit_simulation_evidence` 或新增映射层。
 
-- [ ] **Step 4: 运行目标回归**
+- [x] **Step 4: 运行目标回归**
 
 ```powershell
 & .\.venv\Scripts\python.exe -m pytest tests\joinquant_sync\test_sync_pipeline.py -k "active_simulation" -q
@@ -80,7 +80,7 @@ if synced["status"] == "unchanged":
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```powershell
 git add .agents/skills/joinquant-archive-sync/scripts/joinquant_sync/sync_pipeline.py tests/joinquant_sync/test_sync_pipeline.py
