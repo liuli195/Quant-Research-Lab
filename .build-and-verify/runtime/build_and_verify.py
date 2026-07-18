@@ -245,6 +245,7 @@ def _build_parser() -> argparse.ArgumentParser:
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument("--project", default=".")
     verify_parser.add_argument("--full", action="store_true")
+    verify_parser.add_argument("--performance-report", action="store_true")
     return parser
 
 
@@ -252,6 +253,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     try:
         args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+        if (
+            args.command == "verify"
+            and args.performance_report
+            and not args.full
+        ):
+            parser.error("--performance-report requires --full")
     except SystemExit as error:
         return int(error.code) if isinstance(error.code, int) else 2
     if args.command == "init":
@@ -269,7 +276,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "verify":
         project = Path(args.project).resolve()
         _print_runtime_update_hint(project)
-        return int(_runner().run_verify(project, full=args.full))
+        return int(
+            _runner().run_verify(
+                project,
+                full=args.full,
+                performance_report=args.performance_report,
+                runtime_version=_runtime_metadata()["runtime_version"],
+            )
+        )
     parser.error(f"unsupported command: {args.command}")
     return 2
 

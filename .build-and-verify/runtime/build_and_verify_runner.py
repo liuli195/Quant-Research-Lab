@@ -8,11 +8,13 @@ import importlib.util
 import json
 import os
 import platform
+import re
 import shlex
 import subprocess
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from collections.abc import Callable
@@ -94,6 +96,19 @@ def _pytest_xdist_workers(value: Any) -> str | None:
     return str(value)
 
 
+def _string_command_token_spans(command: str) -> list[tuple[str, int]]:
+    spans: list[tuple[str, int]] = []
+    for match in re.finditer(r'''"[^"]*"|'[^']*'|\S+''', command):
+        raw = match.group(0)
+        token = (
+            raw[1:-1]
+            if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {'"', "'"}
+            else raw
+        )
+        spans.append((token, match.end()))
+    return spans
+
+
 def _command_with_pytest_xdist_workers(command: Any, workers: str | None) -> Any:
     if workers is None or not _uses_pytest(command) or uses_pytest_xdist(command):
         return command
@@ -106,15 +121,17 @@ def _command_with_pytest_xdist_workers(command: Any, workers: str | None) -> Any
                 insert_at = index + 2
                 return tokens[:insert_at] + ["-n", workers] + tokens[insert_at:]
     if isinstance(command, str):
-        tokens = _command_tokens(command)
-        for index, token in enumerate(tokens):
+        tokens = _string_command_token_spans(command)
+        for index, (token, end) in enumerate(tokens):
             if token == "pytest" or token.endswith("/pytest") or token.endswith("\\pytest"):
-                tokens = tokens[: index + 1] + ["-n", workers] + tokens[index + 1 :]
-                return shlex.join(tokens)
-            if token == "-m" and index + 1 < len(tokens) and tokens[index + 1] == "pytest":
-                insert_at = index + 2
-                tokens = tokens[:insert_at] + ["-n", workers] + tokens[insert_at:]
-                return shlex.join(tokens)
+                return f"{command[:end]} -n {workers}{command[end:]}"
+            if (
+                token == "-m"
+                and index + 1 < len(tokens)
+                and tokens[index + 1][0] == "pytest"
+            ):
+                end = tokens[index + 1][1]
+                return f"{command[:end]} -n {workers}{command[end:]}"
     return command
 
 
@@ -700,7 +717,7 @@ def _run_scheduled_checks(
     selected: list[dict[str, Any]],
     changed_files: list[str],
     runner: Runner,
-) -> tuple[int, list[str]]:
+) -> tuple[int, list[str], list[CheckResult]]:
     indexed_selected = list(enumerate(selected))
     parallel_checks = [(index, check) for index, check in indexed_selected if check.get("checkParallel") is True]
     serial_checks = [(index, check) for index, check in indexed_selected if check.get("checkParallel") is not True]
@@ -750,7 +767,8 @@ def _run_scheduled_checks(
 
     failures = 0
     failed_ids: list[str] = []
-    for result in sorted(results, key=lambda item: item.index):
+    ordered_results = sorted(results, key=lambda item: item.index)
+    for result in ordered_results:
         if result.stdout:
             print(result.stdout, end="")
         if result.stderr:
@@ -762,7 +780,25 @@ def _run_scheduled_checks(
         else:
             failures += 1
             failed_ids.append(str(result.check.get("id")))
-    return failures, failed_ids
+    return failures, failed_ids, ordered_results
+
+
+def _write_performance_report(path: Path, payload: dict[str, Any]) -> bool:
+    temp = path.with_name(".performance-report.json.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temp.replace(path)
+    except OSError:
+        try:
+            temp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+    return True
 
 
 def run_build(project: Path, runner: Runner = subprocess.run) -> int:
@@ -794,6 +830,8 @@ def run_verify(
     runner: Runner = subprocess.run,
     *,
     full: bool = False,
+    performance_report: bool = False,
+    runtime_version: str = "unknown",
 ) -> int:
     try:
         config = _load_config(project)
@@ -804,7 +842,71 @@ def run_verify(
     selected = checks if full else _selected_checks(checks, changed_files)
     failures = 0
     if full:
-        failures, failed_ids = _run_scheduled_checks(project, config, selected, changed_files, runner)
+        verify_config = config.get("verify", {})
+        budget_seconds = verify_config.get("fullBudgetSeconds")
+        if budget_seconds is not None and (
+            isinstance(budget_seconds, bool)
+            or not isinstance(budget_seconds, int)
+            or budget_seconds <= 0
+        ):
+            return _config_error(
+                ConfigError(
+                    "invalid_config: .build-and-verify/config.json: "
+                    "verify.fullBudgetSeconds must be positive integer"
+                )
+            )
+        started_at = time.monotonic()
+        failures, failed_ids, results = _run_scheduled_checks(
+            project, config, selected, changed_files, runner
+        )
+        total_seconds = round(time.monotonic() - started_at, 2)
+        if len(results) == len(selected):
+            over_budget = (
+                total_seconds > budget_seconds if budget_seconds is not None else None
+            )
+            report_path = (
+                project / ".build-and-verify" / "runs" / "performance-report.json"
+            )
+            report_relative_path = report_path.relative_to(project).as_posix()
+            if performance_report or over_budget is True:
+                payload = {
+                    "schemaVersion": 1,
+                    "runtimeVersion": runtime_version,
+                    "generatedAt": datetime.now(timezone.utc)
+                    .replace(microsecond=0)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    "totalSeconds": total_seconds,
+                    "budgetSeconds": budget_seconds,
+                    "overBudget": over_budget,
+                    "verificationStatus": "failed" if failures else "passed",
+                    "checks": [
+                        {
+                            "id": str(result.check.get("id")),
+                            "status": "passed" if result.returncode == 0 else "failed",
+                            "durationSeconds": round(result.duration_seconds, 2),
+                        }
+                        for result in results
+                    ],
+                }
+                if _write_performance_report(report_path, payload):
+                    print(f"performance-report: {report_relative_path}")
+                else:
+                    print(
+                        f"performance-report-warning: {report_relative_path}",
+                        file=sys.stderr,
+                    )
+            if over_budget is True:
+                exceeded_seconds = total_seconds - budget_seconds
+                exceeded_percent = exceeded_seconds / budget_seconds * 100
+                print(
+                    "performance-warning: "
+                    f"totalSeconds={total_seconds:.2f} "
+                    f"budgetSeconds={budget_seconds} "
+                    f"exceededSeconds={exceeded_seconds:.2f} "
+                    f"exceededPercent={exceeded_percent:.2f} "
+                    f"report={report_relative_path}"
+                )
         if failed_ids:
             print(f"failed: {', '.join(failed_ids)}")
         print(f"checked: {_check_ids(selected)}")
@@ -826,7 +928,9 @@ def run_verify(
             print(f"cache-hit: {check.get('id')}")
             continue
         cache_misses.append(check)
-    scheduled_failures, failed_ids = _run_scheduled_checks(project, config, cache_misses, changed_files, runner)
+    scheduled_failures, failed_ids, _ = _run_scheduled_checks(
+        project, config, cache_misses, changed_files, runner
+    )
     failures += scheduled_failures
     if failed_ids:
         print(f"failed: {', '.join(failed_ids)}")

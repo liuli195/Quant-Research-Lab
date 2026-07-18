@@ -134,8 +134,10 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
     turtle_e2e = checks["verify.local-quant-research-e2e-turtle"]
     jit = checks["verify.local-quant-research-jit"]
     layout = checks["verify.skill-layout"]
+    scheduler_unit = checks["verify.scheduler-unit"]
 
     assert config["verify"]["maxParallel"] == 10
+    assert config["verify"]["fullBudgetSeconds"] == 60
     assert len(checks) == 19
     assert [
         check["id"] for check in config["verify"]["checks"][:10]
@@ -191,7 +193,17 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
     assert {".agents/skills/**", ".claude/skills/**"}.issubset(layout["inputs"])
     local_checks = [*unit_checks, vectorbt_unit, *equivalence, e2e, turtle_e2e, jit]
     assert all(item["checkParallel"] is True for item in checks.values())
-    assert all("pytestXdistWorkers" not in item for item in checks.values())
+    assert scheduler_unit["pytestXdistWorkers"] == 4
+    assert "-p xdist.plugin" in scheduler_unit["command"]
+    assert "-n 4" not in scheduler_unit["command"]
+    assert "tests\\joinquant_sync\\test_scheduler.py" in scheduler_unit["command"]
+    assert "tests\\joinquant_sync\\test_scheduled_sync.py" in scheduler_unit["command"]
+    assert 'not schtasks_runs_self_test' in scheduler_unit["command"]
+    assert all(
+        "pytestXdistWorkers" not in item
+        for item in checks.values()
+        if item is not scheduler_unit
+    )
     assert all(
         "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1" in item["command"]
         for item in checks.values()

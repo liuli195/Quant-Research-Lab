@@ -12,6 +12,7 @@
   "verify": {
     "maxParallel": 10,
     "timeoutSeconds": 180,
+    "fullBudgetSeconds": 60,
     "checks": [
       {
         "id": "verify.local-quant-research-equivalence-immediate-17",
@@ -112,7 +113,8 @@
       },
       {
         "id": "verify.scheduler-unit",
-        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\joinquant_sync\\test_scheduler.py tests\\joinquant_sync\\test_scheduled_sync.py -k \"not schtasks_runs_self_test\"",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest -p xdist.plugin tests\\joinquant_sync\\test_scheduler.py tests\\joinquant_sync\\test_scheduled_sync.py -k \"not schtasks_runs_self_test\"",
+        "pytestXdistWorkers": 4,
         "paths": [".agents/skills/joinquant-archive-sync/**", "tests/joinquant_sync/**", "requirements*.txt"],
         "inputs": [".agents/skills/joinquant-archive-sync/**", "tests/joinquant_sync/**", "requirements.txt", "requirements-dev.txt"],
         "checkParallel": true
