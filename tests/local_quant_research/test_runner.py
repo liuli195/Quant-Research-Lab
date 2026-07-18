@@ -174,6 +174,28 @@ def _build_v2_config(repo: Path) -> tuple[Path, dict[str, object]]:
     return config, document
 
 
+def test_repo_state_tracks_files_and_prunes_runtime_directories(tmp_path: Path) -> None:
+    from scripts.research.local_quant_research import runner
+
+    source = tmp_path / "source.py"
+    source.write_text("before\n", encoding="utf-8")
+    ignored = tmp_path / "ignored"
+    ignored.mkdir()
+    (ignored / "result.json").write_text("{}\n", encoding="utf-8")
+    cache = tmp_path / ".venv"
+    cache.mkdir()
+    (cache / "cache.bin").write_bytes(b"cache")
+    local = tmp_path / ".local"
+    local.mkdir()
+    (local / "runtime.json").write_text("{}\n", encoding="utf-8")
+
+    before = runner._repo_state(tmp_path, ignored_roots=(ignored,))
+    source.write_text("after\n", encoding="utf-8")
+
+    assert set(before) == {"source.py"}
+    assert runner._repo_state(tmp_path, ignored_roots=(ignored,)) != before
+
+
 def test_v2_config_has_only_strategy_snapshot_scenario_and_declared_inputs(
     tmp_path: Path,
 ) -> None:

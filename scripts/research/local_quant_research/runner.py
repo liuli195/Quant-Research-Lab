@@ -222,6 +222,7 @@ def _sanitized_environment(python_path: Path) -> dict[str, str]:
         "HOME",
         "USERPROFILE",
         "LOCALAPPDATA",
+        "NUMBA_DISABLE_JIT",
     )
     environment = {key: os.environ[key] for key in allowed if key in os.environ}
     environment.update(
@@ -240,15 +241,30 @@ def _repo_state(
     *,
     ignored_roots: Sequence[Path],
 ) -> dict[str, tuple[int, int]]:
-    ignored_names = {".git", ".venv", ".pytest_cache", ".ruff_cache", "__pycache__"}
+    ignored_names = {
+        ".git",
+        ".local",
+        ".venv",
+        ".pytest_cache",
+        ".ruff_cache",
+        "__pycache__",
+    }
     state: dict[str, tuple[int, int]] = {}
     ignored = tuple(path.resolve() for path in ignored_roots)
-    for path in repo_root.rglob("*"):
-        if any(part in ignored_names for part in path.relative_to(repo_root).parts):
-            continue
-        if any(_inside(path, root) for root in ignored):
-            continue
-        if path.is_file() and not path.is_symlink():
+    for directory, names, files in os.walk(repo_root, followlinks=False):
+        root = Path(directory)
+        names[:] = [
+            name
+            for name in names
+            if name not in ignored_names
+            and not any(_inside(root / name, ignored_root) for ignored_root in ignored)
+        ]
+        for name in files:
+            if name in ignored_names:
+                continue
+            path = root / name
+            if path.is_symlink():
+                continue
             stat = path.stat()
             state[path.relative_to(repo_root).as_posix()] = (stat.st_size, stat.st_mtime_ns)
     return state

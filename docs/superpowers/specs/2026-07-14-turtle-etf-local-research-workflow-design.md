@@ -2,6 +2,8 @@
 comet_change: build-turtle-etf-local-research-workflow
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-07-17-build-turtle-etf-local-research-workflow
+status: final
 ---
 
 # 海龟 ETF 本地研究流程与聚宽原生分析数据技术设计（vectorbt 执行内核修订）

@@ -1,0 +1,7 @@
+{
+  "openspec_proposal": "openspec/changes/optimize-full-verification-under-30-seconds/proposal.md",
+  "openspec_design": "openspec/changes/optimize-full-verification-under-30-seconds/design.md",
+  "openspec_tasks": "openspec/changes/optimize-full-verification-under-30-seconds/tasks.md",
+  "openspec_delta_spec": "openspec/changes/optimize-full-verification-under-30-seconds/specs/local-quant-research-workflow/spec.md",
+  "archive_directory": "openspec/changes/archive/2026-07-17-optimize-full-verification-under-30-seconds"
+}

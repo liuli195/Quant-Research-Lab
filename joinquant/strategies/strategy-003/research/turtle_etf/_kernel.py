@@ -698,6 +698,8 @@ def _cash_feasible_targets_nb(
     )
     for _ in range(64):
         candidate_scale = (lower + upper) / 2.0
+        if candidate_scale == lower or candidate_scale == upper:
+            break
         _targets_for_scale_into_nb(
             unit_base_quantities,
             unit_counts,
@@ -710,7 +712,14 @@ def _cash_feasible_targets_nb(
             params.lot_size,
             candidate_targets,
         )
-        if _cash_after_targets_nb(
+        matches_feasible_targets = True
+        for column in range(targets.shape[0]):
+            if candidate_targets[column] != targets[column]:
+                matches_feasible_targets = False
+                break
+        if matches_feasible_targets:
+            lower = candidate_scale
+        elif _cash_after_targets_nb(
             row,
             from_column,
             candidate_targets,

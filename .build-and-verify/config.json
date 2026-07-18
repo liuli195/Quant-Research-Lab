@@ -4,386 +4,157 @@
     "checks": [
       {
         "id": "build.placeholder",
-        "command": [
-          ".\\.venv\\Scripts\\python.exe",
-          "scripts\\build_placeholder.py"
-        ],
-        "inputs": [
-          "scripts/build_placeholder.py"
-        ]
+        "command": [".\\.venv\\Scripts\\python.exe", "scripts\\build_placeholder.py"],
+        "inputs": ["scripts/build_placeholder.py"]
       }
     ]
   },
   "verify": {
-    "maxParallel": 7,
+    "maxParallel": 10,
     "timeoutSeconds": 180,
     "checks": [
       {
-        "id": "verify.skill-layout",
-        "command": [
-          ".\\.venv\\Scripts\\python.exe",
-          "-m",
-          "pytest",
-          "tests\\test_skill_layout.py"
-        ],
-        "paths": [
-          ".agents/skills/run-local-quant-research/**",
-          ".agents/skills/joinquant-docs-sync/**",
-          ".agents/skills/joinquant-archive-sync/**",
-          ".claude/skills/run-local-quant-research",
-          ".claude/skills/joinquant-docs-sync",
-          ".claude/skills/joinquant-archive-sync",
-          ".gitattributes",
-          "requirements*.txt",
-          "tests/conftest.py",
-          "tests/test_skill_layout.py"
-        ],
-        "inputs": [
-          ".agents/skills/run-local-quant-research/**",
-          ".agents/skills/joinquant-docs-sync/**",
-          ".agents/skills/joinquant-archive-sync/**",
-          ".claude/skills/run-local-quant-research",
-          ".claude/skills/joinquant-docs-sync",
-          ".claude/skills/joinquant-archive-sync",
-          ".gitattributes",
-          "requirements.txt",
-          "requirements-dev.txt",
-          "tests/conftest.py",
-          "tests/test_skill_layout.py"
-        ],
+        "id": "verify.local-quant-research-equivalence-immediate-17",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\\.venv\\Scripts\\python.exe -m pytest \"tests\\local_quant_research\\test_local_research_equivalence.py::test_strategy_module_matches_frozen_equivalence_fixture[immediate-17-etf]\"",
+        "paths": ["scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "requirements*.txt"],
+        "inputs": ["scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "requirements.txt", "requirements-dev.txt"],
         "checkParallel": true,
-        "pytestXdistWorkers": 4
+        "timeoutSeconds": 300
       },
       {
-        "id": "verify.docs-sync",
-        "command": [
-          ".\\.venv\\Scripts\\python.exe",
-          "-m",
-          "pytest",
-          "tests\\joinquant_docs_sync\\test_cli.py"
-        ],
-        "paths": [
-          ".agents/skills/joinquant-docs-sync/**",
-          ".claude/skills/joinquant-docs-sync",
-          "requirements*.txt",
-          "tests/conftest.py",
-          "tests/joinquant_docs_sync/test_cli.py"
-        ],
-        "inputs": [
-          ".agents/skills/joinquant-docs-sync/**",
-          ".claude/skills/joinquant-docs-sync",
-          "requirements.txt",
-          "requirements-dev.txt",
-          "tests/conftest.py",
-          "tests/joinquant_docs_sync/test_cli.py"
-        ],
+        "id": "verify.local-quant-research-equivalence-delayed-11",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\\.venv\\Scripts\\python.exe -m pytest \"tests\\local_quant_research\\test_local_research_equivalence.py::test_strategy_module_matches_frozen_equivalence_fixture[delayed-11-etf-1d]\"",
+        "paths": ["scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "requirements*.txt"],
+        "inputs": ["scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "requirements.txt", "requirements-dev.txt"],
         "checkParallel": true,
-        "pytestXdistWorkers": 4
+        "timeoutSeconds": 300
       },
       {
-        "id": "verify.archive",
-        "command": [
-          ".\\.venv\\Scripts\\python.exe",
-          "-m",
-          "pytest",
-          "tests\\joinquant_sync\\test_archive.py"
-        ],
-        "paths": [
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          ".agents/skills/joinquant-archive-sync/scripts/jq_sync.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/__init__.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/archive.py",
-          "requirements*.txt",
-          "tests/conftest.py",
-          "tests/joinquant_sync/test_archive.py"
-        ],
-        "inputs": [
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          ".agents/skills/joinquant-archive-sync/scripts/jq_sync.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/__init__.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/archive.py",
-          "requirements.txt",
-          "requirements-dev.txt",
-          "tests/conftest.py",
-          "tests/joinquant_sync/test_archive.py"
-        ],
+        "id": "verify.local-quant-research-equivalence-immediate-11",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\\.venv\\Scripts\\python.exe -m pytest \"tests\\local_quant_research\\test_local_research_equivalence.py::test_strategy_module_matches_frozen_equivalence_fixture[immediate-11-etf]\"",
+        "paths": ["scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "requirements*.txt"],
+        "inputs": ["scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "requirements.txt", "requirements-dev.txt"],
         "checkParallel": true,
-        "pytestXdistWorkers": 4
+        "timeoutSeconds": 300
       },
       {
-        "id": "verify.browser-research",
-        "command": [
-          ".\\.venv\\Scripts\\python.exe",
-          "-m",
-          "pytest",
-          "tests\\joinquant_sync\\test_browser_research.py"
-        ],
-        "paths": [
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          ".agents/skills/joinquant-archive-sync/scripts/jq_sync.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/__init__.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/archive.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/browser.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/research.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/research_cloud.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/sync_pipeline.py",
-          "requirements*.txt",
-          "tests/conftest.py",
-          "tests/joinquant_sync/test_browser_research.py"
-        ],
-        "inputs": [
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          ".agents/skills/joinquant-archive-sync/scripts/jq_sync.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/__init__.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/archive.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/browser.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/research.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/research_cloud.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/sync_pipeline.py",
-          "requirements.txt",
-          "requirements-dev.txt",
-          "tests/conftest.py",
-          "tests/joinquant_sync/test_browser_research.py"
-        ],
+        "id": "verify.local-quant-research-e2e-turtle",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\local_quant_research\\test_turtle_e2e.py",
+        "paths": [".agents/skills/run-local-quant-research/**", ".claude/skills/run-local-quant-research", "scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "requirements*.txt"],
+        "inputs": [".agents/skills/run-local-quant-research/**", ".claude/skills/run-local-quant-research", "scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "requirements.txt", "requirements-dev.txt"],
         "checkParallel": true,
-        "pytestXdistWorkers": 4
-      },
-      {
-        "id": "verify.query",
-        "command": [
-          ".\\.venv\\Scripts\\python.exe",
-          "-m",
-          "pytest",
-          "tests\\joinquant_sync\\test_query.py"
-        ],
-        "paths": [
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          ".agents/skills/joinquant-archive-sync/scripts/jq_sync.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/__init__.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/archive.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/query.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/sync_pipeline.py",
-          "requirements*.txt",
-          "tests/conftest.py",
-          "tests/joinquant_sync/test_query.py"
-        ],
-        "inputs": [
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          ".agents/skills/joinquant-archive-sync/scripts/jq_sync.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/__init__.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/archive.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/query.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/sync_pipeline.py",
-          "requirements.txt",
-          "requirements-dev.txt",
-          "tests/conftest.py",
-          "tests/joinquant_sync/test_query.py"
-        ],
-        "checkParallel": true,
-        "pytestXdistWorkers": 4
-      },
-      {
-        "id": "verify.scheduler-unit",
-        "command": [
-          ".\\.venv\\Scripts\\python.exe",
-          "-m",
-          "pytest",
-          "tests\\joinquant_sync\\test_scheduler.py",
-          "-k",
-          "not schtasks_runs_self_test"
-        ],
-        "paths": [
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          ".agents/skills/joinquant-archive-sync/scripts/jq_sync.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/__init__.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/scheduler.py",
-          "requirements*.txt",
-          "tests/conftest.py",
-          "tests/joinquant_sync/test_scheduler.py"
-        ],
-        "inputs": [
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          ".agents/skills/joinquant-archive-sync/scripts/jq_sync.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/__init__.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/scheduler.py",
-          "requirements.txt",
-          "requirements-dev.txt",
-          "tests/conftest.py",
-          "tests/joinquant_sync/test_scheduler.py"
-        ],
-        "checkParallel": true,
-        "pytestXdistWorkers": 4
-      },
-      {
-        "id": "verify.sync-pipeline",
-        "command": [
-          ".\\.venv\\Scripts\\python.exe",
-          "-m",
-          "pytest",
-          "tests\\joinquant_sync\\test_sync_pipeline.py"
-        ],
-        "paths": [
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/__init__.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/archive.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/browser.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/query.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/research_cloud.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/sync_pipeline.py",
-          "requirements*.txt",
-          "tests/conftest.py",
-          "tests/joinquant_sync/test_sync_pipeline.py"
-        ],
-        "inputs": [
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/__init__.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/archive.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/browser.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/query.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/research_cloud.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/sync_pipeline.py",
-          "requirements.txt",
-          "requirements-dev.txt",
-          "tests/conftest.py",
-          "tests/joinquant_sync/test_sync_pipeline.py"
-        ],
-        "checkParallel": true,
-        "pytestXdistWorkers": 4
-      },
-      {
-        "id": "verify.self-test",
-        "command": [
-          ".\\.venv\\Scripts\\python.exe",
-          "-m",
-          "pytest",
-          "tests\\joinquant_sync\\test_self_test.py"
-        ],
-        "paths": [
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          ".agents/skills/joinquant-archive-sync/scripts/jq_sync.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/__init__.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/archive.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/browser.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/query.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/selftest.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/sync_pipeline.py",
-          ".claude/skills/joinquant-archive-sync",
-          "requirements*.txt",
-          "tests/conftest.py",
-          "tests/joinquant_sync/test_self_test.py"
-        ],
-        "inputs": [
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          ".agents/skills/joinquant-archive-sync/scripts/jq_sync.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/__init__.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/archive.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/browser.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/query.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/selftest.py",
-          ".agents/skills/joinquant-archive-sync/scripts/joinquant_sync/sync_pipeline.py",
-          ".claude/skills/joinquant-archive-sync",
-          "requirements.txt",
-          "requirements-dev.txt",
-          "tests/conftest.py",
-          "tests/joinquant_sync/test_self_test.py"
-        ],
-        "checkParallel": true,
-        "pytestXdistWorkers": 4
-      },
-      {
-        "id": "verify.local-quant-research-unit",
-        "command": [
-          ".\\.venv\\Scripts\\python.exe",
-          "-m",
-          "pytest",
-          "tests\\local_quant_research",
-          "tests\\quant_analysis",
-          "--ignore=tests\\local_quant_research\\test_generic_e2e.py",
-          "--ignore=tests\\local_quant_research\\test_turtle_e2e.py",
-          "--ignore=tests\\local_quant_research\\test_local_research_v2_e2e.py"
-        ],
-        "paths": [
-          ".agents/skills/run-local-quant-research/**",
-          ".claude/skills/run-local-quant-research",
-          "scripts/research/market_data/**",
-          "scripts/research/local_quant_research/**",
-          "scripts/research/analysis_data/**",
-          "scripts/research/quant_analysis/**",
-          "joinquant/strategies/strategy-003/research/**",
-          "tests/local_quant_research/**",
-          "tests/quant_analysis/**",
-          "tests/test_skill_layout.py",
-          "requirements*.txt"
-        ],
-        "inputs": [
-          ".agents/skills/run-local-quant-research/**",
-          ".claude/skills/run-local-quant-research",
-          "scripts/research/market_data/**",
-          "scripts/research/local_quant_research/**",
-          "scripts/research/analysis_data/**",
-          "scripts/research/quant_analysis/**",
-          "joinquant/strategies/strategy-003/research/**",
-          "tests/local_quant_research/**",
-          "tests/quant_analysis/**",
-          "tests/test_skill_layout.py",
-          "requirements.txt",
-          "requirements-dev.txt"
-        ],
-        "checkParallel": true,
-        "pytestXdistWorkers": 4,
         "timeoutSeconds": 300
       },
       {
         "id": "verify.local-quant-research-e2e",
-        "command": [
-          ".\\.venv\\Scripts\\python.exe",
-          "-m",
-          "pytest",
-          "tests\\local_quant_research\\test_generic_e2e.py",
-          "tests\\local_quant_research\\test_turtle_e2e.py",
-          "tests\\local_quant_research\\test_local_research_v2_e2e.py"
-        ],
-        "paths": [
-          ".agents/skills/run-local-quant-research/**",
-          ".claude/skills/run-local-quant-research",
-          "scripts/research/market_data/**",
-          "scripts/research/local_quant_research/**",
-          "scripts/research/analysis_data/**",
-          "scripts/research/quant_analysis/**",
-          "joinquant/strategies/strategy-003/research/**",
-          "tests/local_quant_research/**",
-          "tests/quant_analysis/**",
-          "tests/test_skill_layout.py",
-          "requirements*.txt"
-        ],
-        "inputs": [
-          ".agents/skills/run-local-quant-research/**",
-          ".claude/skills/run-local-quant-research",
-          "scripts/research/market_data/**",
-          "scripts/research/local_quant_research/**",
-          "scripts/research/analysis_data/**",
-          "scripts/research/quant_analysis/**",
-          "joinquant/strategies/strategy-003/research/**",
-          "tests/local_quant_research/**",
-          "tests/quant_analysis/**",
-          "tests/test_skill_layout.py",
-          "requirements.txt",
-          "requirements-dev.txt"
-        ],
-        "checkParallel": false,
-        "pytestXdistWorkers": 1,
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\local_quant_research\\test_generic_e2e.py tests\\local_quant_research\\test_local_research_v2_e2e.py",
+        "paths": [".agents/skills/run-local-quant-research/**", ".claude/skills/run-local-quant-research", "scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "tests/quant_analysis/**", "requirements*.txt"],
+        "inputs": [".agents/skills/run-local-quant-research/**", ".claude/skills/run-local-quant-research", "scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "tests/quant_analysis/**", "requirements.txt", "requirements-dev.txt"],
+        "checkParallel": true,
         "timeoutSeconds": 300
+      },
+      {
+        "id": "verify.local-quant-research-package-unit",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\local_quant_research\\test_archive_promotion.py tests\\local_quant_research\\test_result_package.py -k \"not turtle and not vectorbt\"",
+        "paths": [".agents/skills/run-local-quant-research/**", ".claude/skills/run-local-quant-research", "scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "tests/quant_analysis/**", "requirements*.txt"],
+        "inputs": [".agents/skills/run-local-quant-research/**", ".claude/skills/run-local-quant-research", "scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "tests/quant_analysis/**", "requirements.txt", "requirements-dev.txt"],
+        "checkParallel": true,
+        "timeoutSeconds": 300
+      },
+      {
+        "id": "verify.self-test",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\joinquant_sync\\test_self_test.py",
+        "paths": [".agents/skills/joinquant-archive-sync/**", ".claude/skills/joinquant-archive-sync", "tests/joinquant_sync/**", "requirements*.txt"],
+        "inputs": [".agents/skills/joinquant-archive-sync/**", ".claude/skills/joinquant-archive-sync", "tests/joinquant_sync/**", "requirements.txt", "requirements-dev.txt"],
+        "checkParallel": true
+      },
+      {
+        "id": "verify.docs-sync",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\joinquant_docs_sync\\test_cli.py",
+        "paths": [".agents/skills/joinquant-docs-sync/**", ".claude/skills/joinquant-docs-sync", "tests/joinquant_docs_sync/**", "requirements*.txt"],
+        "inputs": [".agents/skills/joinquant-docs-sync/**", ".claude/skills/joinquant-docs-sync", "tests/joinquant_docs_sync/**", "requirements.txt", "requirements-dev.txt"],
+        "checkParallel": true
+      },
+      {
+        "id": "verify.browser-research",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\joinquant_sync\\test_browser_research.py",
+        "paths": [".agents/skills/joinquant-archive-sync/**", "tests/joinquant_sync/**", "requirements*.txt"],
+        "inputs": [".agents/skills/joinquant-archive-sync/**", "tests/joinquant_sync/**", "requirements.txt", "requirements-dev.txt"],
+        "checkParallel": true
+      },
+      {
+        "id": "verify.skill-layout",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\test_skill_layout.py",
+        "paths": [".agents/skills/**", ".claude/skills/**", ".gitattributes", "requirements*.txt", "tests/conftest.py", "tests/test_skill_layout.py"],
+        "inputs": [".agents/skills/**", ".claude/skills/**", ".gitattributes", "requirements.txt", "requirements-dev.txt", "tests/conftest.py", "tests/test_skill_layout.py"],
+        "checkParallel": true
+      },
+      {
+        "id": "verify.sync-pipeline",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\joinquant_sync\\test_sync_pipeline.py",
+        "paths": [".agents/skills/joinquant-archive-sync/**", "tests/joinquant_sync/**", "requirements*.txt"],
+        "inputs": [".agents/skills/joinquant-archive-sync/**", "tests/joinquant_sync/**", "requirements.txt", "requirements-dev.txt"],
+        "checkParallel": true
+      },
+      {
+        "id": "verify.query",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\joinquant_sync\\test_query.py",
+        "paths": [".agents/skills/joinquant-archive-sync/**", "tests/joinquant_sync/**", "requirements*.txt"],
+        "inputs": [".agents/skills/joinquant-archive-sync/**", "tests/joinquant_sync/**", "requirements.txt", "requirements-dev.txt"],
+        "checkParallel": true
+      },
+      {
+        "id": "verify.archive",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\joinquant_sync\\test_archive.py",
+        "paths": [".agents/skills/joinquant-archive-sync/**", "tests/joinquant_sync/**", "requirements*.txt"],
+        "inputs": [".agents/skills/joinquant-archive-sync/**", "tests/joinquant_sync/**", "requirements.txt", "requirements-dev.txt"],
+        "checkParallel": true
+      },
+      {
+        "id": "verify.scheduler-unit",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\joinquant_sync\\test_scheduler.py -k \"not schtasks_runs_self_test\"",
+        "paths": [".agents/skills/joinquant-archive-sync/**", "tests/joinquant_sync/**", "requirements*.txt"],
+        "inputs": [".agents/skills/joinquant-archive-sync/**", "tests/joinquant_sync/**", "requirements.txt", "requirements-dev.txt"],
+        "checkParallel": true
       },
       {
         "id": "verify.openspec",
         "command": "openspec validate --all --strict --no-interactive",
-        "paths": [
-          "openspec/**"
-        ],
-        "inputs": [
-          "openspec/**"
-        ],
+        "paths": ["openspec/**"],
+        "inputs": ["openspec/**"],
         "checkParallel": true
+      },
+      {
+        "id": "verify.local-quant-research-vectorbt-unit",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\local_quant_research tests\\quant_analysis --ignore=tests\\local_quant_research\\test_generic_e2e.py --ignore=tests\\local_quant_research\\test_turtle_e2e.py --ignore=tests\\local_quant_research\\test_local_research_v2_e2e.py -k \"turtle or vectorbt\"",
+        "paths": ["scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "tests/quant_analysis/**", "requirements*.txt"],
+        "inputs": ["scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "tests/quant_analysis/**", "requirements.txt", "requirements-dev.txt"],
+        "checkParallel": true,
+        "timeoutSeconds": 300
+      },
+      {
+        "id": "verify.local-quant-research-contract-unit",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\local_quant_research\\test_analysis_manifest_schemas.py tests\\local_quant_research\\test_contract_fixtures.py tests\\local_quant_research\\test_evidence.py tests\\local_quant_research\\test_local_research_equivalence.py tests\\local_quant_research\\test_runner.py tests\\local_quant_research\\test_skill_contract.py tests\\local_quant_research\\test_strategy_contract.py tests\\local_quant_research\\test_strategy_identity.py tests\\quant_analysis -k \"(not turtle and not vectorbt) and not test_strategy_module_matches_frozen_equivalence_fixture\"",
+        "paths": [".agents/skills/run-local-quant-research/**", ".claude/skills/run-local-quant-research", "scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "tests/quant_analysis/**", "requirements*.txt"],
+        "inputs": [".agents/skills/run-local-quant-research/**", ".claude/skills/run-local-quant-research", "scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "tests/quant_analysis/**", "requirements.txt", "requirements-dev.txt"],
+        "checkParallel": true,
+        "timeoutSeconds": 300
+      },
+      {
+        "id": "verify.local-quant-research-jit",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\local_quant_research\\test_turtle_vectorbt_callbacks.py::test_group_and_portfolio_unit_scales_follow_confirmed_formula",
+        "paths": ["scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "requirements*.txt"],
+        "inputs": ["scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "requirements.txt", "requirements-dev.txt"],
+        "checkParallel": true,
+        "timeoutSeconds": 300
+      },
+      {
+        "id": "verify.local-quant-research-market-data-unit",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\local_quant_research\\test_analysis_data_views.py tests\\local_quant_research\\test_benchmark_set_contract.py tests\\local_quant_research\\test_joinquant_export.py tests\\local_quant_research\\test_market_data_candidate_screen.py tests\\local_quant_research\\test_market_data_economic_returns.py tests\\local_quant_research\\test_market_data_query.py tests\\local_quant_research\\test_market_data_storage.py -k \"not turtle and not vectorbt\"",
+        "paths": [".agents/skills/run-local-quant-research/**", ".claude/skills/run-local-quant-research", "scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "tests/quant_analysis/**", "requirements*.txt"],
+        "inputs": [".agents/skills/run-local-quant-research/**", ".claude/skills/run-local-quant-research", "scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "tests/quant_analysis/**", "requirements.txt", "requirements-dev.txt"],
+        "checkParallel": true,
+        "timeoutSeconds": 300
       }
     ]
   }
