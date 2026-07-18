@@ -684,7 +684,9 @@ def _manifest_time_cursors(manifest: dict[str, object] | None) -> dict[str, str]
     }
 
 
-def _research_after_times(manifest: dict[str, object] | None) -> dict[str, str]:
+def _research_after_times(
+    manifest: dict[str, object] | None, object_dir: Path
+) -> dict[str, str]:
     if not isinstance(manifest, dict):
         return {}
     response = manifest.get("research_response")
@@ -698,7 +700,33 @@ def _research_after_times(manifest: dict[str, object] | None) -> dict[str, str]:
         or lineage[-1].get("sha256") != response.get("sha256")
     ):
         return {}
-    return _manifest_time_cursors(manifest)
+    cursors = _manifest_time_cursors(manifest)
+    results_cursor = cursors.get("results")
+    if not results_cursor:
+        return cursors
+    cursors.pop("results")
+    for record in reversed(lineage):
+        try:
+            with gzip.open(
+                object_dir / str(record.get("path") or ""), "rt", encoding="utf-8"
+            ) as stream:
+                payload = json.load(stream)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise IntegrityError("research results overlap evidence is invalid") from error
+        results = payload.get("results") if isinstance(payload, dict) else None
+        if not isinstance(results, list):
+            raise IntegrityError("research results overlap evidence is invalid")
+        previous_times = {
+            str(row["time"])
+            for row in results
+            if isinstance(row, dict)
+            and row.get("time") not in {None, ""}
+            and str(row["time"]) < results_cursor
+        }
+        if previous_times:
+            cursors["results"] = max(previous_times)
+            break
+    return cursors
 
 
 def _simulation_browser_incremental_state(
@@ -2587,7 +2615,7 @@ def sync_all_active_simulations(
                 start_date=str((browser.get("params") or {}).get("start_date") or ""),
             )
             attribution_path = str(attribution.get("path") or "")
-            after_times = _research_after_times(existing)
+            after_times = _research_after_times(existing, object_dir)
             research_before = fetch_research_backtest(
                 page,
                 str(browser["research_id"]),

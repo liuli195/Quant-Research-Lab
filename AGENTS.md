@@ -8,16 +8,6 @@
 
 ## 通用规则
 
-### 聚宽对象结构
-
-- `joinquant/strategies/` 对应聚宽策略列表。
-- `joinquant/strategies/<strategy_id>/` 对应一个聚宽策略详情页。
-- `default_code.py` 对应该策略当前默认代码。
-- `backtests/` 对应该策略的回测列表。
-- `backtests/<backtest_id>/` 对应一个回测详情，必须包含代码、参数、数据和报告。
-- `simulations/` 对应该策略的模拟交易列表。
-- `simulations/<simulation_id>/` 对应一个模拟交易详情，必须记录来源回测、代码、参数、快照、代码变更记录、数据和报告。
-
 ### 环境与工具
 
 - **运行边界**：正式回测和模拟交易只在 JoinQuant（聚宽）云端运行；本地只做策略编写、资料整理、结果归档和复盘。
