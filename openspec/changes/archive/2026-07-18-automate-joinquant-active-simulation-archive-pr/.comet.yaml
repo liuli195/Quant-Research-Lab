@@ -18,7 +18,7 @@ verification_report: docs/superpowers/reports/2026-07-19-automate-joinquant-acti
 branch_status: handled
 created_at: 2026-07-18
 verified_at: 2026-07-18
-archived: false
+archived: true
 direct_override: null
 handoff_context: openspec/changes/automate-joinquant-active-simulation-archive-pr/.comet/handoff/spec-context.json
 handoff_hash: 8558af469f6216103c01c0eca21e9e59037350602eb9e6b31e8ac49ad8941875

@@ -2,6 +2,8 @@
 comet_change: automate-joinquant-active-simulation-archive-pr
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-07-18-automate-joinquant-active-simulation-archive-pr
+status: final
 ---
 
 # 活动模拟交易归档自动 PR 技术设计

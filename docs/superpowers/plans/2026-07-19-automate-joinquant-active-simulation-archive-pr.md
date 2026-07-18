@@ -2,6 +2,7 @@
 change: automate-joinquant-active-simulation-archive-pr
 design-doc: docs/superpowers/specs/2026-07-19-automate-joinquant-active-simulation-archive-pr-design.md
 base-ref: b015eaa757a8a14c30cc8cb33b9471844322ea7a
+archived-with: 2026-07-18-automate-joinquant-active-simulation-archive-pr
 ---
 
 # 活动模拟交易归档自动 PR 实施计划
@@ -24,6 +25,7 @@ base-ref: b015eaa757a8a14c30cc8cb33b9471844322ea7a
 - 不安装、替换、启停或删除生产计划任务；生产迁移在实现 PR 合并后另行授权。
 - 每个任务完成其目标测试后再提交；提交说明使用简体中文。
 
+archived-with: 2026-07-18-automate-joinquant-active-simulation-archive-pr
 ---
 
 ### Task 1: 为同步结果补齐路径归属身份
@@ -87,6 +89,7 @@ git add .agents/skills/joinquant-archive-sync/scripts/joinquant_sync/sync_pipeli
 git commit -m "完善活动模拟交易同步身份"
 ```
 
+archived-with: 2026-07-18-automate-joinquant-active-simulation-archive-pr
 ---
 
 ### Task 2: 建立最小运行锁、状态和 worktree 前置检查
@@ -183,6 +186,7 @@ git add .agents/skills/joinquant-archive-sync/scripts/joinquant_sync/scheduled_s
 git commit -m "建立归档自动化隔离运行基础"
 ```
 
+archived-with: 2026-07-18-automate-joinquant-active-simulation-archive-pr
 ---
 
 ### Task 3: 实现同步门禁、精确提交和受限回滚
@@ -275,6 +279,7 @@ git commit -m "实现归档同步提交门禁"
 
 Expected: PASS。
 
+archived-with: 2026-07-18-automate-joinquant-active-simulation-archive-pr
 ---
 
 ### Task 4: 接入唯一 PR Flow 与现有计划任务入口
@@ -387,6 +392,7 @@ git commit -m "接入活动归档自动 PR 流程"
 
 Expected: PASS。
 
+archived-with: 2026-07-18-automate-joinquant-active-simulation-archive-pr
 ---
 
 ### Task 5: 完成发布入口 E2E、验证配置与操作文档
