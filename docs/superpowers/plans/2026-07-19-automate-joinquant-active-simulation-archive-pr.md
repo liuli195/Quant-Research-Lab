@@ -197,7 +197,7 @@ git commit -m "建立归档自动化隔离运行基础"
 - Extends: `run_scheduled_sync(repository: Path, *, python_exe: Path, cli: Path) -> tuple[int, dict[str, object]]` 完成 `noop`、同步失败、验证失败、范围失败和有效提交。
 - Test helper: `run_scenario(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]` 只在本测试文件内建立临时 Git 远端并替换外部进程边界。
 
-- [ ] **Step 1: 写批次、门禁和回滚失败测试**
+- [x] **Step 1: 写批次、门禁和回滚失败测试**
 
 在真实临时 Git worktree 上准备已跟踪/未跟踪归档文件及范围外文件，覆盖：
 
@@ -227,7 +227,7 @@ def test_out_of_scope_change_blocks_commit_and_is_preserved(
 
 另覆盖：全部 `unchanged` 且 Git 空为 `noop`；manifest gate 非 pass；`verify` 非零；有效变化只暂存允许路径；失败时没有提交或 PR 调用。
 
-- [ ] **Step 2: 运行测试并确认失败**
+- [x] **Step 2: 运行测试并确认失败**
 
 ```powershell
 & .\.venv\Scripts\python.exe -m pytest tests\joinquant_sync\test_scheduled_sync.py -k "sync or verify or scope or rollback or noop" -q
@@ -235,7 +235,7 @@ def test_out_of_scope_change_blocks_commit_and_is_preserved(
 
 Expected: FAIL，编排路径尚未实现。
 
-- [ ] **Step 3: 实现精确允许清单和回滚**
+- [x] **Step 3: 实现精确允许清单和回滚**
 
 ```python
 def _allowed_prefixes(results: list[dict[str, object]]) -> tuple[set[str], set[str]]:
@@ -261,11 +261,11 @@ def _allowed_prefixes(results: list[dict[str, object]]) -> tuple[set[str], set[s
 
 已跟踪变化直接读取 `git diff --name-only -z HEAD --`，未跟踪文件直接读取 `git ls-files --others --exclude-standard -z`；只按 NUL（空字符）分隔路径，不解析 porcelain（机器状态文本）或 rename（重命名）状态。已跟踪路径用精确 `git restore --source <baseline> --worktree -- <paths>`；未跟踪路径逐文件 `unlink`，只清理允许范围内空目录。
 
-- [ ] **Step 4: 实现固定编排顺序**
+- [x] **Step 4: 实现固定编排顺序**
 
 新批次顺序为：认证检查 → 基线/干净检查 → 调用现有同步 CLI → 全部结果成功 → 逐变化对象调用现有 verify → 路径门禁 → noop 或固定分支 → `git add -- <逐文件>` → 中文提交。提交前失败先写状态，再受限回滚并更新 `rollback_status`。
 
-- [ ] **Step 5: 运行目标回归并提交**
+- [x] **Step 5: 运行目标回归并提交**
 
 ```powershell
 & .\.venv\Scripts\python.exe -m pytest tests\joinquant_sync\test_scheduled_sync.py -k "sync or verify or scope or rollback or noop" -q
