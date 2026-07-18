@@ -19,10 +19,12 @@ from scripts.research.local_quant_research.contracts import (
     PreparedStrategy,
     StrategyEvidenceError,
 )
+from scripts.research.market_data.contracts import (
+    corporate_actions_digest as compute_corporate_actions_digest,
+)
 
 from scripts.research.market_data.economic_returns import (
     CorporateActionApplication,
-    canonical_corporate_actions_digest,
     derive_continuous_prices,
 )
 
@@ -228,7 +230,7 @@ def prepare_simulation_inputs(
             "corporate actions are outside the configured universe: "
             + ", ".join(unknown_action_securities)
         )
-    computed_action_digest = canonical_corporate_actions_digest(corporate_actions)
+    computed_action_digest = compute_corporate_actions_digest(corporate_actions)
     if corporate_actions_digest is None:
         corporate_actions_digest = computed_action_digest
     elif (
@@ -534,29 +536,6 @@ def _risk_scales_into_nb(
 
 
 @njit
-def _risk_scales_nb(
-    unit_counts: np.ndarray,
-    asset_group_ids: np.ndarray,
-    group_count: int,
-    asset_group_unit_cap: float,
-    portfolio_unit_cap: float,
-):
-    group_units = np.zeros(group_count, dtype=np.float64)
-    group_scales = np.ones(group_count, dtype=np.float64)
-    portfolio_scale = _risk_scales_into_nb(
-        unit_counts,
-        asset_group_ids,
-        0,
-        group_count,
-        asset_group_unit_cap,
-        portfolio_unit_cap,
-        group_units,
-        group_scales,
-    )
-    return group_scales, portfolio_scale
-
-
-@njit
 def _targets_for_scale_into_nb(
     unit_base_quantities: np.ndarray,
     unit_counts: np.ndarray,
@@ -583,33 +562,6 @@ def _targets_for_scale_into_nb(
             * cash_scale
         )
         targets[column] = int(scaled // lot_size) * lot_size
-
-
-@njit
-def _targets_for_scale_nb(
-    unit_base_quantities: np.ndarray,
-    unit_counts: np.ndarray,
-    asset_group_ids: np.ndarray,
-    group_scales: np.ndarray,
-    portfolio_scale: float,
-    cash_scale: float,
-    locked_quantities: np.ndarray,
-    lot_size: int,
-) -> np.ndarray:
-    targets = np.zeros(unit_counts.shape[0], dtype=np.int64)
-    _targets_for_scale_into_nb(
-        unit_base_quantities,
-        unit_counts,
-        asset_group_ids,
-        0,
-        group_scales,
-        portfolio_scale,
-        cash_scale,
-        locked_quantities,
-        lot_size,
-        targets,
-    )
-    return targets
 
 
 @njit

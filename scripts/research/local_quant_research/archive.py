@@ -246,10 +246,6 @@ def _cleanup_failed_promotion(
     return cleanup_failed
 
 
-def _copy_tree(source: Path, staging: Path) -> None:
-    shutil.copytree(source, staging, copy_function=shutil.copy2)
-
-
 def _existing_result(
     source: Path,
     target: Path,
@@ -370,7 +366,7 @@ def promote_archive(
         if _path_exists(target):
             return _existing_result(source, target, source_snapshot)
         staging = archives / f".{analysis_id}.{uuid.uuid4().hex}.tmp"
-        _copy_tree(source, staging)
+        shutil.copytree(source, staging, copy_function=shutil.copy2)
         staging_snapshot = _scan_tree(staging)
         if staging_snapshot.digest != source_snapshot.digest:
             raise OSError("archive tree verification failed")

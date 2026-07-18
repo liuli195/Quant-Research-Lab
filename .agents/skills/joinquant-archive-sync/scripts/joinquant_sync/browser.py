@@ -608,30 +608,6 @@ def fetch_backtest_browser_evidence(page: Page, target_url: str) -> dict[str, ob
     }
 
 
-def fetch_backtest_code_evidence(page: Page, target_url: str) -> dict[str, object]:
-    page.goto(target_url, wait_until="networkidle")
-    ensure_authenticated(page)
-    with page.expect_response(
-        lambda response: "/algorithm/backtest/source" in response.url
-    ) as source_info:
-        page.locator("#code-tab").click()
-    document = source_info.value.json()
-    data = document.get("data") if isinstance(document, dict) else None
-    if not isinstance(data, dict) or not isinstance(data.get("source"), str):
-        raise TargetDiscoveryError("backtest source response is invalid")
-    return {
-        "code": data["source"],
-        "params": {
-            "start_date": page.locator("#start_date").input_value()
-            if page.locator("#start_date").count()
-            else "",
-            "end_date": page.locator("#end_date").input_value()
-            if page.locator("#end_date").count()
-            else "",
-        },
-    }
-
-
 def collect_simulation_logs(
     initial_offset: int,
     initial_lines: list[str],

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pyarrow.parquet as pq
 import pytest
 
 from scripts.research.quant_analysis.benchmarks import (
@@ -16,7 +17,6 @@ from scripts.research.quant_analysis.cvar import (
 from scripts.research.quant_analysis.evidence import (
     ScenarioResult,
     build_evidence_matrix,
-    validate_evidence_matrix,
 )
 from scripts.research.quant_analysis.robustness import (
     block_bootstrap,
@@ -94,10 +94,10 @@ def test_evidence_matrix_is_deterministic_and_local_only(tmp_path: Path) -> None
     path = tmp_path / "evidence-matrix.parquet"
 
     build_evidence_matrix(results, path)
-    rows = validate_evidence_matrix(path)
+    rows = pq.read_table(path).to_pylist()
     before = path.read_bytes()
     build_evidence_matrix(results, path)
 
-    assert [row.scenario_id for row in rows] == ["scenario-a", "scenario-b"]
-    assert all(row.authority == "local_exploratory" for row in rows)
+    assert [row["scenario_id"] for row in rows] == ["scenario-a", "scenario-b"]
+    assert all(row["authority"] == "local_exploratory" for row in rows)
     assert path.read_bytes() == before

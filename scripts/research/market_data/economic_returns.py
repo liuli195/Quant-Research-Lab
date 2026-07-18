@@ -7,7 +7,6 @@ from typing import Mapping, Sequence
 import numpy as np
 import pandas as pd
 
-from .contracts import corporate_actions_digest
 from .query import SnapshotView
 
 
@@ -375,9 +374,3 @@ def snapshot_return_panel(
             dtype="float64",
         )
     return pd.DataFrame(columns).sort_index()
-
-
-def canonical_corporate_actions_digest(
-    actions: Sequence[Mapping[str, object]],
-) -> str:
-    return corporate_actions_digest(actions)

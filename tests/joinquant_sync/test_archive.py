@@ -668,6 +668,28 @@ def test_attribution_rejects_nonmonotonic_or_out_of_range_middle_time() -> None:
         )
 
 
+def test_existing_simulation_uses_results_end_for_attribution_validation(
+    repo_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from joinquant_sync import archive
+
+    object_dir = (
+        repo_root
+        / "joinquant/strategies/strategy-001/simulations/simulation-001"
+    )
+    manifest = json.loads((object_dir / "manifest.json").read_text(encoding="utf-8"))
+    expected_end = manifest["datasets"]["results"]["time_range"]["end"]
+    validate_attribution = archive.validate_attribution
+
+    def validate_with_expected_end(*args: object, **kwargs: object) -> dict[str, object]:
+        assert kwargs["expected_end"] == expected_end
+        return validate_attribution(*args, **kwargs)
+
+    monkeypatch.setattr(archive, "validate_attribution", validate_with_expected_end)
+    archive.verify_existing_manifest(object_dir)
+
+
 @pytest.mark.parametrize(
     "line",
     [

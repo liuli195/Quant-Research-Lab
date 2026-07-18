@@ -102,34 +102,13 @@
     "remote_cleanup_required": true
   },
   "execution": {
-    "additional_delay_days": 0,
-    "order_priority": [
-      "full_exit",
-      "redistribution_sell",
-      "entry_or_addition",
-      "redistribution_buy"
-    ],
-    "allocation": "full_position_redistribution",
-    "acceptance_fixture": {
-      "same_security_exit_cancels_buys": true,
-      "candidate_requires_net_buy_lot": true,
-      "group_unit_cap": 6.0,
-      "portfolio_unit_cap": 12.0,
-      "cash_scaling": "uniform",
-      "lot_rounding": "floor",
-      "residual_cash_redistribution": false,
-      "input_order_invariant": true
-    }
+    "additional_delay_days": 0
   },
   "costs": {
     "commission_multiplier": 1.0,
     "one_way_slippage": 0.0005
   },
   "research": {
-    "initial_cash": 1500000,
-    "vibe_optimizer": {
-      "enabled": false,
-      "reason": "当前组合优化器存在已知前视偏差风险，仅使用确定性项目计算"
-    }
+    "initial_cash": 1500000
   }
 }
