@@ -187,12 +187,11 @@ def _simulation_evidence() -> tuple[
             "params": {"start_date": "2026-01-01", "end_date": "2026-01-02"},
             "status": "running",
             "results": [
-                {"id": 1, "time": "2026-01-01", "return": 0.01},
-                {"id": 2, "time": "2026-01-02", "return": -0.02},
+                {"id": 1, "time": "2026-01-01 16:00:00", "return": 0.01},
+                {"id": 2, "time": "2026-01-01 17:00:00", "return": 0.01},
             ],
             "balances": [
-                {"time": "2026-01-01", "cash": 100.0},
-                {"time": "2026-01-02", "cash": 98.0},
+                {"time": "2026-01-01 16:00:00", "cash": 100.0},
             ],
             "positions": [],
             "orders": [],
@@ -247,15 +246,56 @@ def _exercise_orchestration(repository: Path) -> str:
                 _simulation_evidence()[1]
             )
         )
-        sync_pipeline.fetch_research_backtest = lambda _page, _backtest_id, **_kwargs: (
-            _simulation_evidence()[2]
-        )
-        result = sync_pipeline.sync_all_active_simulations(object(), repository)
+        def research(_page: object, _backtest_id: str, **kwargs: object) -> dict[str, object]:
+            evidence = _simulation_evidence()[2]
+            after = dict(kwargs.get("after_times") or {})
+            if not after:
+                return evidence
+            bundle = evidence["bundle"]
+            bundle["results"] = [
+                {"id": 1, "time": "2026-01-01 16:00:00", "return": 0.01},
+                {"id": 3, "time": "2026-01-02 16:00:00", "return": -0.02},
+            ]
+            metadata = bundle["metadata"]
+            metadata["incremental_after"] = after
+            for name in ("results", "positions", "orders", "records", "balances"):
+                cursor = after.get(name)
+                value = bundle[name]
+                if cursor and isinstance(value, list):
+                    bundle[name] = [
+                        row for row in value if str(row.get("time") or "") >= cursor
+                    ]
+                    metadata["transfer_modes"][name] = "after_time_overlap"
+            evidence["raw"] = json.dumps(
+                bundle, ensure_ascii=False, separators=(",", ":")
+            ).encode()
+            return evidence
+
+        sync_pipeline.fetch_research_backtest = research
+        first = sync_pipeline.sync_all_active_simulations(object(), repository)
+        second = sync_pipeline.sync_all_active_simulations(object(), repository)
     finally:
         for name, value in original.items():
             setattr(sync_pipeline, name, value)
-    if len(result) != 1 or result[0].get("status") != "committed":
-        raise AssertionError(f"self-test production orchestration failed: {result}")
+    if [first[0].get("status"), second[0].get("status")] != [
+        "committed",
+        "committed",
+    ]:
+        raise AssertionError(
+            f"self-test production orchestration failed: {first}, {second}"
+        )
+    rows = query_rows(
+        repository
+        / "joinquant/strategies/strategy-001/simulations/simulation-001/manifest.json",
+        "results",
+        100,
+    )
+    if [row["time"] for row in rows] != [
+        "2026-01-01 16:00:00",
+        "2026-01-01 17:00:00",
+        "2026-01-02 16:00:00",
+    ]:
+        raise AssertionError("self-test incremental results continuity failed")
     return "committed"
 
 

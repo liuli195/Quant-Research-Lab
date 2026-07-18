@@ -1655,23 +1655,62 @@ def test_bundle_time_cursors_never_move_backwards() -> None:
     ) == {"results": "2026-07-11", "orders": "2026-07-09"}
 
 
-def test_legacy_simulation_without_research_lineage_forces_full_refresh() -> None:
+def test_research_results_cursor_uses_verified_previous_lineage_time(
+    tmp_path: Path,
+) -> None:
     from joinquant_sync.sync_pipeline import _research_after_times
 
     cursors = {
         "streams": {
-            "data": {"cursors": {"results": "2026-07-11"}}
+            "data": {
+                "cursors": {
+                    "results": "2026-07-10 17:00:00",
+                    "balances": "2026-07-10 16:00:00",
+                }
+            }
         }
     }
-    assert _research_after_times(cursors) == {}
+    assert _research_after_times(cursors, tmp_path) == {}
 
-    response = {"path": "raw/response.json.gz", "sha256": "a" * 64}
-    current = {
+    response_path = tmp_path / "raw" / "response.json.gz"
+    response_path.parent.mkdir(parents=True)
+    with gzip.open(response_path, "wt", encoding="utf-8") as stream:
+        json.dump(
+            {"results": [{"time": "2026-07-10 17:00:00"}]}, stream
+        )
+    response = {
+        "path": "raw/response.json.gz",
+        "sha256": hashlib.sha256(response_path.read_bytes()).hexdigest(),
+    }
+    single_time = {
         **cursors,
         "research_response": response,
         "research_lineage": [response],
     }
-    assert _research_after_times(current) == {"results": "2026-07-11"}
+    assert _research_after_times(single_time, tmp_path) == {
+        "balances": "2026-07-10 16:00:00"
+    }
+
+    older_path = tmp_path / "raw" / "older.json.gz"
+    with gzip.open(older_path, "wt", encoding="utf-8") as stream:
+        json.dump(
+            {
+                "results": [
+                    {"time": "2026-07-10 16:00:00"},
+                    {"time": "2026-07-10 17:00:00"},
+                ]
+            },
+            stream,
+        )
+    older = {
+        "path": "raw/older.json.gz",
+        "sha256": hashlib.sha256(older_path.read_bytes()).hexdigest(),
+    }
+    single_time["research_lineage"] = [older, response]
+    assert _research_after_times(single_time, tmp_path) == {
+        "results": "2026-07-10 16:00:00",
+        "balances": "2026-07-10 16:00:00",
+    }
 
 
 def test_existing_attribution_raw_is_upgraded_to_queryable_parquet(
@@ -1890,6 +1929,15 @@ def test_production_simulation_core_runs_incrementally_in_memory(
         "code_history_total": 1,
     }
     calls: list[dict[str, str]] = []
+    object_dir = (
+        tmp_path
+        / "joinquant"
+        / "strategies"
+        / "strategy-001"
+        / "simulations"
+        / "simulation-001"
+    )
+    research_status = "running"
 
     def research(
         _page: object,
@@ -1900,20 +1948,29 @@ def test_production_simulation_core_runs_incrementally_in_memory(
     ) -> dict[str, object]:
         after = dict(after_times or {})
         calls.append(after)
-        full = not after
-
-        def include(name: str) -> bool:
-            return full or name in after
+        initial_results = [
+            {"time": "2026-01-01 16:00:00", "returns": 0.1},
+            {"time": "2026-01-01 17:00:00", "returns": 0.1},
+        ]
+        current_results = [
+            {"time": "2026-01-01 16:00:00", "returns": 0.1},
+            {"time": "2026-01-02 16:00:00", "returns": 0.2},
+        ]
+        results = (
+            current_results
+            if (object_dir / "manifest.json").is_file()
+            else initial_results
+        )
+        if after.get("results"):
+            results = [
+                row for row in results if row["time"] >= after["results"]
+            ]
 
         rows = {
             "params": {"start_date": "2026-01-01"},
-            "status": "running",
-            "results": (
-                [{"time": "2026-01-01", "returns": 0.1}] if include("results") else []
-            ),
-            "balances": (
-                [{"time": "2026-01-01", "cash": 1.0}] if include("balances") else []
-            ),
+            "status": research_status,
+            "results": results,
+            "balances": [{"time": "2026-01-01", "cash": 1.0}],
             "positions": [
                 {
                     "time": "2026-01-01",
@@ -1921,9 +1978,7 @@ def test_production_simulation_core_runs_incrementally_in_memory(
                     "security": "A",
                     "side": "long",
                 }
-            ]
-            if include("positions")
-            else [],
+            ],
             "orders": [
                 {
                     "time": "2026-01-01",
@@ -1931,9 +1986,7 @@ def test_production_simulation_core_runs_incrementally_in_memory(
                     "security": "A",
                     "side": "long",
                 }
-            ]
-            if include("orders")
-            else [],
+            ],
             "records": [],
             "risk": {"sharpe": 1.0},
             "period_risks": {},
@@ -1990,25 +2043,17 @@ def test_production_simulation_core_runs_incrementally_in_memory(
     monkeypatch.setattr(pipeline, "fetch_simulation_browser_evidence", browser_evidence)
     monkeypatch.setattr(pipeline, "fetch_research_backtest", research)
 
-    object_dir = (
-        tmp_path
-        / "joinquant"
-        / "strategies"
-        / "strategy-001"
-        / "simulations"
-        / "simulation-001"
-    )
     first = pipeline.sync_all_active_simulations(object(), tmp_path)
     (object_dir / "current_code.py").unlink()
     second = pipeline.sync_all_active_simulations(object(), tmp_path)
     third = pipeline.sync_all_active_simulations(object(), tmp_path)
     assert [first[0]["status"], second[0]["status"], third[0]["status"]] == [
         "committed",
-        "unchanged",
+        "committed",
         "unchanged",
     ]
     assert calls[:2] == [{}, {}]
-    assert calls[2]["results"] == "2026-01-01"
+    assert calls[2]["results"] == "2026-01-01 16:00:00"
     assert browser_states[0] is None
     assert all(
         state is not None
@@ -2021,13 +2066,21 @@ def test_production_simulation_core_runs_incrementally_in_memory(
         and state["code_history_total"] == 1
         for state in browser_states[3:9]
     )
-    assert len(query_rows(object_dir / "manifest.json", "results")) == 1
-    assert len(list((object_dir / "snapshots").iterdir())) == 1
+    assert [
+        row["time"]
+        for row in query_rows(object_dir / "manifest.json", "results")
+    ] == [
+        "2026-01-01 16:00:00",
+        "2026-01-01 17:00:00",
+        "2026-01-02 16:00:00",
+    ]
+    assert len(list((object_dir / "snapshots").iterdir())) == 2
     monkeypatch.setattr(pipeline, "discover_active_simulations", lambda _page: [])
     monkeypatch.setattr(pipeline, "discover_all_simulations", lambda _page: [])
     monkeypatch.setattr(pipeline, "inspect_simulation_status", lambda *_: "closed")
+    research_status = "done"
     closed = pipeline.sync_all_active_simulations(object(), tmp_path)
-    assert closed[0]["status"] == "committed"
+    assert closed[0]["status"] == "committed", closed
     stopped = json.loads((object_dir / "manifest.json").read_text(encoding="utf-8"))
     assert stopped["tracking"] == "stopped"
     assert stopped["final_sync"] == "complete"
