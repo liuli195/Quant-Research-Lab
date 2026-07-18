@@ -256,12 +256,16 @@ def _run_scenario(
         if action == "auth":
             return 0, {"status": "authenticated"}
         if action == "verify":
+            if name == "verify_start_failed":
+                raise scheduled_sync.ScheduledSyncError("command_output_invalid")
             if name == "verify_command_failed":
                 return 1, {"status": "integrity_failed"}
             if name == "verify_gate_failed":
                 return 0, {"status": "verified", "gate": {"status": "fail"}}
             return 0, {"status": "verified", "gate": {"status": "pass"}}
         assert action == "sync-active-simulations"
+        if name == "sync_start_failed":
+            raise scheduled_sync.ScheduledSyncError("command_output_invalid")
         invalid_results = {
             "missing_results": {"status": "complete"},
             "null_results": {"status": "complete", "results": None},
@@ -294,7 +298,9 @@ def _run_scenario(
             "changed_paths_failed",
             "verify_command_failed",
             "verify_gate_failed",
+            "verify_start_failed",
             "checks_failed",
+            "pr_flow_start_failed",
         }:
             (archive / "manifest.json").write_text("changed\n", encoding="utf-8")
         if name in {
@@ -341,6 +347,8 @@ def _run_scenario(
         command: str,
         pr: object = None,
     ) -> tuple[int, dict[str, object]]:
+        if name == "pr_flow_start_failed":
+            raise scheduled_sync.ScheduledSyncError("pr_flow_unavailable")
         if name == "checks_failed":
             return 1, {"status": "CHECKS_FAILED", "details": {"pr": 123}}
         if name == "valid":
@@ -486,6 +494,38 @@ def test_verify_failure_rolls_back_before_commit(
     assert result["state"]["reason"] == "verify_failed"
     assert result["tracked_archive"].read_text(encoding="utf-8") == "baseline\n"
     assert result["head"] == result["baseline"]
+
+
+def test_sync_start_failure_is_recorded_in_sync_phase(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = _run_scenario("sync_start_failed", tmp_path, monkeypatch)
+    assert result["code"] != 0
+    assert result["state"]["phase"] == "sync"
+    assert result["state"]["reason"] == "sync_failed"
+    assert result["head"] == result["baseline"]
+
+
+def test_verify_start_failure_rolls_back_in_verify_phase(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = _run_scenario("verify_start_failed", tmp_path, monkeypatch)
+    assert result["code"] != 0
+    assert result["state"]["phase"] == "verify"
+    assert result["state"]["reason"] == "verify_failed"
+    assert result["tracked_archive"].read_text(encoding="utf-8") == "baseline\n"
+    assert result["head"] == result["baseline"]
+
+
+def test_pr_flow_start_failure_preserves_recoverable_branch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = _run_scenario("pr_flow_start_failed", tmp_path, monkeypatch)
+    assert result["code"] != 0
+    assert result["state"]["phase"] == "pr_flow"
+    assert result["state"]["reason"] == "pr_flow_stopped"
+    assert result["state"]["branch"] == "codex/joinquant-archive-auto"
+    assert result["head"] != result["baseline"]
 
 
 def test_github_auth_failure_stops_before_joinquant_or_sync(

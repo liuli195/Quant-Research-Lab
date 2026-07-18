@@ -325,9 +325,12 @@ def _pr_flow_result(
     command: str,
     pr: object = None,
 ) -> tuple[int, dict[str, object]]:
-    code, payload = _run_pr_flow(
-        python_exe, script, worktree, command=command, pr=pr
-    )
+    try:
+        code, payload = _run_pr_flow(
+            python_exe, script, worktree, command=command, pr=pr
+        )
+    except ScheduledSyncError:
+        code, payload = 1, {}
     details = payload.get("details")
     details = details if isinstance(details, dict) else {}
     pr_number = details.get("pr") or pr
@@ -386,16 +389,19 @@ def _run_new_batch(
     )
     if auth_code != 0 or auth.get("status") != "authenticated":
         raise ScheduledSyncError(str(auth.get("status") or "auth_required"))
-    sync_code, sync = _run_json(
-        [
-            str(python_exe),
-            str(cli),
-            "sync-active-simulations",
-            "--repository",
-            str(worktree),
-        ],
-        cwd=cli.resolve().parent,
-    )
+    try:
+        sync_code, sync = _run_json(
+            [
+                str(python_exe),
+                str(cli),
+                "sync-active-simulations",
+                "--repository",
+                str(worktree),
+            ],
+            cwd=cli.resolve().parent,
+        )
+    except ScheduledSyncError:
+        return _batch_failure(root, worktree, baseline, "sync_failed", [])
     raw_results = sync.get("results")
     if not isinstance(raw_results, list):
         return _batch_failure(root, worktree, baseline, "sync_failed", [])
@@ -422,10 +428,15 @@ def _run_new_batch(
             / "simulations"
             / simulation_id
         )
-        verify_code, verification = _run_json(
-            [str(python_exe), str(cli), "verify", "--object", str(object_dir)],
-            cwd=cli.resolve().parent,
-        )
+        try:
+            verify_code, verification = _run_json(
+                [str(python_exe), str(cli), "verify", "--object", str(object_dir)],
+                cwd=cli.resolve().parent,
+            )
+        except ScheduledSyncError:
+            return _batch_failure(
+                root, worktree, baseline, "verify_failed", results
+            )
         gate = verification.get("gate")
         if (
             verify_code != 0
