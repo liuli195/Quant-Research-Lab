@@ -1,6 +1,6 @@
 workflow: hotfix
 language: zh-CN
-phase: build
+phase: verify
 context_compression: beta
 build_mode: direct
 build_pause: null
@@ -8,13 +8,13 @@ subagent_dispatch: null
 tdd_mode: direct
 review_mode: off
 isolation: branch
-verify_mode: light
+verify_mode: full
 auto_transition: true
 base_ref: 1bc22916f6cca15764cbbbd8caa1d69329faa6a9
 design_doc: null
 plan: null
 verify_result: pending
-verification_report: null
+verification_report: docs/superpowers/reports/2026-07-18-fix-active-simulation-results-overlap-verify.md
 branch_status: pending
 created_at: 2026-07-18
 verified_at: null
