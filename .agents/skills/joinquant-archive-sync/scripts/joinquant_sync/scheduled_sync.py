@@ -89,13 +89,16 @@ def _discover_pr_flow() -> Path:
 
 
 def _git(repository: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(repository), *args],
-        check=False,
-        capture_output=True,
-        text=True,
-        errors="replace",
-    )
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repository), *args],
+            check=False,
+            capture_output=True,
+            text=True,
+            errors="replace",
+        )
+    except OSError as error:
+        raise ScheduledSyncError("git_failed") from error
     if result.returncode != 0:
         raise ScheduledSyncError("git_failed")
     return result.stdout.strip()
@@ -104,14 +107,17 @@ def _git(repository: Path, *args: str) -> str:
 def _command_ok(
     command: list[str], *, cwd: Path | None = None, reason: str = "command_failed"
 ) -> None:
-    result = subprocess.run(
-        command,
-        cwd=cwd,
-        check=False,
-        capture_output=True,
-        text=True,
-        errors="replace",
-    )
+    try:
+        result = subprocess.run(
+            command,
+            cwd=cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            errors="replace",
+        )
+    except OSError as error:
+        raise ScheduledSyncError(reason) from error
     if result.returncode != 0:
         raise ScheduledSyncError(reason)
 
@@ -119,14 +125,17 @@ def _command_ok(
 def _run_json(
     command: list[str], *, cwd: Path | None = None
 ) -> tuple[int, dict[str, object]]:
-    result = subprocess.run(
-        command,
-        cwd=cwd,
-        check=False,
-        capture_output=True,
-        text=True,
-        errors="replace",
-    )
+    try:
+        result = subprocess.run(
+            command,
+            cwd=cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            errors="replace",
+        )
+    except OSError as error:
+        raise ScheduledSyncError("command_output_invalid") from error
     try:
         payload = json.loads(result.stdout.strip().splitlines()[-1])
     except (IndexError, json.JSONDecodeError) as error:
@@ -238,19 +247,20 @@ def _batch_failure(
     reason: str,
     results: list[dict[str, object]],
 ) -> tuple[int, dict[str, object]]:
-    tracked, untracked = _changed_paths(worktree)
-    files, directories = _allowed_prefixes(results)
     state: dict[str, object] = {
         "phase": "sync" if reason == "sync_failed" else "verify",
         "status": "failed",
         "reason": reason,
         "worktree": str(worktree),
-        "branch": _git(worktree, "branch", "--show-current"),
+        "branch": "",
         "pr": None,
         "rollback_status": "pending",
     }
     _write_state(root, state)
     try:
+        tracked, untracked = _changed_paths(worktree)
+        files, directories = _allowed_prefixes(results)
+        state["branch"] = _git(worktree, "branch", "--show-current")
         state["rollback_status"] = _rollback(
             worktree, baseline, tracked, untracked, files, directories
         )
@@ -287,14 +297,17 @@ def _run_pr_flow(
         arguments.extend(["--pr", str(pr)])
     else:
         raise ScheduledSyncError("pr_flow_state_invalid")
-    result = subprocess.run(
-        arguments,
-        cwd=worktree,
-        check=False,
-        capture_output=True,
-        text=True,
-        errors="replace",
-    )
+    try:
+        result = subprocess.run(
+            arguments,
+            cwd=worktree,
+            check=False,
+            capture_output=True,
+            text=True,
+            errors="replace",
+        )
+    except OSError as error:
+        raise ScheduledSyncError("pr_flow_unavailable") from error
     status_path = worktree / ".pr-flow" / "last-status.json"
     try:
         payload = json.loads(status_path.read_text(encoding="utf-8"))

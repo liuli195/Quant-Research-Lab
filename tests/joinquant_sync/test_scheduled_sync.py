@@ -291,6 +291,7 @@ def _run_scenario(
         if name in {
             "valid",
             "sync_failed",
+            "changed_paths_failed",
             "verify_command_failed",
             "verify_gate_failed",
             "checks_failed",
@@ -298,6 +299,7 @@ def _run_scenario(
             (archive / "manifest.json").write_text("changed\n", encoding="utf-8")
         if name in {
             "sync_failed",
+            "changed_paths_failed",
             "rollback_restore_failed",
             "rollback_unlink_failed",
         }:
@@ -314,6 +316,14 @@ def _run_scenario(
         return 0, {"status": "complete", "results": [result]}
 
     monkeypatch.setattr(scheduled_sync, "_run_json", run_json, raising=False)
+    if name == "changed_paths_failed":
+        monkeypatch.setattr(
+            scheduled_sync,
+            "_changed_paths",
+            lambda _worktree: (_ for _ in ()).throw(
+                scheduled_sync.ScheduledSyncError("git_failed")
+            ),
+        )
     if name in {"rollback_restore_failed", "rollback_unlink_failed"}:
 
         def fail_rollback(*_args: object, **_kwargs: object) -> str:
@@ -444,6 +454,19 @@ def test_rollback_failure_preserves_original_failure(
     assert state["recovery_command"]
 
 
+def test_change_collection_failure_preserves_original_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result = _run_scenario("changed_paths_failed", tmp_path, monkeypatch)
+    state = result["state"]
+    assert result["code"] != 0
+    assert state["phase"] == "sync"
+    assert state["reason"] == "sync_failed"
+    assert state["rollback_status"] == "failed"
+    assert state["rollback_reason"] == "git_failed"
+    assert state["recovery_command"]
+
+
 def test_out_of_scope_change_blocks_commit_and_is_preserved(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -496,6 +519,57 @@ def test_github_auth_failure_stops_before_joinquant_or_sync(
     assert code != 0
     assert state["reason"] == "gh_auth_required"
     assert calls == []
+
+
+def test_command_start_failure_writes_complete_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from joinquant_sync import scheduled_sync
+
+    repository, _ = _repository(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    monkeypatch.setattr(scheduled_sync, "_runtime_root", lambda: runtime_root)
+    monkeypatch.setattr(
+        scheduled_sync, "_discover_pr_flow", lambda: tmp_path / "pr_flow.py"
+    )
+    monkeypatch.setattr(
+        scheduled_sync.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("not found")),
+    )
+
+    code, state = scheduled_sync.run_scheduled_sync(
+        repository, python_exe=Path(sys.executable), cli=Path("jq_sync.py")
+    )
+
+    assert code != 0
+    assert state["phase"] == "preflight"
+    assert state["reason"] == "gh_auth_required"
+    assert state["recovery_command"]
+    assert json.loads((runtime_root / "last-run.json").read_text(encoding="utf-8")) == state
+
+
+def test_process_helpers_convert_start_failures(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from joinquant_sync import scheduled_sync
+
+    monkeypatch.setattr(
+        scheduled_sync.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("not found")),
+    )
+    with pytest.raises(scheduled_sync.ScheduledSyncError, match="git_failed"):
+        scheduled_sync._git(tmp_path, "status")
+    with pytest.raises(scheduled_sync.ScheduledSyncError, match="command_output_invalid"):
+        scheduled_sync._run_json(["missing"])
+    with pytest.raises(scheduled_sync.ScheduledSyncError, match="pr_flow_unavailable"):
+        scheduled_sync._run_pr_flow(
+            Path(sys.executable),
+            tmp_path / "pr_flow.py",
+            tmp_path,
+            command="complete",
+        )
 
 
 def test_joinquant_auth_failure_stops_before_sync(
