@@ -1,6 +1,6 @@
 workflow: full
 language: zh-CN
-phase: verify
+phase: archive
 context_compression: beta
 build_mode: executing-plans
 build_pause: null
@@ -13,11 +13,11 @@ auto_transition: true
 base_ref: b015eaa757a8a14c30cc8cb33b9471844322ea7a
 design_doc: docs/superpowers/specs/2026-07-19-automate-joinquant-active-simulation-archive-pr-design.md
 plan: docs/superpowers/plans/2026-07-19-automate-joinquant-active-simulation-archive-pr.md
-verify_result: pending
+verify_result: pass
 verification_report: docs/superpowers/reports/2026-07-19-automate-joinquant-active-simulation-archive-pr-verify.md
 branch_status: handled
 created_at: 2026-07-18
-verified_at: null
+verified_at: 2026-07-18
 archived: false
 direct_override: null
 handoff_context: openspec/changes/automate-joinquant-active-simulation-archive-pr/.comet/handoff/spec-context.json
