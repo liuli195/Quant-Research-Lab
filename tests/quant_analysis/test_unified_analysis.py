@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from scripts.research.quant_analysis import unified_analysis as analysis
@@ -22,6 +24,7 @@ from scripts.research.quant_analysis.unified_analysis import (
     deterministic_next_action,
     evaluate_metrics,
     load_registered_scenario,
+    run_standard_analysis,
 )
 from scripts.research.quant_analysis.source_registry import load_source_registry
 from tests.quant_analysis.test_source_registry import _prepared_sources, _registry
@@ -189,6 +192,122 @@ def test_registered_sources_share_the_four_common_facts(
     assert attribution["method"] == "verified source-native event log"
     assert attribution["event_counts"]["rebalance_signals"] > 0
     assert attribution["pnl_contribution"]["status"] == "evidence_insufficient"
+
+
+def _standard_registry(repo_root: Path, tmp_path: Path, *, single_source: bool) -> tuple[Path, Path]:
+    root, entries = _prepared_sources(repo_root, tmp_path)
+    if single_source:
+        entries = entries[:1]
+    positions = pq.read_table(
+        root / "sources/backtest/data/positions.parquet", columns=["security"]
+    ).to_pandas()
+    universe = [
+        {"security": security, "asset_group": "etf"}
+        for security in sorted(set(positions["security"].dropna().astype(str)))
+    ]
+    config = root / "config"
+    _write_json(
+        config / "baseline.json",
+        {"project_id": "standard-fixture", "universe": universe, "risk": {}},
+    )
+    _write_json(
+        config / "analysis-plan.json",
+        {
+            "schema_version": "strategy-analysis-plan/1",
+            "strategy_id": "standard-fixture",
+            "baseline_config": "config/baseline.json",
+            "scenarios": [
+                {
+                    "scenario_id": entry["scenario_id"],
+                    "dimension": "baseline" if index == 0 else "comparison",
+                    "overrides": {},
+                }
+                for index, entry in enumerate(entries)
+            ],
+            "analyses": {
+                "fixed_periods": [
+                    {"id": "fixture", "start": "2024-01-01", "end": "2024-12-31"}
+                ],
+                "rolling": {"window_years": 1, "step_months": 3},
+                "cost_execution": [
+                    {"id": "fixture", "commission_multiplier": 1.0, "slippage": 0.0, "delay_days": 0}
+                ],
+                "bootstrap": {
+                    "block_sizes": [1], "paths": 3, "horizon_days": 1, "seed": 7,
+                    "thresholds": {
+                        "probability_drawdown_over_20pct_max": 1.0,
+                        "probability_drawdown_over_30pct_max": 1.0,
+                        "median_terminal_return_min_exclusive": -1.0,
+                    },
+                },
+                "historical_stress": [
+                    {"id": "stress-fixture", "start": "2024-01-01", "end": "2024-12-31", "max_drawdown_abs_max": 1.0}
+                ],
+                "position_shocks": [
+                    {"id": "shock-fixture", "asset_group_shocks": {"etf": -0.1}, "maximum_loss_abs_max": 1.0}
+                ],
+                "cvar": [
+                    {"id": "cvar-fixture", "horizon_days": 1, "confidence": 0.95, "maximum_loss_abs_max": 1.0, "minimum_tail_observations": 1}
+                ],
+            },
+            "thresholds": {"cagr_min_exclusive": 0.0, "max_drawdown_abs_max": 0.2, "calmar_min": 0.5},
+        },
+    )
+    benchmark_data = config / "benchmarks.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "time": ["2024-01-02", "2024-01-03", "2024-01-02", "2024-01-03"],
+                "benchmark_id": [
+                    "CSI300_CNY_TOTAL_RETURN", "CSI300_CNY_TOTAL_RETURN",
+                    "NASDAQ100_CNY_TOTAL_RETURN", "NASDAQ100_CNY_TOTAL_RETURN",
+                ],
+                "returns": [0.0, 0.01, 0.0, 0.01],
+            }
+        ),
+        benchmark_data,
+        compression="zstd",
+    )
+    _write_json(config / "benchmark-manifest.json", {"data": {"path": "benchmarks.parquet"}})
+    registry = root / "standard-source-registry.json"
+    _write_json(
+        registry,
+        {
+            "schema_version": "standard-analysis-source-registry/1",
+            "analysis_plan": "config/analysis-plan.json",
+            "benchmark_manifest": "config/benchmark-manifest.json",
+            "baseline_scenario_id": "baseline",
+            "sources": entries,
+        },
+    )
+    return root, registry
+
+
+def test_standard_analysis_keeps_independent_results_and_evidence_gaps(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    root, registry = _standard_registry(repo_root, tmp_path, single_source=False)
+
+    result = run_standard_analysis(root, registry)
+
+    statuses = {row["status"] for row in result["evidence_rows"]}
+    assert {"pass", "evidence_insufficient"}.issubset(statuses)
+    assert result["attribution"]["status"] == "evidence_insufficient"
+    assert result["robustness"]["cost_execution"][0]["status"] == "evidence_insufficient"
+    assert result["sources"]["registered_count"] == 3
+    assert (root / ".local/standard-strategy-analysis" / result["analysis_id"] / "deterministic-analysis.json").is_file()
+
+
+def test_standard_analysis_runs_single_source_return_checks(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    root, registry = _standard_registry(repo_root, tmp_path, single_source=True)
+
+    result = run_standard_analysis(root, registry)
+
+    assert result["challenge_results"] == []
+    assert result["robustness"]["bootstrap"]
+    assert result["cross_scenario"]["status"] == "evidence_insufficient"
 
 
 def test_aligns_strategy_and_both_benchmarks_on_one_shared_calendar() -> None:

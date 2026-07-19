@@ -19,11 +19,12 @@ from scripts.research.analysis_data.manifest import open_analysis_source
 from scripts.research.analysis_data.views import open_analysis_database
 from scripts.research.market_data.query import open_snapshot
 
+from .analysis_plan import expand_analysis_plan
 from .benchmarks import calculate_benchmark_statistics
 from .cvar import calculate_cvar, rolling_compound_returns
 from .evidence import ScenarioResult, build_evidence_matrix, evidence_digest
 from .robustness import block_bootstrap, summarize_bootstrap
-from .source_registry import RegisteredSource
+from .source_registry import RegisteredSource, load_source_registry
 
 
 BENCHMARK_IDS = (
@@ -1403,6 +1404,330 @@ def _cvar(
             )
         )
     return rows, evidence
+
+
+def _unavailable_result(
+    scenario_id: str, dimension: str, reason: str
+) -> tuple[dict[str, object], ScenarioResult]:
+    row = {
+        "scenario_id": scenario_id,
+        "dimension": dimension,
+        "status": "evidence_insufficient",
+        "reasons": [reason],
+        "metrics": {},
+    }
+    return row, ScenarioResult(
+        scenario_id=scenario_id,
+        dimension=dimension,
+        status="evidence_insufficient",
+        metrics={},
+        input_sha256=evidence_digest(row),
+        reasons=(reason,),
+    )
+
+
+def _unavailable_cost_sensitivity(
+    definitions: Sequence[Mapping[str, object]], reason: str
+) -> tuple[list[dict[str, object]], list[ScenarioResult]]:
+    pairs = [
+        _unavailable_result(f"cost-{definition['id']}", "cost_execution", reason)
+        for definition in definitions
+    ]
+    return [row for row, _ in pairs], [result for _, result in pairs]
+
+
+def _unavailable_deletion_sensitivity(
+    universe: Mapping[str, str], reason: str
+) -> tuple[list[dict[str, object]], list[ScenarioResult]]:
+    pairs = [
+        _unavailable_result(
+            f"delete-security-{security.lower().replace('.', '-').replace('_', '-')}",
+            "asset_delete_security",
+            reason,
+        )
+        for security in sorted(universe)
+    ]
+    pairs.extend(
+        _unavailable_result(
+            f"delete-asset-group-{group.lower().replace('.', '-').replace('_', '-')}",
+            "asset_delete_group",
+            reason,
+        )
+        for group in sorted(set(universe.values()))
+    )
+    return [row for row, _ in pairs], [result for _, result in pairs]
+
+
+def _benchmark_data_path(repo_root: Path, manifest_path: Path) -> Path:
+    manifest = _load_json(manifest_path, label="benchmark manifest")
+    data = manifest.get("data")
+    value = data.get("path") if isinstance(data, Mapping) else None
+    if not isinstance(value, str) or not value:
+        raise UnifiedAnalysisError("benchmark manifest data path is missing")
+    relative = Path(value)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise UnifiedAnalysisError("benchmark data path is unsafe")
+    path = (manifest_path.parent / relative).resolve()
+    if not path.is_relative_to(repo_root) or not path.is_file():
+        raise UnifiedAnalysisError("benchmark data path is missing or outside the repository")
+    return path
+
+
+def _standard_source_document(registry: object) -> dict[str, object]:
+    sources = getattr(registry, "sources")
+    return {
+        "registry_sha256": getattr(registry, "sha256"),
+        "sources": [
+            {
+                "scenario_id": item.registration.scenario_id,
+                "source_type": item.registration.source_type,
+                "manifest_sha256": item.registration.manifest_sha256,
+                "snapshot_id": item.registration.snapshot_id,
+                "capabilities": dict(item.capabilities),
+            }
+            for item in sources
+        ],
+    }
+
+
+def run_standard_analysis(repo_root: Path, source_registry_path: Path) -> dict[str, object]:
+    started = time.perf_counter()
+    root = Path(repo_root).resolve()
+    registry = load_source_registry(root, source_registry_path)
+    expanded = expand_analysis_plan(root, registry.analysis_plan)
+    configurations = {
+        str(item["scenario_id"]): item
+        for item in expanded["scenarios"]
+    }
+    registered_ids = [item.registration.scenario_id for item in registry.sources]
+    if any(identifier not in configurations for identifier in registered_ids):
+        raise UnifiedAnalysisError("registered scenario is absent from the analysis plan")
+    if registry.baseline_scenario_id not in registered_ids:
+        raise UnifiedAnalysisError("registered sources do not contain the baseline")
+    scenarios = {
+        item.registration.scenario_id: load_registered_scenario(
+            item,
+            analysis_params=configurations[item.registration.scenario_id]["params"],
+        )
+        for item in registry.sources
+    }
+    analysis_id = evidence_digest(
+        {
+            "formula_version": "standard-strategy-analysis/1",
+            "registry_sha256": registry.sha256,
+            "analysis_plan_sha256": expanded["analysis_plan_sha256"],
+            "benchmark_manifest_sha256": _sha256(registry.benchmark_manifest),
+            "source_manifests": [item.registration.manifest_sha256 for item in registry.sources],
+        }
+    )
+    analysis_root = root / ".local" / "standard-strategy-analysis" / analysis_id
+    source_document = _standard_source_document(registry)
+    _immutable_json(analysis_root / "source-results.json", source_document)
+
+    baseline = scenarios[registry.baseline_scenario_id]
+    universe = expanded["universe"]
+    thresholds = expanded["thresholds"]
+    baseline_positions = _position_facts(baseline, universe)
+    baseline_metrics = _performance(baseline, baseline_positions)
+    baseline_status, baseline_reasons = evaluate_metrics(baseline_metrics, thresholds)
+    evidence: list[ScenarioResult] = [
+        ScenarioResult(
+            scenario_id="baseline-performance",
+            dimension="baseline_performance",
+            status=baseline_status,
+            metrics=_numeric_metrics(baseline_metrics),
+            input_sha256=evidence_digest(
+                {"scenario_id": baseline.scenario_id, "returns": baseline.returns.tolist()}
+            ),
+            reasons=tuple(baseline_reasons),
+        )
+    ]
+
+    challenge_rows: list[dict[str, object]] = []
+    for scenario_id in registered_ids:
+        if scenario_id == registry.baseline_scenario_id:
+            continue
+        scenario = scenarios[scenario_id]
+        positions = _position_facts(scenario, universe)
+        metrics = _performance(scenario, positions)
+        status, reasons = evaluate_metrics(metrics, thresholds)
+        challenge_rows.append(
+            {
+                "scenario_id": scenario_id,
+                "dimension": configurations[scenario_id]["dimension"],
+                "status": status,
+                "reasons": reasons,
+                "metrics": metrics,
+            }
+        )
+        evidence.append(
+            ScenarioResult(
+                scenario_id=f"challenge-{scenario_id}",
+                dimension=str(configurations[scenario_id]["dimension"]),
+                status=status,
+                metrics=_numeric_metrics(metrics),
+                input_sha256=evidence_digest(
+                    {"scenario_id": scenario_id, "returns": scenario.returns.tolist()}
+                ),
+                reasons=tuple(reasons),
+            )
+        )
+
+    security_pnl = _security_pnl_facts(baseline, universe)
+    attribution = _attribution(baseline, security_pnl)
+    attribution_row, attribution_evidence = (
+        _unavailable_result(
+            "baseline-attribution", "deep_attribution", str(attribution.get("reason", "missing_at_source"))
+        )
+        if attribution["status"] == "evidence_insufficient"
+        else (
+            {
+                "scenario_id": "baseline-attribution",
+                "dimension": "deep_attribution",
+                "status": "pass",
+                "reasons": [],
+                "metrics": {"event_count": int(len(baseline.events))},
+            },
+            ScenarioResult(
+                scenario_id="baseline-attribution",
+                dimension="deep_attribution",
+                status="pass",
+                metrics={"event_count": int(len(baseline.events))},
+                input_sha256=evidence_digest(attribution),
+            ),
+        )
+    )
+    evidence.append(attribution_evidence)
+    analyses = expanded["analyses"]
+    period_rows, period_evidence = _fixed_and_rolling(baseline, analyses, thresholds)
+    if baseline.attribution_status == "available" and "details_json" in baseline.events:
+        deletion_rows, deletion_evidence = _deletion_sensitivity(
+            baseline, security_pnl, universe, thresholds
+        )
+    else:
+        deletion_rows, deletion_evidence = _unavailable_deletion_sensitivity(
+            universe, "attribution_missing_at_source"
+        )
+    if baseline.capabilities["cost_execution"].get("status") == "available":
+        cost_rows, cost_evidence = _cost_sensitivity(
+            root, baseline, analyses["cost_execution"], thresholds
+        )
+    else:
+        cost_rows, cost_evidence = _unavailable_cost_sensitivity(
+            analyses["cost_execution"], "market_snapshot_missing_at_source"
+        )
+    bootstrap_rows, bootstrap_evidence = _bootstrap(baseline.returns, analyses["bootstrap"])
+    stress_rows, stress_evidence = _historical_stress(
+        baseline.returns, analyses["historical_stress"]
+    )
+    shock_rows, shock_evidence = _position_shocks(
+        baseline_positions, analyses["position_shocks"]
+    )
+    cvar_rows, cvar_evidence = _cvar(baseline.returns, analyses["cvar"])
+    evidence.extend(
+        [
+            *period_evidence,
+            *deletion_evidence,
+            *cost_evidence,
+            *bootstrap_evidence,
+            *stress_evidence,
+            *shock_evidence,
+            *cvar_evidence,
+        ]
+    )
+    if len(scenarios) == 1:
+        cross_scenario, cross_evidence = _unavailable_result(
+            "cross-scenario", "cross_scenario", "single_registered_source"
+        )
+    else:
+        failed = sum(row["status"] == "fail" for row in challenge_rows)
+        cross_scenario = {
+            "scenario_id": "cross-scenario",
+            "dimension": "cross_scenario",
+            "status": "pass" if failed == 0 else "fail",
+            "reasons": [] if failed == 0 else ["registered_scenario_failure"],
+            "metrics": {"registered_scenarios": len(scenarios), "failed_scenarios": failed},
+        }
+        cross_evidence = ScenarioResult(
+            scenario_id="cross-scenario",
+            dimension="cross_scenario",
+            status=cross_scenario["status"],
+            metrics=_numeric_metrics(cross_scenario["metrics"]),
+            input_sha256=evidence_digest(cross_scenario),
+            reasons=tuple(cross_scenario["reasons"]),
+        )
+    evidence.append(cross_evidence)
+
+    benchmark_data = _benchmark_data_path(root, registry.benchmark_manifest)
+    aligned, alignment = align_three_way_benchmarks(
+        baseline.returns, _benchmark_series(benchmark_data)
+    )
+    benchmark_statistics = {
+        benchmark_id: calculate_benchmark_statistics(
+            {date.date().isoformat(): float(value) for date, value in aligned["strategy"].items()},
+            {date.date().isoformat(): float(value) for date, value in aligned[benchmark_id].items()},
+        )
+        for benchmark_id in BENCHMARK_IDS
+    }
+    evidence_path = build_evidence_matrix(evidence, analysis_root / "evidence-matrix.parquet")
+    evidence_rows = [item.to_document() for item in evidence]
+    failures = [row for row in evidence_rows if row["status"] == "fail"]
+    insufficient = [row for row in evidence_rows if row["status"] == "evidence_insufficient"]
+    summary = {
+        "schema_version": "standard-strategy-analysis/1",
+        "formula_version": "standard-strategy-analysis/1",
+        "analysis_id": analysis_id,
+        "strategy_id": expanded["strategy_id"],
+        "authority": "read_only_archived_sources",
+        "source_mutation": "forbidden",
+        "sources": {"registered_count": len(scenarios), **source_document},
+        "baseline": {
+            "scenario_id": baseline.scenario_id,
+            "status": baseline_status,
+            "reasons": baseline_reasons,
+            "metrics": baseline_metrics,
+        },
+        "benchmarks": {"alignment": alignment, "statistics": benchmark_statistics},
+        "attribution": attribution,
+        "attribution_evidence": attribution_row,
+        "challenge_results": challenge_rows,
+        "cross_scenario": cross_scenario,
+        "robustness": {
+            "periods": period_rows,
+            "asset_deletions": deletion_rows,
+            "cost_execution": cost_rows,
+            "bootstrap": bootstrap_rows,
+            "historical_stress": stress_rows,
+            "position_shocks": shock_rows,
+            "cvar": cvar_rows,
+        },
+        "evidence_rows": evidence_rows,
+        "evidence_matrix": {
+            "path": evidence_path.relative_to(analysis_root).as_posix(),
+            "sha256": _sha256(evidence_path),
+            "rows": len(evidence_rows),
+            "pass": sum(row["status"] == "pass" for row in evidence_rows),
+            "fail": len(failures),
+            "evidence_insufficient": len(insufficient),
+        },
+        "pre_vibe_recommendation": {
+            "decision": (
+                "recommend_joinquant_confirmation"
+                if baseline_status == "pass" and not failures and not insufficient
+                else "revise_before_joinquant"
+            ),
+            "baseline_status": baseline_status,
+            "failure_count": len(failures),
+            "evidence_insufficient_count": len(insufficient),
+        },
+        "next_action": "generate_standard_strategy_analysis_report",
+    }
+    analysis_path = analysis_root / "deterministic-analysis.json"
+    summary = _with_analysis_seconds(
+        summary, time.perf_counter() - started, analysis_path
+    )
+    _atomic_json(analysis_path, summary)
+    return summary
 
 
 def run_deterministic_analysis(
