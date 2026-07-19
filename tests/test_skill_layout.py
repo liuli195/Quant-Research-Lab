@@ -191,6 +191,7 @@ def test_standard_analysis_skill_is_the_only_public_entry(repo_root: Path) -> No
     assert (source / "scripts" / "analyze_quant_robustness.py").is_file()
     assert (source / "scripts" / "quant_analysis" / "__init__.py").is_file()
     assert claude.is_symlink()
+    assert claude.readlink() == Path("../../.agents/skills/analyze-quant-robustness")
     assert claude.resolve() == source.resolve()
     skill = (source / "SKILL.md").read_text(encoding="utf-8")
     assert skill.startswith("---\nname: analyze-quant-robustness\ndescription: Use when ")
