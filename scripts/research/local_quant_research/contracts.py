@@ -6,7 +6,12 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, Mapping, NamedTuple, Protocol
 
 import numpy as np
-import pyarrow as pa
+
+from scripts.research.result_contract import (
+    ExecutionBundle,
+    ExecutionRun,
+    ResultExtension,
+)
 
 if TYPE_CHECKING:
     from scripts.research.market_data.query import SnapshotView
@@ -149,34 +154,6 @@ class ExecutionLedger(Protocol):
 
     @property
     def returns(self) -> np.ndarray: ...
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutionRun:
-    ledger: ExecutionLedger
-    trace: Mapping[str, np.ndarray]
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "trace", MappingProxyType(dict(self.trace)))
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutionBundle:
-    primary: ExecutionRun
-    final: ExecutionRun
-    stages: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class ResultExtension:
-    name: str
-    schema_version: str
-    table: pa.Table
-    unique_key: tuple[str, ...]
-    evidence: Mapping[str, object]
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "evidence", MappingProxyType(dict(self.evidence)))
 
 
 class StrategyModule(Protocol):

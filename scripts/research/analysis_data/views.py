@@ -133,7 +133,7 @@ def _declared_parquet_path(source: AnalysisSource, name: str) -> Path | None:
     entry = source.manifest["datasets"][name]
     files = entry["files"]
     for reference in files:
-        if reference.get("path") == f"data/{name}.parquet":
+        if reference.get("path") == f"{source.data_prefix}/{name}.parquet":
             return source.root / str(reference["path"])
     return None
 
@@ -143,11 +143,12 @@ def _validate_physical_fields(
 ) -> None:
     actual = tuple(pq.read_schema(path).names)
     expected = tuple(field for field, _ in _SCHEMAS[name])
-    fields_match = (
-        actual == expected
-        if source.kind in {"local_backtest", "local_research"}
-        else len(actual) == len(expected) and set(actual) == set(expected)
-    )
+    if source.kind == "joinquant_simulation" and name == "risk":
+        fields_match = set(expected).issubset(actual)
+    elif source.kind in {"local_backtest", "local_research"}:
+        fields_match = actual == expected
+    else:
+        fields_match = len(actual) == len(expected) and set(actual) == set(expected)
     if not fields_match:
         raise AnalysisManifestError(
             f"{source.kind} {name} fields do not match the observed contract"
@@ -182,6 +183,11 @@ class AnalysisDatabase:
         return CORE_DATASETS
 
     def reference_status(self, name: str) -> tuple[str, str | None]:
+        if self.source.kind == "local_research" and name in {
+            "risk",
+            "period_risks",
+        }:
+            return "missing_at_source", "local-research-package/2"
         if name not in self.table_names:
             raise KeyError(name)
         entry = self.source.manifest["datasets"][name]
@@ -224,8 +230,10 @@ class AnalysisDatabase:
         self.close()
 
 
-def open_analysis_database(result_dir: Path) -> AnalysisDatabase:
-    source = open_analysis_source(result_dir)
+def open_analysis_database(
+    result_dir: Path, *, snapshot_id: str | None = None
+) -> AnalysisDatabase:
+    source = open_analysis_source(result_dir, snapshot_id=snapshot_id)
     connection = duckdb.connect(":memory:")
     try:
         names = (
@@ -244,7 +252,9 @@ def open_analysis_database(result_dir: Path) -> AnalysisDatabase:
             connection.execute(
                 f"create view {_quote_identifier(name)} as {query}"
             )
-        register_return_views(connection)
+        register_return_views(
+            connection, collapse_intraday=source.kind == "joinquant_simulation"
+        )
         return AnalysisDatabase(source=source, connection=connection)
     except Exception:
         connection.close()

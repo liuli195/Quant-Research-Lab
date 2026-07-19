@@ -17,12 +17,10 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-from scripts.research.local_quant_research.contracts import (
+from scripts.research.result_contract import (
+    EvidenceError,
     ExecutionBundle,
     ResultExtension,
-)
-from scripts.research.local_quant_research.evidence import (
-    EvidenceError,
     validate_extension_table,
 )
 

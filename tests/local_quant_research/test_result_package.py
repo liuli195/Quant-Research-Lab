@@ -20,7 +20,7 @@ from scripts.research.local_quant_research.contracts import (
     ExecutionRun,
     ResultExtension,
 )
-from scripts.research.local_quant_research.result_package import (
+from scripts.research.result_package import (
     ResultContractError,
     ResultPackageRequest,
     validate_result_package,
@@ -303,7 +303,7 @@ def _point_reference_at(
 
 def _replace_persisted_extension_table(package: Path, table: pa.Table) -> None:
     """Keep the disk declaration self-consistent up to logical package identity."""
-    from scripts.research.local_quant_research import result_package
+    from scripts.research import result_package
 
     data_path = package / "extensions/decision_log/data.parquet"
     pq.write_table(table, data_path, compression="zstd")
@@ -328,7 +328,7 @@ def test_writer_materializes_one_package_without_recomputing_ledger(
     counting_ledger: CountingLedger,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scripts.research.local_quant_research import result_package
+    from scripts.research import result_package
 
     writes: list[tuple[str, str | None]] = []
     real_write = result_package.pq.write_table
@@ -431,7 +431,7 @@ def test_writer_reads_each_materialized_parquet_table_only_once(
     package_request: ResultPackageRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scripts.research.local_quant_research import result_package
+    from scripts.research import result_package
 
     reads: Counter[Path] = Counter()
     real_read = result_package.pq.read_table
@@ -467,7 +467,7 @@ def test_writer_uses_its_single_readback_without_calling_disk_validator(
     package_request: ResultPackageRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scripts.research.local_quant_research import result_package
+    from scripts.research import result_package
 
     def fail_validator(*_args: object, **_kwargs: object) -> None:
         pytest.fail("writer must not call the public disk validator")
@@ -482,7 +482,7 @@ def test_writer_distinguishes_persisted_prefinalization_from_returned_full_durat
     package_request: ResultPackageRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scripts.research.local_quant_research import result_package
+    from scripts.research import result_package
 
     delay_seconds = 0.05
     real_write_documents = result_package._write_documents
@@ -526,7 +526,7 @@ def test_scenario_gate_uses_writer_duration_through_delayed_return(
         PerformanceGateError,
         PerformanceSample,
     )
-    from scripts.research.local_quant_research.result_package import ResultPackage
+    from scripts.research.result_package import ResultPackage
 
     code_path = next(iter(package_request.code_files.values()))
     loaded_strategy = SimpleNamespace(
@@ -585,7 +585,7 @@ def test_validator_summarizes_each_core_table_once(
     package_request: ResultPackageRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scripts.research.local_quant_research import result_package
+    from scripts.research import result_package
 
     package = write_result_package(package_request)
     names_by_fields = {
@@ -627,7 +627,7 @@ def test_writer_reuse_summarizes_new_and_existing_core_once_each(
     package_request: ResultPackageRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scripts.research.local_quant_research import result_package
+    from scripts.research import result_package
 
     write_result_package(package_request)
     names_by_fields = {
@@ -710,7 +710,7 @@ def test_execution_report_contains_only_reproducible_package_facts(
 def test_writer_cleans_only_its_staging_directory_when_readback_fails(
     package_request: ResultPackageRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from scripts.research.local_quant_research import result_package
+    from scripts.research import result_package
 
     sibling = package_request.output_dir.parent / "keep-me"
     sibling.mkdir()
@@ -803,7 +803,7 @@ def test_writer_refuses_reuse_when_report_and_manifest_reference_are_tampered(
 def test_writer_atomically_publishes_only_after_staging_is_complete(
     package_request: ResultPackageRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from scripts.research.local_quant_research import result_package
+    from scripts.research import result_package
 
     observed: list[tuple[Path, Path]] = []
     real_replace = os.replace

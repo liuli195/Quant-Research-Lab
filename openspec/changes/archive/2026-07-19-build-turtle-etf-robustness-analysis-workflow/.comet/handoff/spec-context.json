@@ -1,0 +1,30 @@
+{
+  "change": "build-turtle-etf-robustness-analysis-workflow",
+  "phase": "design",
+  "mode": "beta",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "f874769970bb2b213ef1dc431f05ebb288bf43fd8e30b8000abc8d29f26a0bef",
+  "files": [
+    {
+      "path": "openspec/changes/build-turtle-etf-robustness-analysis-workflow/proposal.md",
+      "sha256": "448505d85105d54406170045d3bb980f2c9ffdccb7c666c0f62fec717ebe9c31",
+      "role": "supporting"
+    },
+    {
+      "path": "openspec/changes/build-turtle-etf-robustness-analysis-workflow/design.md",
+      "sha256": "a2d6f9e70706ac3e72a60afb941b6d5cc6187755dc9fac9efae8edad95f84d4c",
+      "role": "supporting"
+    },
+    {
+      "path": "openspec/changes/build-turtle-etf-robustness-analysis-workflow/tasks.md",
+      "sha256": "02b4f89cf0d3f8ef36288d8792f84050ffdb33fee5e4cf4fc742fcfe619662f0",
+      "role": "supporting"
+    },
+    {
+      "path": "openspec/changes/build-turtle-etf-robustness-analysis-workflow/specs/standard-strategy-analysis-workflow/spec.md",
+      "sha256": "4beead3f656330d52c1673ece382a773dd822b17d5d2c61c3251af7dfb5f4b71",
+      "role": "spec"
+    }
+  ]
+}

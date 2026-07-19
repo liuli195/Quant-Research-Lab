@@ -75,7 +75,12 @@ def _build_repo(tmp_path: Path, source_repo: Path) -> tuple[Path, Path, dict[str
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(source_repo / relative, target)
-    for relative in (Path("scripts/__init__.py"), Path("scripts/research/__init__.py")):
+    for relative in (
+        Path("scripts/__init__.py"),
+        Path("scripts/research/__init__.py"),
+        Path("scripts/research/result_contract.py"),
+        Path("scripts/research/result_package.py"),
+    ):
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_repo / relative, target)
@@ -557,6 +562,8 @@ def test_freezing_copies_every_captured_shared_runtime_source(
     assert {
         "scripts/__init__.py",
         "scripts/research/__init__.py",
+        "scripts/research/result_contract.py",
+        "scripts/research/result_package.py",
         "scripts/research/local_quant_research/runner.py",
         "scripts/research/local_quant_research/scenario.py",
         "scripts/research/market_data/query.py",
@@ -672,7 +679,7 @@ def test_private_execute_bootstrap_loads_runner_from_frozen_repository(
             "class PerformanceGateError(RuntimeError):\n"
             "    code = 'performance_gate'\n"
         ),
-        "scripts/research/local_quant_research/result_package.py": (
+        "scripts/research/result_package.py": (
             "class ResultContractError(ValueError):\n"
             "    pass\n"
         ),
@@ -742,7 +749,8 @@ def test_completed_package_reuse_binds_all_frozen_identity_documents(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scripts.research.local_quant_research import result_package, runner
+    from scripts.research import result_package
+    from scripts.research.local_quant_research import runner
     from scripts.research.local_quant_research.evidence import canonical_digest
 
     package = tmp_path / "package"

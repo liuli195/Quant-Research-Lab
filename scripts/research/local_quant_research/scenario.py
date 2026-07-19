@@ -10,7 +10,7 @@ from scripts.research.market_data.query import SnapshotView
 from .contracts import ExecutionBundle, ResultExtension
 from .evidence import execution_digest
 from .performance import PerformanceEvidence, include_shared_work, run_cold_warm
-from .result_package import (
+from scripts.research.result_package import (
     ResultContractError,
     ResultPackage,
     ResultPackageRequest,

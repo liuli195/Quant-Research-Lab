@@ -1,37 +1,38 @@
 from __future__ import annotations
 
-import hashlib
 import json
+import shutil
+from datetime import date
 from pathlib import Path
+import subprocess
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
-from scripts.research.quant_analysis import unified_analysis as analysis
-from scripts.research.quant_analysis.unified_analysis import (
+from quant_analysis import unified_analysis as analysis
+from quant_analysis.unified_analysis import (
     ScenarioInput,
     UnifiedAnalysisError,
+    _attribution,
     _deletion_sensitivity,
     _position_facts,
     _position_shocks,
-    _register_source_results,
     _risk_metrics,
     align_three_way_benchmarks,
     calculate_return_metrics,
-    deterministic_next_action,
     evaluate_metrics,
+    load_registered_scenario,
+    run_standard_analysis,
 )
-
-
-SCENARIO_IDS = (
-    "baseline",
-    "entry-40",
-    "entry-60",
-    "stop-1-5n",
-    "stop-2-5n",
-    "covariance-120d",
-    "covariance-ewma-30d",
+from quant_analysis.source_registry import load_source_registry
+from scripts.research.market_data.benchmark_sets import (
+    BENCHMARK_IDS as CONTRACT_BENCHMARK_IDS,
+    SourcePayload,
+    write_benchmark_set,
 )
+from tests.quant_analysis.test_source_registry import _prepared_sources, _registry
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -39,97 +40,36 @@ def _write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
 
 
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _source_fixture(
-    root: Path,
-    workspace: Path,
-    *,
-    identity_override: dict[str, object] | None = None,
-    run_prefix: str = "run",
-    shared_identity: dict[str, object] | None = None,
-) -> dict[str, str]:
-    _write_json(
-        workspace / "analysis-scenarios.json",
-        {
-            "strategy_id": "strategy-003",
-            "scenarios": [
-                {"scenario_id": scenario_id, "dimension": "baseline" if index == 0 else "parameter"}
-                for index, scenario_id in enumerate(SCENARIO_IDS)
-            ],
-        },
-    )
-    registry: dict[str, str] = {}
-    for index, scenario_id in enumerate(SCENARIO_IDS):
-        params_path = workspace / "scenario-configs" / scenario_id / "params.json"
-        _write_json(params_path, {"scenario_id": scenario_id})
-        run_id = f"{run_prefix}-{index}"
-        registry[scenario_id] = run_id
-        run_root = root / ".local" / "quant-research" / "strategy-003" / run_id
-        result_dir = run_root / "backtests" / f"local-{scenario_id}"
-        performance = {
-            "status": "pass",
-            "result_match": True,
-            "cold_seconds": 10.0,
-            "warm_seconds": 1.0,
-            "cleanup": {"verified": True},
-        }
-        _write_json(result_dir / "performance.json", performance)
-        identity = {
-            "snapshot_id": "snapshot-1",
-            "code_identity_sha256": "code-identity-1",
-            "code_sha256": "code-1",
-            "execution": {
-                "adapter_version": "adapter-1",
-                "backend": "vectorbt.Portfolio.from_order_func",
-                "callbacks_sha256": "callbacks-1",
-            },
-        }
-        if shared_identity:
-            identity.update(shared_identity)
-        if index == len(SCENARIO_IDS) - 1 and identity_override:
-            identity.update(identity_override)
-        _write_json(
-            result_dir / "manifest.json",
-            {
-                "run": {
-                    "run_id": run_id,
-                    "scenario_id": scenario_id,
-                    "snapshot_id": identity["snapshot_id"],
-                },
-                "source": {
-                    "engine": {
-                        "adapter_version": identity["execution"]["adapter_version"],
-                        "backend": identity["execution"]["backend"],
-                        "numba": "0.66.0",
-                        "vectorbt": "1.1.0",
-                    }
-                },
-            },
+def _benchmark_sources() -> tuple[SourcePayload, ...]:
+    identities = {
+        "csi300_total_return": (
+            "China Securities Index Co., Ltd.",
+            "H00300",
+            "https://www.csindex.com.cn/",
+        ),
+        "nasdaq100_total_return": (
+            "Nasdaq, Inc.",
+            "XNDX",
+            "https://indexes.nasdaqomx.com/",
+        ),
+        "usd_cny": (
+            "Board of Governors of the Federal Reserve System",
+            "DEXCHUS",
+            "https://www.federalreserve.gov/",
+        ),
+    }
+    return tuple(
+        SourcePayload(
+            name=name,
+            filename=f"{name}.source",
+            provider=provider,
+            source_id=source_id,
+            url=f"{url}{name}",
+            content_type="application/octet-stream",
+            data=name.encode(),
         )
-        run_manifest = {
-            "schema_version": 1,
-            "project_id": "strategy-003",
-            "run_id": run_id,
-            "status": "complete",
-            "snapshot": {"snapshot_id": identity["snapshot_id"]},
-            "inputs": {
-                "project_config_sha256": _sha256(params_path),
-                "code_identity_sha256": identity["code_identity_sha256"],
-                "code_sha256": identity["code_sha256"],
-                "code_identity": {
-                    "execution": {
-                        **identity["execution"],
-                        "dependencies": {"numba": "0.66.0", "vectorbt": "1.1.0"},
-                    }
-                },
-            },
-            "output_set_sha256": f"outputs-{index}",
-        }
-        _write_json(run_root / "run-manifest.json", run_manifest)
-    return registry
+        for name, (provider, source_id, url) in identities.items()
+    )
 
 
 def test_calculate_return_metrics_compounds_and_measures_drawdown() -> None:
@@ -145,6 +85,315 @@ def test_calculate_return_metrics_compounds_and_measures_drawdown() -> None:
     assert metrics["observations"] == 3
     assert metrics["cagr"] is not None
     assert metrics["calmar"] is not None
+
+
+def test_registered_sources_share_the_four_common_facts(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    root, entries = _prepared_sources(repo_root, tmp_path)
+    registry = load_source_registry(root, _registry(root, entries))
+
+    scenarios = [
+        load_registered_scenario(source, analysis_params={})
+        for source in registry.sources
+    ]
+
+    assert [source.registration.source_type for source in registry.sources] == [
+        "local_research",
+        "joinquant_backtest",
+        "joinquant_simulation",
+    ]
+    assert all(not scenario.returns.empty for scenario in scenarios)
+    assert all(
+        {"date", "total_value", "net_value", "cash", "aval_cash"}
+        .issubset(scenario.balances.columns)
+        for scenario in scenarios
+    )
+    assert scenarios[0].attribution_status == "missing_at_source"
+    assert scenarios[0].events.empty
+    for scenario in scenarios[1:]:
+        assert scenario.attribution_status == "available"
+        assert {"time", "event_time", "date", "event_type", "reason_code", "security"}.issubset(
+            scenario.events.columns
+        )
+        assert not scenario.events.empty
+        assert scenario.events["event_time"].notna().all()
+        assert "run_start" in set(scenario.events["event_type"])
+
+    attribution = _attribution(scenarios[1], pd.DataFrame())
+    assert attribution["status"] == "available"
+    assert attribution["method"] == "verified source-native event log"
+    assert attribution["event_counts"]["rebalance_signals"] > 0
+    assert attribution["pnl_contribution"]["status"] == "evidence_insufficient"
+
+
+def _standard_registry(repo_root: Path, tmp_path: Path, *, single_source: bool) -> tuple[Path, Path]:
+    root, entries = _prepared_sources(repo_root, tmp_path)
+    if single_source:
+        entries = entries[:1]
+    positions = pq.read_table(
+        root / "sources/backtest/data/positions.parquet", columns=["security"]
+    ).to_pandas()
+    universe = [
+        {"security": security, "asset_group": "etf"}
+        for security in sorted(set(positions["security"].dropna().astype(str)))
+    ]
+    config = root / "config"
+    _write_json(
+        config / "baseline.json",
+        {"project_id": "standard-fixture", "universe": universe, "risk": {}},
+    )
+    _write_json(
+        config / "analysis-plan.json",
+        {
+            "schema_version": "strategy-analysis-plan/1",
+            "strategy_id": "standard-fixture",
+            "baseline_config": "config/baseline.json",
+            "scenarios": [
+                {
+                    "scenario_id": entry["scenario_id"],
+                    "dimension": "baseline" if index == 0 else "comparison",
+                    "overrides": {},
+                }
+                for index, entry in enumerate(entries)
+            ],
+            "analyses": {
+                "fixed_periods": [
+                    {"id": "fixture", "start": "2024-01-01", "end": "2024-12-31"}
+                ],
+                "rolling": {"window_years": 1, "step_months": 3},
+                "cost_execution": [
+                    {"id": "fixture", "commission_multiplier": 1.0, "slippage": 0.0, "delay_days": 0}
+                ],
+                "bootstrap": {
+                    "block_sizes": [1], "paths": 3, "horizon_days": 1, "seed": 7,
+                    "thresholds": {
+                        "probability_drawdown_over_20pct_max": 1.0,
+                        "probability_drawdown_over_30pct_max": 1.0,
+                        "median_terminal_return_min_exclusive": -1.0,
+                    },
+                },
+                "historical_stress": [
+                    {"id": "stress-fixture", "start": "2024-01-01", "end": "2024-12-31", "max_drawdown_abs_max": 1.0}
+                ],
+                "position_shocks": [
+                    {"id": "shock-fixture", "asset_group_shocks": {"etf": -0.1}, "maximum_loss_abs_max": 1.0}
+                ],
+                "cvar": [
+                    {"id": "cvar-fixture", "horizon_days": 1, "confidence": 0.95, "maximum_loss_abs_max": 1.0, "minimum_tail_observations": 1}
+                ],
+            },
+            "thresholds": {"cagr_min_exclusive": 0.0, "max_drawdown_abs_max": 0.2, "calmar_min": 0.5},
+        },
+    )
+    benchmark_set = write_benchmark_set(
+        market_data_root=config,
+        rows=[
+            {
+                "time": trading_date,
+                "benchmark_id": benchmark_id,
+                "returns": 0.0 if trading_date == "2024-01-02" else 0.01,
+            }
+            for trading_date in ("2024-01-02", "2024-01-03")
+            for benchmark_id in CONTRACT_BENCHMARK_IDS
+        ],
+        sources=_benchmark_sources(),
+        start_date=date(2024, 1, 2),
+        end_date=date(2024, 1, 3),
+    )
+    registry = root / "standard-source-registry.json"
+    _write_json(
+        registry,
+        {
+            "schema_version": "standard-analysis-source-registry/1",
+            "analysis_plan": "config/analysis-plan.json",
+            "benchmark_manifest": (
+                benchmark_set.root / "manifest.json"
+            ).relative_to(root).as_posix(),
+            "baseline_scenario_id": "baseline",
+            "sources": entries,
+        },
+    )
+    return root, registry
+
+
+def test_standard_analysis_rejects_tampered_benchmark_data(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    root, registry = _standard_registry(repo_root, tmp_path, single_source=True)
+    registry_document = json.loads(registry.read_text(encoding="utf-8"))
+    benchmark_manifest = root / registry_document["benchmark_manifest"]
+    benchmark_data = benchmark_manifest.parent / "benchmark-returns.parquet"
+    table = pq.read_table(benchmark_data)
+    returns = table["returns"].to_pylist()
+    returns[-1] = float(returns[-1]) + 0.01
+    pq.write_table(table.set_column(2, "returns", pa.array(returns)), benchmark_data)
+
+    with pytest.raises(UnifiedAnalysisError, match="benchmark.*digest"):
+        run_standard_analysis(root, registry)
+
+
+def test_standard_analysis_is_byte_deterministic_after_fresh_output(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    root, registry = _standard_registry(repo_root, tmp_path, single_source=True)
+    first = run_standard_analysis(root, registry)
+    workspace = root / ".local/standard-strategy-analysis" / first["analysis_id"]
+    first_bytes = (workspace / "deterministic-analysis.json").read_bytes()
+    shutil.rmtree(workspace)
+
+    second = run_standard_analysis(root, registry)
+
+    assert second == first
+    assert (workspace / "deterministic-analysis.json").read_bytes() == first_bytes
+
+
+def test_standard_analysis_rejects_source_drift_before_publishing(
+    repo_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, registry = _standard_registry(repo_root, tmp_path, single_source=False)
+    source_manifest = root / "sources/simulation/manifest.json"
+    real_benchmark_series = analysis._benchmark_series
+
+    def mutate_source_after_reads(path: Path) -> dict[str, pd.Series]:
+        result = real_benchmark_series(path)
+        source_manifest.write_bytes(source_manifest.read_bytes() + b" ")
+        return result
+
+    monkeypatch.setattr(analysis, "_benchmark_series", mutate_source_after_reads)
+
+    with pytest.raises(UnifiedAnalysisError, match="changed during analysis"):
+        run_standard_analysis(root, registry)
+    assert not list(
+        (root / ".local/standard-strategy-analysis").glob(
+            "*/deterministic-analysis.json"
+        )
+    )
+
+
+def test_missing_period_observations_degrade_to_evidence_insufficient(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    root, registry = _standard_registry(repo_root, tmp_path, single_source=True)
+    plan_path = root / "config/analysis-plan.json"
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan["analyses"]["fixed_periods"] = [
+        {"id": "missing", "start": "1990-01-01", "end": "1990-12-31"}
+    ]
+    plan["analyses"]["rolling"] = {"window_years": 5, "step_months": 3}
+    plan["analyses"]["historical_stress"] = [
+        {
+            "id": "missing-stress",
+            "start": "1990-01-01",
+            "end": "1990-12-31",
+            "max_drawdown_abs_max": 1.0,
+        }
+    ]
+    _write_json(plan_path, plan)
+
+    result = run_standard_analysis(root, registry)
+
+    period_rows = result["robustness"]["periods"]
+    assert {row["dimension"] for row in period_rows} == {
+        "fixed_period",
+        "rolling_period",
+    }
+    assert all(row["status"] == "evidence_insufficient" for row in period_rows)
+    assert result["robustness"]["historical_stress"][0]["status"] == (
+        "evidence_insufficient"
+    )
+
+
+def test_standard_analysis_keeps_independent_results_and_evidence_gaps(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    root, registry = _standard_registry(repo_root, tmp_path, single_source=False)
+
+    result = run_standard_analysis(root, registry)
+
+    statuses = {row["status"] for row in result["evidence_rows"]}
+    assert {"pass", "evidence_insufficient"}.issubset(statuses)
+    assert result["attribution"]["status"] == "evidence_insufficient"
+    assert result["robustness"]["cost_execution"][0]["status"] == "evidence_insufficient"
+    assert result["sources"]["registered_count"] == 3
+    assert result["analysis_configuration"]["analysis_plan"]["path"] == (
+        "config/analysis-plan.json"
+    )
+    assert result["analysis_configuration"]["baseline_config"]["path"] == (
+        "config/baseline.json"
+    )
+    assert result["analysis_configuration"]["analyses"]["bootstrap"]["seed"] == (
+        7
+    )
+    assert result["analysis_configuration"]["scenario_params"]
+    assert result["script"]["version"] == "analyze-quant-robustness/1"
+    assert result["script"]["entry"].endswith("analyze_quant_robustness.py")
+    assert (root / ".local/standard-strategy-analysis" / result["analysis_id"] / "deterministic-analysis.json").is_file()
+
+
+def test_rolling_window_accepts_exact_calendar_year() -> None:
+    index = pd.date_range("2024-01-01", "2024-12-31", freq="D")
+    scenario = ScenarioInput(
+        scenario_id="baseline",
+        returns=pd.Series([0.0] * len(index), index=index),
+        balances=pd.DataFrame(),
+        positions=pd.DataFrame(),
+        orders=pd.DataFrame(),
+        events=pd.DataFrame(),
+        params={},
+    )
+    rows, _ = analysis._fixed_and_rolling(
+        scenario,
+        {
+            "fixed_periods": [],
+            "rolling": {"window_years": 1, "step_months": 3},
+        },
+        {
+            "cagr_min_exclusive": -1.0,
+            "max_drawdown_abs_max": 1.0,
+            "calmar_min": -1.0,
+        },
+    )
+
+    assert rows[0]["scenario_id"] == "rolling-1y-2024-01-01"
+    assert rows[0]["status"] != "evidence_insufficient"
+
+
+def test_standard_analysis_runs_single_source_return_checks(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    root, registry = _standard_registry(repo_root, tmp_path, single_source=True)
+
+    result = run_standard_analysis(root, registry)
+
+    assert result["challenge_results"] == []
+    assert result["robustness"]["bootstrap"]
+    assert result["cross_scenario"]["status"] == "evidence_insufficient"
+
+
+def test_standard_skill_script_requires_one_explicit_source_registry(repo_root: Path) -> None:
+    completed = subprocess.run(
+        [
+            str(repo_root / ".venv/Scripts/python.exe"),
+            str(
+                repo_root
+                / ".agents/skills/analyze-quant-robustness/scripts/analyze_quant_robustness.py"
+            ),
+            "run",
+            "--repository",
+            str(repo_root),
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        shell=False,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "--source-registry" in completed.stderr
 
 
 def test_aligns_strategy_and_both_benchmarks_on_one_shared_calendar() -> None:
@@ -198,8 +447,6 @@ def test_evaluates_all_declared_strategy_thresholds() -> None:
 def test_position_facts_use_same_day_state_before_end_of_day_valuation() -> None:
     scenario = ScenarioInput(
         scenario_id="baseline",
-        run_id="run-1",
-        result_dir=Path("."),
         returns=pd.Series([0.0], index=pd.to_datetime(["2024-01-02"])),
         balances=pd.DataFrame(
             {
@@ -240,7 +487,6 @@ def test_position_facts_use_same_day_state_before_end_of_day_valuation() -> None
             }
         ),
         params={},
-        performance={},
     )
 
     facts = _position_facts(scenario, {"510300.XSHG": "equity"})
@@ -253,8 +499,6 @@ def test_security_pnl_facts_include_full_exit_without_fake_source_position() -> 
     dates = pd.to_datetime(["2024-01-02", "2024-01-03"])
     scenario = ScenarioInput(
         scenario_id="baseline",
-        run_id="run-1",
-        result_dir=Path("."),
         returns=pd.Series([99.0 / 999.0], index=dates[1:]),
         balances=pd.DataFrame(
             {
@@ -294,7 +538,6 @@ def test_security_pnl_facts_include_full_exit_without_fake_source_position() -> 
             }
         ),
         params={},
-        performance={},
     )
 
     pnl = analysis._security_pnl_facts(scenario, {"ETF-A": "equity"})
@@ -339,30 +582,10 @@ def test_stop_failure_shock_uses_reproducible_loss_from_valuation_details() -> N
     assert rows[0]["metrics"]["worst_account_loss"] == pytest.approx(0.15)
 
 
-def test_deterministic_analysis_continues_to_local_report_not_vibe() -> None:
-    assert deterministic_next_action() == "generate_deterministic_local_report"
-
-
-def test_analysis_seconds_are_recorded_once_and_preserved_on_rerun(
-    tmp_path: Path,
-) -> None:
-    output = tmp_path / "deterministic-analysis.json"
-    summary = {"analysis_id": "analysis-1"}
-
-    first = analysis._with_analysis_seconds(summary, 7.25, output)
-    _write_json(output, first)
-    second = analysis._with_analysis_seconds(summary, 9.5, output)
-
-    assert first["analysis_seconds"] == 7.25
-    assert second["analysis_seconds"] == 7.25
-
-
 def test_risk_diagnostics_use_actual_exposure_and_optional_turtle_units() -> None:
     date = pd.Timestamp("2024-01-02")
     scenario = ScenarioInput(
         scenario_id="baseline",
-        run_id="run-1",
-        result_dir=Path("."),
         returns=pd.Series([0.0] * 60, index=pd.date_range(date, periods=60)),
         balances=pd.DataFrame(
             {"date": [date], "total_value": [1000.0], "cash": [500.0]}
@@ -407,7 +630,6 @@ def test_risk_diagnostics_use_actual_exposure_and_optional_turtle_units() -> Non
                 "portfolio_unit_cap": 12.0,
             }
         },
-        performance={},
     )
     positions = pd.DataFrame(
         {
@@ -437,8 +659,6 @@ def test_risk_diagnostics_accept_joinquant_results_without_turtle_evidence() -> 
     date = pd.Timestamp("2024-01-02")
     scenario = ScenarioInput(
         scenario_id="joinquant",
-        run_id="run-1",
-        result_dir=Path("."),
         returns=pd.Series([0.0], index=[date]),
         balances=pd.DataFrame(
             {"date": [date], "total_value": [1000.0], "cash": [1000.0]}
@@ -449,7 +669,6 @@ def test_risk_diagnostics_accept_joinquant_results_without_turtle_evidence() -> 
         ),
         events=pd.DataFrame(),
         params={},
-        performance={},
     )
 
     metrics = _risk_metrics(scenario, pd.DataFrame())
@@ -463,15 +682,12 @@ def test_deletion_sensitivity_keeps_unheld_securities_and_groups_in_matrix() -> 
     dates = pd.to_datetime(["2024-01-02", "2024-01-03"])
     scenario = ScenarioInput(
         scenario_id="baseline",
-        run_id="run-1",
-        result_dir=Path("."),
         returns=pd.Series([0.01, -0.01], index=dates),
         balances=pd.DataFrame(),
         positions=pd.DataFrame(),
         orders=pd.DataFrame(),
         events=pd.DataFrame(),
         params={},
-        performance={},
     )
     positions = pd.DataFrame(
         {
@@ -495,200 +711,3 @@ def test_deletion_sensitivity_keeps_unheld_securities_and_groups_in_matrix() -> 
     )
 
     assert {row["removed"] for row in rows} == {"ETF-A", "ETF-B", "equity", "bond"}
-
-
-def test_source_registration_uses_only_explicit_scenario_run_mapping(tmp_path: Path) -> None:
-    root = tmp_path
-    workspace = root / ".local" / "strategy-analysis-preparations" / "preparation-1"
-    _write_json(workspace / "preparation.json", {"preparation_id": "preparation-1"})
-    registry = _source_fixture(root, workspace)
-    duplicate = root / ".local" / "quant-research" / "strategy-003" / "old-run"
-    _write_json(
-        duplicate / "run-manifest.json",
-        {
-            "run_id": "old-run",
-            "status": "complete",
-            "inputs": {
-                "project_config_sha256": _sha256(
-                    workspace / "scenario-configs" / "baseline" / "params.json"
-                )
-            },
-        },
-    )
-
-    document = _register_source_results(root, workspace, registry)
-
-    assert [source["run_id"] for source in document["sources"]] == list(registry.values())
-    assert document["source_registry"] == {
-        "explicit": True,
-        "scenario_count": 7,
-        "run_id_count": 7,
-        "sha256": document["source_registry"]["sha256"],
-    }
-    assert document["shared_identity"] == {
-        "snapshot_id": "snapshot-1",
-        "code_identity_sha256": "code-identity-1",
-        "code_sha256": "code-1",
-            "execution_backend": {
-                "adapter_version": "adapter-1",
-                "backend": "vectorbt.Portfolio.from_order_func",
-                "callbacks_sha256": "callbacks-1",
-                "dependencies": {"numba": "0.66.0", "vectorbt": "1.1.0"},
-            },
-        "execution_backend_sha256": document["shared_identity"][
-            "execution_backend_sha256"
-        ],
-    }
-    assert "old-run" not in json.dumps(document)
-    final_workspace = root / ".local" / "strategy-analysis" / document["analysis_id"]
-    assert json.loads(
-        (final_workspace / "source-results.json").read_text(encoding="utf-8")
-    ) == document
-
-
-def test_source_registration_rejects_duplicate_run_ids(tmp_path: Path) -> None:
-    root = tmp_path
-    workspace = root / ".local" / "strategy-analysis-preparations" / "preparation-1"
-    _write_json(workspace / "preparation.json", {"preparation_id": "preparation-1"})
-    registry = _source_fixture(root, workspace)
-    registry["entry-40"] = registry["baseline"]
-
-    with pytest.raises(UnifiedAnalysisError, match="run_id values must be unique"):
-        _register_source_results(root, workspace, registry)
-
-
-def test_source_registration_supports_baseline_plus_one_challenge(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path
-    workspace = root / ".local" / "strategy-analysis-preparations" / "preparation-1"
-    _write_json(workspace / "preparation.json", {"preparation_id": "preparation-1"})
-    registry = _source_fixture(root, workspace)
-    scenarios = json.loads(
-        (workspace / "analysis-scenarios.json").read_text(encoding="utf-8")
-    )
-    scenarios["scenarios"] = scenarios["scenarios"][:2]
-    registry = {
-        scenario["scenario_id"]: registry[scenario["scenario_id"]]
-        for scenario in scenarios["scenarios"]
-    }
-    _write_json(workspace / "analysis-scenarios.json", scenarios)
-
-    document = _register_source_results(root, workspace, registry)
-
-    assert [source["scenario_id"] for source in document["sources"]] == [
-        "baseline",
-        "entry-40",
-    ]
-    assert document["source_registry"]["scenario_count"] == 2
-
-
-def test_source_registration_requires_at_least_two_scenarios(tmp_path: Path) -> None:
-    root = tmp_path
-    workspace = root / ".local" / "strategy-analysis-preparations" / "preparation-1"
-    _write_json(workspace / "preparation.json", {"preparation_id": "preparation-1"})
-    registry = _source_fixture(root, workspace)
-    scenarios = json.loads(
-        (workspace / "analysis-scenarios.json").read_text(encoding="utf-8")
-    )
-    scenarios["scenarios"] = scenarios["scenarios"][:1]
-    registry = {"baseline": registry["baseline"]}
-    _write_json(workspace / "analysis-scenarios.json", scenarios)
-
-    with pytest.raises(UnifiedAnalysisError, match="at least two planned scenarios"):
-        _register_source_results(root, workspace, registry)
-
-
-def test_source_registration_rejects_result_manifest_with_another_backend(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path
-    workspace = root / ".local" / "strategy-analysis-preparations" / "preparation-1"
-    _write_json(workspace / "preparation.json", {"preparation_id": "preparation-1"})
-    registry = _source_fixture(root, workspace)
-    result_manifest = (
-        root
-        / ".local"
-        / "quant-research"
-        / "strategy-003"
-        / registry["baseline"]
-        / "backtests"
-        / "local-baseline"
-        / "manifest.json"
-    )
-    document = json.loads(result_manifest.read_text(encoding="utf-8"))
-    document["source"]["engine"]["backend"] = "forged.Backend"
-    _write_json(result_manifest, document)
-
-    with pytest.raises(
-        UnifiedAnalysisError, match="local result execution backend identity"
-    ):
-        _register_source_results(root, workspace, registry)
-
-
-@pytest.mark.parametrize(
-    ("identity_override", "message"),
-    [
-        ({"snapshot_id": "snapshot-2"}, "snapshot_id"),
-        ({"code_identity_sha256": "code-identity-2"}, "code_identity_sha256"),
-        ({"code_sha256": "code-2"}, "code_sha256"),
-        (
-            {
-                "execution": {
-                    "adapter_version": "adapter-2",
-                    "backend": "vectorbt.Portfolio.from_order_func",
-                    "callbacks_sha256": "callbacks-1",
-                }
-            },
-            "execution backend identity",
-        ),
-    ],
-)
-def test_source_registration_requires_one_shared_execution_identity(
-    tmp_path: Path,
-    identity_override: dict[str, object],
-    message: str,
-) -> None:
-    root = tmp_path
-    workspace = root / ".local" / "strategy-analysis-preparations" / "preparation-1"
-    _write_json(workspace / "preparation.json", {"preparation_id": "preparation-1"})
-    registry = _source_fixture(root, workspace, identity_override=identity_override)
-
-    with pytest.raises(UnifiedAnalysisError, match=message):
-        _register_source_results(root, workspace, registry)
-
-
-def test_analysis_identity_changes_when_registered_source_code_changes(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path
-    preparation = (
-        root / ".local" / "strategy-analysis-preparations" / "preparation-1"
-    )
-    _write_json(preparation / "preparation.json", {"preparation_id": "preparation-1"})
-    first_registry = _source_fixture(root, preparation, run_prefix="first")
-    first = _register_source_results(root, preparation, first_registry)
-    first_path = root / ".local" / "strategy-analysis" / first["analysis_id"]
-    first_bytes = (first_path / "source-results.json").read_bytes()
-
-    second_registry = _source_fixture(
-        root,
-        preparation,
-        run_prefix="second",
-        shared_identity={
-            "code_identity_sha256": "code-identity-2",
-            "code_sha256": "code-2",
-            "execution": {
-                "adapter_version": "adapter-2",
-                "backend": "vectorbt.Portfolio.from_order_func",
-                "callbacks_sha256": "callbacks-2",
-            },
-        },
-    )
-    second = _register_source_results(root, preparation, second_registry)
-
-    assert first["analysis_id"] != second["analysis_id"]
-    assert (first_path / "source-results.json").read_bytes() == first_bytes
-    assert (
-        root / ".local" / "strategy-analysis" / second["analysis_id"] / "source-results.json"
-    ).is_file()
