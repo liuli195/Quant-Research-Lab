@@ -645,7 +645,7 @@ def _valuation_facts(scenario: ScenarioInput) -> pd.DataFrame:
     if scenario.events.empty:
         return pd.DataFrame(columns=columns)
     if "event_type" not in scenario.events or "details_json" not in scenario.events:
-        raise UnifiedAnalysisError("attribution log does not expose valuation facts")
+        return pd.DataFrame(columns=columns)
     events = scenario.events.loc[
         scenario.events["event_type"] == "valuation"
     ].copy()
@@ -907,7 +907,33 @@ def _group_contribution(rows: pd.DataFrame, key: str) -> list[dict[str, object]]
     return [{"key": str(index), "contribution": float(value)} for index, value in values.items()]
 
 
-def _attribution(scenario: ScenarioInput, pnl_facts: pd.DataFrame) -> dict[str, object]:
+def _source_native_attribution(scenario: ScenarioInput) -> dict[str, object]:
+    event_counts = {
+        str(key): int(value)
+        for key, value in scenario.events["event_type"].value_counts().sort_index().items()
+    }
+    return {
+        "status": "available",
+        "method": "verified source-native event log",
+        "security": [],
+        "asset_group": [],
+        "trading_reason": [],
+        "period": [],
+        "exposure": [],
+        "event_counts": event_counts,
+        "event_count_scope": "all verified source-native events",
+        "reconciliation_error": None,
+        "pnl_contribution": {
+            "status": "evidence_insufficient",
+            "reason": "security_daily_pnl_missing_at_source",
+        },
+        "limitation": "source-native events do not prove arithmetic security PnL contribution",
+    }
+
+
+def _available_attribution(
+    scenario: ScenarioInput, pnl_facts: pd.DataFrame
+) -> dict[str, object]:
     daily_asset = pnl_facts.groupby("date")["return_contribution"].sum() if not pnl_facts.empty else pd.Series(dtype=float)
     residual = scenario.returns.subtract(daily_asset, fill_value=0.0)
     total_target = float(scenario.returns.sum())
@@ -954,6 +980,33 @@ def _attribution(scenario: ScenarioInput, pnl_facts: pd.DataFrame) -> dict[str, 
         "reconciliation_error": 0.0,
         "limitation": "arithmetic attribution is not geometric linking",
     }
+
+
+def _attribution(scenario: ScenarioInput, pnl_facts: pd.DataFrame) -> dict[str, object]:
+    if scenario.attribution_status != "available":
+        return {
+            "status": "evidence_insufficient",
+            "reason": scenario.attribution_status,
+            "method": None,
+            "security": [],
+            "asset_group": [],
+            "trading_reason": [],
+            "period": [],
+            "exposure": [],
+            "event_counts": {},
+            "event_count_scope": None,
+            "reconciliation_error": None,
+            "pnl_contribution": {
+                "status": "evidence_insufficient",
+                "reason": scenario.attribution_status,
+            },
+        }
+    if "details_json" not in scenario.events:
+        return _source_native_attribution(scenario)
+    result = _available_attribution(scenario, pnl_facts)
+    result["status"] = "available"
+    result["pnl_contribution"] = {"status": "available"}
+    return result
 
 
 def _benchmark_series(path: Path) -> dict[str, pd.Series]:

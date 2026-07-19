@@ -11,6 +11,7 @@ from scripts.research.quant_analysis import unified_analysis as analysis
 from scripts.research.quant_analysis.unified_analysis import (
     ScenarioInput,
     UnifiedAnalysisError,
+    _attribution,
     _deletion_sensitivity,
     _position_facts,
     _position_shocks,
@@ -182,6 +183,12 @@ def test_registered_sources_share_the_four_common_facts(
         assert not scenario.events.empty
         assert scenario.events["event_time"].notna().all()
         assert "run_start" in set(scenario.events["event_type"])
+
+    attribution = _attribution(scenarios[1], pd.DataFrame())
+    assert attribution["status"] == "available"
+    assert attribution["method"] == "verified source-native event log"
+    assert attribution["event_counts"]["rebalance_signals"] > 0
+    assert attribution["pnl_contribution"]["status"] == "evidence_insufficient"
 
 
 def test_aligns_strategy_and_both_benchmarks_on_one_shared_calendar() -> None:
