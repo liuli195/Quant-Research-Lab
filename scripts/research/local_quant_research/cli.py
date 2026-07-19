@@ -176,7 +176,7 @@ def _private_execute(argv: list[str]) -> int:
         importlib.invalidate_caches()
         from scripts.research.local_quant_research.contracts import StrategyEvidenceError
         from scripts.research.local_quant_research.performance import PerformanceGateError
-        from scripts.research.local_quant_research.result_package import ResultContractError
+        from scripts.research.result_package import ResultContractError
         from scripts.research.local_quant_research.runner import (
             ConfigurationError,
             execute_frozen_inputs,

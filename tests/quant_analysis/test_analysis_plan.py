@@ -6,13 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from scripts.research.local_quant_research.runner import load_run_config
-from scripts.research.quant_analysis.analysis_plan import (
+from quant_analysis.analysis_plan import (
     AnalysisPlanError,
     expand_analysis_plan,
-)
-from scripts.research.quant_analysis.orchestration import (
-    build_scenario_run_documents,
 )
 
 
@@ -87,7 +83,6 @@ def test_rejects_inconsistent_plan(
     with pytest.raises(AnalysisPlanError, match=message):
         expand_analysis_plan(repo_root, path)
 
-
 def test_rejects_baseline_path_outside_repository(
     repo_root: Path, tmp_path: Path
 ) -> None:
@@ -115,48 +110,3 @@ def test_rejects_false_stop_failure_flag_without_market_shocks(
 
     with pytest.raises(AnalysisPlanError, match="schema validation"):
         expand_analysis_plan(repo_root, path)
-
-
-def test_builds_seven_independent_public_runner_configs(
-    repo_root: Path,
-    tmp_path: Path,
-) -> None:
-    expanded = expand_analysis_plan(repo_root, PLAN_PATH)
-    template = json.loads(
-        (
-            repo_root / "joinquant/strategies/strategy-003/research/project-run.json"
-        ).read_text(encoding="utf-8")
-    )
-    (tmp_path / "strategy").mkdir()
-    (tmp_path / "manifest.json").write_text("{}", encoding="utf-8")
-    template["strategy"]["root"] = "strategy"
-    template["declared_inputs"] = ["manifest.json"]
-
-    documents = build_scenario_run_documents(
-        expanded,
-        template,
-        preparation_id="a" * 64,
-    )
-
-    assert len(documents) == 7
-    assert [item["scenario_id"] for item in documents] == [
-        item["scenario_id"] for item in expanded["scenarios"]
-    ]
-    for item in documents:
-        scenario_id = item["scenario_id"]
-        assert item["params"]["scenario_id"] == scenario_id
-        expected_scenario_config = (
-            f".local/strategy-analysis-preparations/{'a' * 64}/scenario-configs/"
-            f"{scenario_id}/params.json"
-        )
-        assert item["run_config"]["scenario_config"] == expected_scenario_config
-        assert set(item["run_config"]) == set(template)
-        scenario_path = tmp_path / expected_scenario_config
-        scenario_path.parent.mkdir(parents=True, exist_ok=True)
-        scenario_path.write_text(json.dumps(item["params"]), encoding="utf-8")
-        run_path = scenario_path.with_name("run.json")
-        run_path.write_text(json.dumps(item["run_config"]), encoding="utf-8")
-        assert load_run_config(run_path, repo_root=tmp_path).scenario_config == scenario_path
-        encoded = json.dumps(item["run_config"], sort_keys=True)
-        assert "analysis-plan" not in encoded
-        assert "candidates" not in encoded

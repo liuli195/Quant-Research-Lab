@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 
 
 def _sha256(path: Path) -> str:
@@ -94,6 +95,110 @@ def test_local_quant_research_skill_resolves_to_agents_skill(
     assert claude.is_symlink()
     assert claude.resolve() == source.resolve()
     assert _sha256(claude / "SKILL.md") == _sha256(source / "SKILL.md")
+
+
+def test_local_research_and_standard_analysis_skills_do_not_call_each_other(
+    repo_root: Path,
+) -> None:
+    local_skill = (
+        repo_root / ".agents" / "skills" / "run-local-quant-research" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    analysis_skill = (
+        repo_root / ".agents" / "skills" / "analyze-quant-robustness" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    local_runtime = repo_root / "scripts" / "research" / "local_quant_research"
+    analysis_runtime = (
+        repo_root
+        / ".agents"
+        / "skills"
+        / "analyze-quant-robustness"
+        / "scripts"
+    )
+
+    assert "analyze-quant-robustness" not in local_skill
+    assert "quant_analysis" not in local_skill
+    assert "不得联网、认证、读取凭证或调用 `run-local-quant-research`" in analysis_skill
+    assert all(
+        "analyze-quant-robustness" not in path.read_text(encoding="utf-8")
+        and "quant_analysis" not in path.read_text(encoding="utf-8")
+        and "scripts.research.analysis_data" not in path.read_text(encoding="utf-8")
+        for path in local_runtime.rglob("*.py")
+    )
+    assert all(
+        "run-local-quant-research" not in path.read_text(encoding="utf-8")
+        and "scripts.research.local_quant_research" not in path.read_text(encoding="utf-8")
+        for path in analysis_runtime.rglob("*.py")
+    )
+
+
+def test_standard_analysis_import_graph_excludes_local_research_runtime(
+    repo_root: Path,
+) -> None:
+    entry = (
+        repo_root
+        / ".agents/skills/analyze-quant-robustness/scripts/analyze_quant_robustness.py"
+    )
+    completed = subprocess.run(
+        [
+            str(repo_root / ".venv/Scripts/python.exe"),
+            "-c",
+            (
+                "import runpy,sys;"
+                f"runpy.run_path({str(entry)!r},run_name='skill_import');"
+                "print('\\n'.join(sorted(name for name in sys.modules "
+                "if name.startswith('scripts.research.local_quant_research'))))"
+            ),
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        shell=False,
+        check=True,
+    )
+
+    assert completed.stdout == "\n"
+
+
+def test_local_research_import_graph_excludes_analysis_runtime(
+    repo_root: Path,
+) -> None:
+    completed = subprocess.run(
+        [
+            str(repo_root / ".venv/Scripts/python.exe"),
+            "-c",
+            (
+                "import scripts.research.local_quant_research.runner,sys;"
+                "print('\\n'.join(sorted(name for name in sys.modules "
+                "if name.startswith('scripts.research.analysis_data'))))"
+            ),
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        shell=False,
+        check=True,
+    )
+
+    assert completed.stdout == "\n"
+
+
+def test_standard_analysis_skill_is_the_only_public_entry(repo_root: Path) -> None:
+    source = repo_root / ".agents" / "skills" / "analyze-quant-robustness"
+    claude = repo_root / ".claude" / "skills" / "analyze-quant-robustness"
+
+    assert (source / "SKILL.md").is_file()
+    assert (source / "agents" / "openai.yaml").is_file()
+    assert (source / "scripts" / "analyze_quant_robustness.py").is_file()
+    assert (source / "scripts" / "quant_analysis" / "__init__.py").is_file()
+    assert claude.is_symlink()
+    assert claude.resolve() == source.resolve()
+    skill = (source / "SKILL.md").read_text(encoding="utf-8")
+    assert skill.startswith("---\nname: analyze-quant-robustness\ndescription: Use when ")
+    assert "scripts\\analyze_quant_robustness.py" in skill
+    assert "`run`" in skill
+    assert "`report`" in skill
+    assert "-m scripts.research.quant_analysis" not in skill
+    assert "不得启动、提交、同步或修改" in skill
 
 
 def test_build_and_verify_covers_joinquant_docs_sync(repo_root: Path) -> None:

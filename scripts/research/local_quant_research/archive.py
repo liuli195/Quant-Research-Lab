@@ -13,7 +13,10 @@ from typing import Literal
 
 from scripts.research import analysis_data
 
-from .result_package import ResultContractError, validate_result_package
+from scripts.research.result_package import (
+    ResultContractError,
+    validate_result_package,
+)
 
 
 _IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")

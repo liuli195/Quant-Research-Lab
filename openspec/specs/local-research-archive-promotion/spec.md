@@ -67,4 +67,3 @@ TBD - created by archiving change refactor-local-research-three-layer-architectu
 #### Scenario: 列出策略下的研究和正式回测
 - **WHEN** 查询入口同时发现 `research/archives/` 和 `backtests/`
 - **THEN** 它分别返回本地研究与聚宽正式运行类型，并保留各自 backend 和来源身份
-

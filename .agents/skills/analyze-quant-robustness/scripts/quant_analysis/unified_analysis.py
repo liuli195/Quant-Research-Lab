@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import math
 import os
 import tempfile
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -15,9 +13,12 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
-from scripts.research.analysis_data.manifest import open_analysis_source
 from scripts.research.analysis_data.views import open_analysis_database
-from scripts.research.market_data.query import open_snapshot
+from scripts.research.market_data.benchmark_sets import (
+    BenchmarkSet,
+    BenchmarkSetError,
+    open_benchmark_set,
+)
 
 from .analysis_plan import expand_analysis_plan
 from .benchmarks import calculate_benchmark_statistics
@@ -31,58 +32,26 @@ BENCHMARK_IDS = (
     "CSI300_CNY_TOTAL_RETURN",
     "NASDAQ100_CNY_TOTAL_RETURN",
 )
-_FORMULA_VERSION = "unified-strategy-analysis/1"
+_FORMULA_VERSION = "standard-strategy-analysis/1"
+_SCRIPT_VERSION = "analyze-quant-robustness/1"
+_SCRIPT_ENTRY = (
+    ".agents/skills/analyze-quant-robustness/scripts/analyze_quant_robustness.py"
+)
 
 
 class UnifiedAnalysisError(ValueError):
     """Raised when standard result packages cannot support deterministic analysis."""
 
 
-def deterministic_next_action() -> str:
-    return "generate_deterministic_local_report"
-
-
-def _with_analysis_seconds(
-    summary: Mapping[str, object],
-    measured_seconds: float,
-    output_path: Path,
-) -> dict[str, object]:
-    measured = float(measured_seconds)
-    if not math.isfinite(measured) or measured < 0:
-        raise UnifiedAnalysisError("analysis_seconds must be finite and non-negative")
-    seconds = measured
-    path = Path(output_path)
-    if path.is_file():
-        existing = _load_json(path, label="deterministic analysis")
-        if existing.get("analysis_id") != summary.get("analysis_id"):
-            raise UnifiedAnalysisError("existing deterministic analysis identity mismatch")
-        prior = existing.get("analysis_seconds")
-        if prior is not None:
-            prior_seconds = float(prior)
-            if not math.isfinite(prior_seconds) or prior_seconds < 0:
-                raise UnifiedAnalysisError(
-                    "existing analysis_seconds must be finite and non-negative"
-                )
-            seconds = prior_seconds
-    result = dict(summary)
-    result["analysis_seconds"] = seconds
-    return result
-
-
 @dataclass(frozen=True)
 class ScenarioInput:
     scenario_id: str
-    run_id: str
-    result_dir: Path
     returns: pd.Series
     balances: pd.DataFrame
     positions: pd.DataFrame
     orders: pd.DataFrame
     events: pd.DataFrame
     params: Mapping[str, object]
-    performance: Mapping[str, object]
-    source_type: str = "local_research"
-    source_manifest_sha256: str = ""
     capabilities: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
     attribution_status: str = "available"
 
@@ -233,30 +202,6 @@ def align_three_way_benchmarks(
     }
 
 
-def _find_attribution_file(result_dir: Path, manifest: Mapping[str, object]) -> Path:
-    extensions = manifest.get("extensions")
-    if not isinstance(extensions, Mapping):
-        raise UnifiedAnalysisError("result package has no attribution extension")
-    matches: list[Mapping[str, object]] = []
-    for extension in extensions.values():
-        if isinstance(extension, Mapping):
-            entry = extension.get("attribution_log")
-            if isinstance(entry, Mapping):
-                matches.append(entry)
-    if len(matches) != 1:
-        raise UnifiedAnalysisError("result package must expose one attribution log")
-    files = matches[0].get("files")
-    if not isinstance(files, list) or len(files) != 1 or not isinstance(files[0], Mapping):
-        raise UnifiedAnalysisError("attribution log file declaration is invalid")
-    relative = Path(str(files[0].get("path", "")))
-    path = (result_dir / relative).resolve()
-    if relative.is_absolute() or ".." in relative.parts or not path.is_relative_to(result_dir):
-        raise UnifiedAnalysisError("attribution log path is unsafe")
-    if not path.is_file() or _sha256(path) != files[0].get("sha256"):
-        raise UnifiedAnalysisError("attribution log digest mismatch")
-    return path
-
-
 def _load_common_facts(
     result_dir: Path, *, snapshot_id: str | None = None
 ) -> tuple[pd.Series, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -279,44 +224,6 @@ def _load_common_facts(
         if "time" in frame:
             frame["date"] = pd.to_datetime(frame["time"]).dt.normalize()
     return returns, balances, positions, orders
-
-
-def _load_scenario(result_dir: Path) -> ScenarioInput:
-    result_dir = Path(result_dir).resolve()
-    source = open_analysis_source(result_dir)
-    manifest = dict(source.manifest)
-    run = manifest.get("run")
-    if not isinstance(run, Mapping):
-        raise UnifiedAnalysisError("result run identity is missing")
-    returns, balances, positions, orders = _load_common_facts(result_dir)
-    events = pq.read_table(_find_attribution_file(result_dir, manifest)).to_pandas()
-    events["event_time"] = pd.to_datetime(events["time"])
-    events["date"] = events["event_time"].dt.normalize()
-    params = _load_json(result_dir / "params.json", label="scenario params")
-    performance = _load_json(result_dir / "performance.json", label="performance evidence")
-    return ScenarioInput(
-        scenario_id=str(run["scenario_id"]),
-        run_id=str(run["run_id"]),
-        result_dir=result_dir,
-        returns=returns,
-        balances=balances,
-        positions=positions,
-        orders=orders,
-        events=events,
-        params=params,
-        performance=performance,
-    )
-
-
-def _registered_run_id(registered: RegisteredSource) -> str:
-    identity = registered.source.manifest.get("object")
-    if not isinstance(identity, Mapping):
-        raise UnifiedAnalysisError("registered source identity is missing")
-    key = "run_id" if registered.source.kind == "local_research" else "local_id"
-    value = identity.get(key)
-    if not isinstance(value, str) or not value:
-        raise UnifiedAnalysisError("registered source run identity is missing")
-    return value
 
 
 def _registered_attribution_events(registered: RegisteredSource) -> pd.DataFrame:
@@ -380,17 +287,12 @@ def load_registered_scenario(
     attribution_status = str(registered.capabilities["attribution"]["status"])
     return ScenarioInput(
         scenario_id=registration.scenario_id,
-        run_id=_registered_run_id(registered),
-        result_dir=registration.root,
         returns=returns,
         balances=balances,
         positions=positions,
         orders=orders,
         events=_registered_attribution_events(registered),
         params=dict(analysis_params),
-        performance={},
-        source_type=registration.source_type,
-        source_manifest_sha256=registration.manifest_sha256,
         capabilities=registered.capabilities,
         attribution_status=attribution_status,
     )
@@ -403,234 +305,6 @@ def _immutable_json(path: Path, value: object) -> None:
             raise UnifiedAnalysisError(f"immutable analysis identity collision: {path}")
         return
     _atomic_json(path, value)
-
-
-def _register_source_results(
-    repo_root: Path,
-    preparation_workspace: Path,
-    source_registry: Mapping[str, str],
-) -> dict[str, object]:
-    preparation_root = Path(preparation_workspace).resolve()
-    expected_preparation_root = repo_root / ".local" / "strategy-analysis-preparations"
-    if not preparation_root.is_relative_to(expected_preparation_root):
-        raise UnifiedAnalysisError(
-            "preparation workspace is outside .local/strategy-analysis-preparations"
-        )
-    preparation = _load_json(
-        preparation_root / "preparation.json", label="analysis preparation"
-    )
-    preparation_id = str(preparation.get("preparation_id", ""))
-    if not preparation_id or preparation_id != preparation_root.name:
-        raise UnifiedAnalysisError("analysis preparation identity mismatch")
-    scenarios = _load_json(
-        preparation_root / "analysis-scenarios.json", label="analysis scenarios"
-    )
-    strategy_id = str(scenarios["strategy_id"])
-    run_root = repo_root / ".local" / "quant-research" / strategy_id
-    planned_scenarios = scenarios.get("scenarios")
-    if not isinstance(planned_scenarios, Sequence) or isinstance(
-        planned_scenarios, (str, bytes)
-    ):
-        raise UnifiedAnalysisError("analysis scenarios are invalid")
-    if len(planned_scenarios) < 2:
-        raise UnifiedAnalysisError(
-            "source registry requires at least two planned scenarios"
-        )
-    scenario_ids = [str(scenario["scenario_id"]) for scenario in planned_scenarios]
-    registered_ids = {str(key) for key in source_registry}
-    if registered_ids != set(scenario_ids):
-        raise UnifiedAnalysisError(
-            "source registry must explicitly contain every planned scenario_id exactly once"
-        )
-    run_ids = [str(source_registry[scenario_id]) for scenario_id in scenario_ids]
-    if any(not run_id or "/" in run_id or "\\" in run_id for run_id in run_ids):
-        raise UnifiedAnalysisError("source registry contains an unsafe run_id")
-    if len(run_ids) != len(set(run_ids)):
-        raise UnifiedAnalysisError("source registry run_id values must be unique")
-
-    sources: list[dict[str, object]] = []
-    identities: list[dict[str, object]] = []
-    for scenario in planned_scenarios:
-        scenario_id = str(scenario["scenario_id"])
-        run_id = str(source_registry[scenario_id])
-        params_path = preparation_root / "scenario-configs" / scenario_id / "params.json"
-        params_sha256 = _sha256(params_path)
-        source_root = (run_root / run_id).resolve()
-        if not source_root.is_relative_to(run_root):
-            raise UnifiedAnalysisError("source registry run_id escapes the strategy run root")
-        run_manifest_path = source_root / "run-manifest.json"
-        run_manifest = _load_json(run_manifest_path, label="run manifest")
-        inputs = run_manifest.get("inputs")
-        snapshot = run_manifest.get("snapshot")
-        if (
-            run_manifest.get("status") != "complete"
-            or run_manifest.get("project_id") != strategy_id
-            or run_manifest.get("run_id") != run_id
-            or not isinstance(inputs, Mapping)
-            or inputs.get("project_config_sha256") != params_sha256
-            or not isinstance(snapshot, Mapping)
-        ):
-            raise UnifiedAnalysisError(
-                f"scenario {scenario_id} does not match its explicitly registered run"
-            )
-        code_identity = inputs.get("code_identity")
-        execution = (
-            code_identity.get("execution")
-            if isinstance(code_identity, Mapping)
-            else None
-        )
-        identity = {
-            "snapshot_id": str(snapshot.get("snapshot_id", "")),
-            "code_identity_sha256": str(inputs.get("code_identity_sha256", "")),
-            "code_sha256": str(inputs.get("code_sha256", "")),
-            "execution_backend": dict(execution) if isinstance(execution, Mapping) else {},
-        }
-        execution_dependencies = (
-            execution.get("dependencies") if isinstance(execution, Mapping) else None
-        )
-        if (
-            not identity["snapshot_id"]
-            or not identity["code_identity_sha256"]
-            or not identity["code_sha256"]
-            or not identity["execution_backend"]
-            or not isinstance(execution_dependencies, Mapping)
-            or not execution_dependencies
-        ):
-            raise UnifiedAnalysisError(f"scenario {scenario_id} execution identity is incomplete")
-        identities.append(identity)
-
-        result_dir = source_root / "backtests" / f"local-{scenario_id}"
-        local_manifest = _load_json(
-            result_dir / "manifest.json", label="local result manifest"
-        )
-        local_run = local_manifest.get("run")
-        local_source = local_manifest.get("source")
-        local_engine = (
-            local_source.get("engine")
-            if isinstance(local_source, Mapping)
-            else None
-        )
-        if (
-            not isinstance(local_run, Mapping)
-            or local_run.get("scenario_id") != scenario_id
-            or local_run.get("run_id") != run_id
-            or local_run.get("snapshot_id") != identity["snapshot_id"]
-        ):
-            raise UnifiedAnalysisError(
-                f"scenario {scenario_id} local result identity mismatch"
-            )
-        if (
-            not isinstance(local_engine, Mapping)
-            or local_engine.get("backend") != execution.get("backend")
-            or local_engine.get("adapter_version") != execution.get("adapter_version")
-            or any(
-                local_engine.get(str(name)) != version
-                for name, version in execution_dependencies.items()
-            )
-        ):
-            raise UnifiedAnalysisError(
-                f"scenario {scenario_id} local result execution backend identity mismatch"
-            )
-        performance_path = result_dir / "performance.json"
-        performance = _load_json(performance_path, label="performance evidence")
-        cleanup = performance.get("cleanup")
-        if (
-            performance.get("status") != "pass"
-            or performance.get("result_match") is not True
-            or float(performance.get("cold_seconds", math.inf)) > 180.0
-            or float(performance.get("warm_seconds", math.inf)) > 180.0
-            or not isinstance(cleanup, Mapping)
-            or not cleanup
-            or not all(value is True for value in cleanup.values())
-        ):
-            raise UnifiedAnalysisError(f"scenario {scenario_id} failed its performance gate")
-        sources.append(
-            {
-                "scenario_id": scenario_id,
-                "dimension": str(scenario["dimension"]),
-                "run_id": run_id,
-                "run_manifest": run_manifest_path.relative_to(repo_root).as_posix(),
-                "run_manifest_sha256": _sha256(run_manifest_path),
-                "result_dir": result_dir.relative_to(repo_root).as_posix(),
-                "result_manifest_sha256": _sha256(result_dir / "manifest.json"),
-                "params_sha256": params_sha256,
-                "output_set_sha256": str(run_manifest["output_set_sha256"]),
-                "performance": {
-                    "cold_seconds": float(performance["cold_seconds"]),
-                    "warm_seconds": float(performance["warm_seconds"]),
-                    "result_match": True,
-                    "cleanup": dict(cleanup),
-                },
-            }
-        )
-
-    identity_names = (
-        "snapshot_id",
-        "code_identity_sha256",
-        "code_sha256",
-        "execution_backend",
-    )
-    for identity_name in identity_names:
-        if any(
-            identity[identity_name] != identities[0][identity_name]
-            for identity in identities[1:]
-        ):
-            label = (
-                "execution backend identity"
-                if identity_name == "execution_backend"
-                else identity_name
-            )
-            raise UnifiedAnalysisError(f"registered sources do not share one {label}")
-    shared_identity = dict(identities[0])
-    shared_identity["execution_backend_sha256"] = evidence_digest(
-        shared_identity["execution_backend"]
-    )
-    source_registry_sha256 = evidence_digest(
-        [
-            {
-                "scenario_id": source["scenario_id"],
-                "run_id": source["run_id"],
-                "run_manifest_sha256": source["run_manifest_sha256"],
-                "result_manifest_sha256": source["result_manifest_sha256"],
-                "output_set_sha256": source["output_set_sha256"],
-            }
-            for source in sources
-        ]
-    )
-    analysis_id = evidence_digest(
-        {
-            "formula_version": _FORMULA_VERSION,
-            "preparation_id": preparation_id,
-            "source_registry_sha256": source_registry_sha256,
-            "shared_identity": shared_identity,
-        }
-    )
-    document = {
-        "schema_version": "strategy-analysis-source-results/1",
-        "strategy_id": strategy_id,
-        "analysis_id": analysis_id,
-        "preparation_id": preparation_id,
-        "preparation_sha256": _sha256(preparation_root / "preparation.json"),
-        "analysis_scenarios_sha256": _sha256(
-            preparation_root / "analysis-scenarios.json"
-        ),
-        "source_registry": {
-            "explicit": True,
-            "scenario_count": len(scenario_ids),
-            "run_id_count": len(run_ids),
-            "sha256": source_registry_sha256,
-        },
-        "shared_identity": shared_identity,
-        "sources": sources,
-        "expected": len(planned_scenarios),
-        "actual": len(sources),
-        "source_mutation": "forbidden",
-    }
-    analysis_root = repo_root / ".local" / "strategy-analysis" / analysis_id
-    _immutable_json(analysis_root / "preparation.json", preparation)
-    _immutable_json(analysis_root / "analysis-scenarios.json", scenarios)
-    _immutable_json(analysis_root / "source-results.json", document)
-    return document
 
 
 def _valuation_facts(scenario: ScenarioInput) -> pd.DataFrame:
@@ -1064,24 +738,41 @@ def _fixed_and_rolling(
     for period in analyses["fixed_periods"]:
         selected = baseline.returns.loc[str(period["start"]): str(period["end"])]
         if selected.empty:
-            raise UnifiedAnalysisError(f"fixed period has no observations: {period['id']}")
-        row, result = _period_result(
-            f"period-{period['id']}", "fixed_period", selected, thresholds
-        )
+            row, result = _unavailable_result(
+                f"period-{period['id']}",
+                "fixed_period",
+                "period_has_no_observations",
+            )
+        else:
+            row, result = _period_result(
+                f"period-{period['id']}", "fixed_period", selected, thresholds
+            )
         rows.append(row)
         evidence.append(result)
 
     rolling = analyses["rolling"]
     start = baseline.returns.index.min()
     last = baseline.returns.index.max()
-    while start + pd.DateOffset(years=int(rolling["window_years"])) <= last:
+    rolling_count = 0
+    while True:
         stop = start + pd.DateOffset(years=int(rolling["window_years"])) - pd.Timedelta(days=1)
+        if stop > last:
+            break
         selected = baseline.returns.loc[start:stop]
         scenario_id = f"rolling-{int(rolling['window_years'])}y-{start.date().isoformat()}"
         row, result = _period_result(scenario_id, "rolling_period", selected, thresholds)
         rows.append(row)
         evidence.append(result)
+        rolling_count += 1
         start = start + pd.DateOffset(months=int(rolling["step_months"]))
+    if rolling_count == 0:
+        row, result = _unavailable_result(
+            f"rolling-{int(rolling['window_years'])}y",
+            "rolling_period",
+            "insufficient_window_observations",
+        )
+        rows.append(row)
+        evidence.append(result)
     return rows, evidence
 
 
@@ -1131,99 +822,6 @@ def _deletion_sensitivity(
                     reasons=tuple(reasons),
                 )
             )
-    return rows, evidence
-
-
-def _market_open_lookup(repo_root: Path, snapshot_id: str) -> dict[str, pd.Series]:
-    snapshot = open_snapshot(snapshot_id, root=repo_root / ".local" / "market-data")
-    frame = pd.DataFrame([dict(row) for row in snapshot.rows])
-    frame["date"] = pd.to_datetime(frame["date"]).dt.normalize()
-    return {
-        str(security): rows.sort_values("date").set_index("date")["open"].astype(float)
-        for security, rows in frame.groupby("security")
-    }
-
-
-def _cost_sensitivity(
-    repo_root: Path,
-    baseline: ScenarioInput,
-    definitions: Sequence[Mapping[str, object]],
-    thresholds: Mapping[str, object],
-) -> tuple[list[dict[str, object]], list[ScenarioResult]]:
-    filled = baseline.orders.loc[
-        (baseline.orders["status"] == "done") & (baseline.orders["filled"].astype(float) > 0)
-    ].copy()
-    equity = baseline.balances.set_index("date")["total_value"].astype(float).shift(1)
-    snapshot_id = _load_json(baseline.result_dir / "manifest.json", label="result manifest")["run"]["snapshot_id"]
-    opens = _market_open_lookup(repo_root, str(snapshot_id))
-    rows: list[dict[str, object]] = []
-    evidence: list[ScenarioResult] = []
-    for definition in definitions:
-        adjustments: dict[pd.Timestamp, float] = {}
-        delayed = 0
-        delay_missing = 0
-        for order in filled.to_dict("records"):
-            date = pd.Timestamp(order["date"]).normalize()
-            quantity = float(order["filled"])
-            price = float(order["price"])
-            notional = quantity * price
-            pnl_adjustment = -(
-                (float(definition["commission_multiplier"]) - 1.0) * float(order["commission"])
-                + float(definition["slippage"]) * notional
-            )
-            delay_days = int(definition["delay_days"])
-            if delay_days:
-                series = opens.get(str(order["security"]))
-                if series is None or date not in series.index:
-                    delay_missing += 1
-                else:
-                    location = series.index.get_loc(date)
-                    target = location + delay_days
-                    if target >= len(series):
-                        delay_missing += 1
-                    else:
-                        delayed_price = float(series.iloc[target])
-                        pnl_adjustment += (
-                            -(delayed_price - price) * quantity
-                            if order["action"] == "open"
-                            else (delayed_price - price) * quantity
-                        )
-                        delayed += 1
-            adjustments[date] = adjustments.get(date, 0.0) + pnl_adjustment
-        adjusted = baseline.returns.copy()
-        for date, adjustment in adjustments.items():
-            denominator = equity.get(date)
-            if denominator is not None and pd.notna(denominator) and denominator != 0:
-                adjusted.loc[date] += adjustment / float(denominator)
-        metrics = calculate_return_metrics(adjusted)
-        status, reasons = evaluate_metrics(metrics, thresholds)
-        if delay_missing:
-            status = "evidence_insufficient"
-            reasons = ["missing_delayed_open"]
-        scenario_id = f"cost-{definition['id']}"
-        row = {
-            "scenario_id": scenario_id,
-            "dimension": "cost_execution",
-            "method": "first-order order-level cost and delayed-open sensitivity",
-            "status": status,
-            "reasons": reasons,
-            "metrics": metrics,
-            "delayed_orders": delayed,
-            "missing_delayed_orders": delay_missing,
-        }
-        rows.append(row)
-        evidence.append(
-            ScenarioResult(
-                scenario_id=scenario_id,
-                dimension="cost_execution",
-                status=status,
-                metrics={**_numeric_metrics(metrics), "delayed_orders": delayed, "missing_delayed_orders": delay_missing},
-                input_sha256=evidence_digest(
-                    {"definition": dict(definition), "returns": adjusted.tolist()}
-                ),
-                reasons=tuple(reasons),
-            )
-        )
     return rows, evidence
 
 
@@ -1284,6 +882,15 @@ def _historical_stress(
     evidence: list[ScenarioResult] = []
     for definition in definitions:
         selected = returns.loc[str(definition["start"]): str(definition["end"])]
+        if selected.empty:
+            row, result = _unavailable_result(
+                str(definition["id"]),
+                "historical_stress",
+                "period_has_no_observations",
+            )
+            rows.append(row)
+            evidence.append(result)
+            continue
         metrics = calculate_return_metrics(selected)
         passed = abs(float(metrics["max_drawdown"])) <= float(definition["max_drawdown_abs_max"])
         status = "pass" if passed else "fail"
@@ -1458,25 +1065,22 @@ def _unavailable_deletion_sensitivity(
     return [row for row, _ in pairs], [result for _, result in pairs]
 
 
-def _benchmark_data_path(repo_root: Path, manifest_path: Path) -> Path:
-    manifest = _load_json(manifest_path, label="benchmark manifest")
-    data = manifest.get("data")
-    value = data.get("path") if isinstance(data, Mapping) else None
-    if not isinstance(value, str) or not value:
-        raise UnifiedAnalysisError("benchmark manifest data path is missing")
-    relative = Path(value)
-    if relative.is_absolute() or ".." in relative.parts:
-        raise UnifiedAnalysisError("benchmark data path is unsafe")
-    path = (manifest_path.parent / relative).resolve()
-    if not path.is_relative_to(repo_root) or not path.is_file():
-        raise UnifiedAnalysisError("benchmark data path is missing or outside the repository")
-    return path
+def _validated_benchmark(manifest_path: Path) -> tuple[BenchmarkSet, Path]:
+    path = Path(manifest_path).resolve()
+    if path.name != "manifest.json":
+        raise UnifiedAnalysisError("benchmark manifest must be a benchmark-set manifest.json")
+    try:
+        benchmark_set = open_benchmark_set(path.parent)
+    except BenchmarkSetError as exc:
+        raise UnifiedAnalysisError(f"benchmark set validation failed: {exc}") from exc
+    return benchmark_set, benchmark_set.root / "benchmark-returns.parquet"
 
 
 def _standard_source_document(registry: object) -> dict[str, object]:
     sources = getattr(registry, "sources")
     return {
         "registry_sha256": getattr(registry, "sha256"),
+        "script_version": _SCRIPT_VERSION,
         "sources": [
             {
                 "scenario_id": item.registration.scenario_id,
@@ -1490,11 +1094,43 @@ def _standard_source_document(registry: object) -> dict[str, object]:
     }
 
 
+def _analysis_input_identity(
+    registry: object,
+    expanded: Mapping[str, object],
+    benchmark_set: BenchmarkSet,
+) -> dict[str, object]:
+    data = benchmark_set.manifest["data"]
+    assert isinstance(data, Mapping)
+    return {
+        "registry_sha256": getattr(registry, "sha256"),
+        "analysis_plan_sha256": expanded["analysis_plan_sha256"],
+        "baseline_config_sha256": expanded["baseline_config_sha256"],
+        "benchmark_set_id": benchmark_set.benchmark_set_id,
+        "benchmark_manifest_sha256": _sha256(benchmark_set.root / "manifest.json"),
+        "benchmark_data_sha256": data["sha256"],
+        "source_manifests": [
+            {
+                "scenario_id": item.registration.scenario_id,
+                "sha256": item.registration.manifest_sha256,
+                "attribution": dict(item.capabilities["attribution"]),
+            }
+            for item in getattr(registry, "sources")
+        ],
+    }
+
+
 def run_standard_analysis(repo_root: Path, source_registry_path: Path) -> dict[str, object]:
-    started = time.perf_counter()
     root = Path(repo_root).resolve()
     registry = load_source_registry(root, source_registry_path)
     expanded = expand_analysis_plan(root, registry.analysis_plan)
+    benchmark_set, benchmark_data = _validated_benchmark(registry.benchmark_manifest)
+    input_identity = _analysis_input_identity(registry, expanded, benchmark_set)
+    analysis_id = evidence_digest(
+        {
+            "formula_version": _FORMULA_VERSION,
+            **input_identity,
+        }
+    )
     configurations = {
         str(item["scenario_id"]): item
         for item in expanded["scenarios"]
@@ -1511,18 +1147,13 @@ def run_standard_analysis(repo_root: Path, source_registry_path: Path) -> dict[s
         )
         for item in registry.sources
     }
-    analysis_id = evidence_digest(
-        {
-            "formula_version": "standard-strategy-analysis/1",
-            "registry_sha256": registry.sha256,
-            "analysis_plan_sha256": expanded["analysis_plan_sha256"],
-            "benchmark_manifest_sha256": _sha256(registry.benchmark_manifest),
-            "source_manifests": [item.registration.manifest_sha256 for item in registry.sources],
-        }
-    )
     analysis_root = root / ".local" / "standard-strategy-analysis" / analysis_id
     source_document = _standard_source_document(registry)
-    _immutable_json(analysis_root / "source-results.json", source_document)
+    source_document["benchmark"] = {
+        "benchmark_set_id": benchmark_set.benchmark_set_id,
+        "manifest_sha256": input_identity["benchmark_manifest_sha256"],
+        "data_sha256": input_identity["benchmark_data_sha256"],
+    }
 
     baseline = scenarios[registry.baseline_scenario_id]
     universe = expanded["universe"]
@@ -1608,14 +1239,9 @@ def run_standard_analysis(repo_root: Path, source_registry_path: Path) -> dict[s
         deletion_rows, deletion_evidence = _unavailable_deletion_sensitivity(
             universe, "attribution_missing_at_source"
         )
-    if baseline.capabilities["cost_execution"].get("status") == "available":
-        cost_rows, cost_evidence = _cost_sensitivity(
-            root, baseline, analyses["cost_execution"], thresholds
-        )
-    else:
-        cost_rows, cost_evidence = _unavailable_cost_sensitivity(
-            analyses["cost_execution"], "market_snapshot_missing_at_source"
-        )
+    cost_rows, cost_evidence = _unavailable_cost_sensitivity(
+        analyses["cost_execution"], "market_snapshot_missing_at_source"
+    )
     bootstrap_rows, bootstrap_evidence = _bootstrap(baseline.returns, analyses["bootstrap"])
     stress_rows, stress_evidence = _historical_stress(
         baseline.returns, analyses["historical_stress"]
@@ -1658,7 +1284,6 @@ def run_standard_analysis(repo_root: Path, source_registry_path: Path) -> dict[s
         )
     evidence.append(cross_evidence)
 
-    benchmark_data = _benchmark_data_path(root, registry.benchmark_manifest)
     aligned, alignment = align_three_way_benchmarks(
         baseline.returns, _benchmark_series(benchmark_data)
     )
@@ -1669,18 +1294,59 @@ def run_standard_analysis(repo_root: Path, source_registry_path: Path) -> dict[s
         )
         for benchmark_id in BENCHMARK_IDS
     }
-    evidence_path = build_evidence_matrix(evidence, analysis_root / "evidence-matrix.parquet")
     evidence_rows = [item.to_document() for item in evidence]
     failures = [row for row in evidence_rows if row["status"] == "fail"]
     insufficient = [row for row in evidence_rows if row["status"] == "evidence_insufficient"]
+    try:
+        final_registry = load_source_registry(root, source_registry_path)
+        final_expanded = expand_analysis_plan(root, final_registry.analysis_plan)
+        final_benchmark, _ = _validated_benchmark(
+            final_registry.benchmark_manifest
+        )
+        final_identity = _analysis_input_identity(
+            final_registry, final_expanded, final_benchmark
+        )
+    except ValueError as exc:
+        raise UnifiedAnalysisError("analysis inputs changed during analysis") from exc
+    if final_identity != input_identity:
+        raise UnifiedAnalysisError("analysis inputs changed during analysis")
+
+    _immutable_json(analysis_root / "source-results.json", source_document)
+    evidence_path = build_evidence_matrix(
+        evidence, analysis_root / "evidence-matrix.parquet"
+    )
     summary = {
         "schema_version": "standard-strategy-analysis/1",
-        "formula_version": "standard-strategy-analysis/1",
+        "formula_version": _FORMULA_VERSION,
+        "script": {
+            "version": _SCRIPT_VERSION,
+            "entry": _SCRIPT_ENTRY,
+        },
         "analysis_id": analysis_id,
         "strategy_id": expanded["strategy_id"],
         "authority": "read_only_archived_sources",
         "source_mutation": "forbidden",
         "sources": {"registered_count": len(scenarios), **source_document},
+        "analysis_configuration": {
+            "analysis_plan": {
+                "path": expanded["analysis_plan"],
+                "sha256": expanded["analysis_plan_sha256"],
+            },
+            "baseline_config": {
+                "path": expanded["baseline_config"],
+                "sha256": expanded["baseline_config_sha256"],
+            },
+            "scenario_params": [
+                {
+                    "scenario_id": item["scenario_id"],
+                    "dimension": item["dimension"],
+                    "params_sha256": item["params_sha256"],
+                }
+                for item in expanded["scenarios"]
+            ],
+            "analyses": expanded["analyses"],
+            "thresholds": expanded["thresholds"],
+        },
         "baseline": {
             "scenario_id": baseline.scenario_id,
             "status": baseline_status,
@@ -1723,249 +1389,5 @@ def run_standard_analysis(repo_root: Path, source_registry_path: Path) -> dict[s
         "next_action": "generate_standard_strategy_analysis_report",
     }
     analysis_path = analysis_root / "deterministic-analysis.json"
-    summary = _with_analysis_seconds(
-        summary, time.perf_counter() - started, analysis_path
-    )
     _atomic_json(analysis_path, summary)
     return summary
-
-
-def run_deterministic_analysis(
-    repo_root: Path,
-    preparation_workspace: Path,
-    source_registry: Mapping[str, str],
-) -> dict[str, object]:
-    started = time.perf_counter()
-    root = Path(repo_root).resolve()
-    sources = _register_source_results(root, preparation_workspace, source_registry)
-    analysis_root = root / ".local" / "strategy-analysis" / str(sources["analysis_id"])
-    preparation = _load_json(analysis_root / "preparation.json", label="analysis preparation")
-    expanded = _load_json(analysis_root / "analysis-scenarios.json", label="analysis scenarios")
-    if preparation.get("preparation_id") != sources["preparation_id"]:
-        raise UnifiedAnalysisError("analysis preparation identity mismatch")
-    source_by_id = {str(item["scenario_id"]): item for item in sources["sources"]}
-    scenarios = {
-        scenario_id: _load_scenario(root / str(source["result_dir"]))
-        for scenario_id, source in source_by_id.items()
-    }
-    baseline = scenarios["baseline"]
-    universe = expanded["universe"]
-    thresholds = expanded["thresholds"]
-    positions = _position_facts(baseline, universe)
-    security_pnl = _security_pnl_facts(baseline, universe)
-    baseline_metrics = _performance(baseline, positions)
-    baseline_status, baseline_reasons = evaluate_metrics(baseline_metrics, thresholds)
-
-    challenge_rows: list[dict[str, object]] = []
-    evidence: list[ScenarioResult] = []
-    for plan_scenario in expanded["scenarios"]:
-        scenario_id = str(plan_scenario["scenario_id"])
-        current = scenarios[scenario_id]
-        current_positions = _position_facts(current, universe)
-        metrics = _performance(current, current_positions)
-        status, reasons = evaluate_metrics(metrics, thresholds)
-        challenge_rows.append(
-            {
-                "scenario_id": scenario_id,
-                "dimension": str(plan_scenario["dimension"]),
-                "status": status,
-                "reasons": reasons,
-                "metrics": metrics,
-                "delta_vs_baseline": {
-                    key: (
-                        None
-                        if metrics.get(key) is None or baseline_metrics.get(key) is None
-                        else float(metrics[key]) - float(baseline_metrics[key])
-                    )
-                    for key in ("cagr", "max_drawdown", "calmar", "average_invested_ratio")
-                },
-                "cold_seconds": float(current.performance["cold_seconds"]),
-                "warm_seconds": float(current.performance["warm_seconds"]),
-            }
-        )
-        evidence.append(
-            ScenarioResult(
-                scenario_id=f"parameter-{scenario_id}",
-                dimension="baseline" if scenario_id == "baseline" else "parameter",
-                status=status,
-                metrics=_numeric_metrics(metrics),
-                input_sha256=evidence_digest(
-                    {"scenario_id": scenario_id, "run_id": current.run_id, "metrics": _numeric_metrics(metrics)}
-                ),
-                reasons=tuple(reasons),
-            )
-        )
-
-    benchmark_manifest = root / str(preparation["benchmark_set"]["manifest"])
-    benchmark_document = _load_json(benchmark_manifest, label="benchmark set manifest")
-    benchmark_data = benchmark_manifest.parent / str(benchmark_document["data"]["path"])
-    benchmarks = _benchmark_series(benchmark_data)
-    aligned, alignment = align_three_way_benchmarks(baseline.returns, benchmarks)
-    benchmark_statistics = {
-        benchmark_id: calculate_benchmark_statistics(
-            {date.date().isoformat(): float(value) for date, value in aligned["strategy"].items()},
-            {date.date().isoformat(): float(value) for date, value in aligned[benchmark_id].items()},
-        )
-        for benchmark_id in BENCHMARK_IDS
-    }
-
-    analyses = expanded["analyses"]
-    period_rows, period_evidence = _fixed_and_rolling(baseline, analyses, thresholds)
-    deletion_rows, deletion_evidence = _deletion_sensitivity(
-        baseline, security_pnl, universe, thresholds
-    )
-    cost_rows, cost_evidence = _cost_sensitivity(root, baseline, analyses["cost_execution"], thresholds)
-    bootstrap_rows, bootstrap_evidence = _bootstrap(baseline.returns, analyses["bootstrap"])
-    stress_rows, stress_evidence = _historical_stress(baseline.returns, analyses["historical_stress"])
-    shock_rows, shock_evidence = _position_shocks(positions, analyses["position_shocks"])
-    cvar_rows, cvar_evidence = _cvar(baseline.returns, analyses["cvar"])
-    evidence.extend(
-        [
-            *period_evidence,
-            *deletion_evidence,
-            *cost_evidence,
-            *bootstrap_evidence,
-            *stress_evidence,
-            *shock_evidence,
-            *cvar_evidence,
-        ]
-    )
-    evidence_path = build_evidence_matrix(evidence, analysis_root / "evidence-matrix.parquet")
-
-    failures = [result.to_document() for result in evidence if result.status == "fail"]
-    insufficient = [
-        result.to_document() for result in evidence if result.status == "evidence_insufficient"
-    ]
-    severe_dimensions = {"block_bootstrap", "position_shock", "cvar"}
-    severe_failures = [row for row in failures if row["dimension"] in severe_dimensions]
-    advance = baseline_status == "pass" and not severe_failures
-    recommendation = {
-        "decision": "recommend_joinquant_confirmation" if advance else "revise_before_joinquant",
-        "baseline_status": baseline_status,
-        "baseline_reasons": baseline_reasons,
-        "severe_failure_count": len(severe_failures),
-        "evidence_insufficient_count": len(insufficient),
-        "authority": "local_exploratory",
-    }
-    opposing_evidence: list[dict[str, object]] = []
-    for benchmark_id, metrics in benchmark_statistics.items():
-        if float(metrics["active_return"]) < 0:
-            opposing_evidence.append(
-                {"kind": "benchmark_underperformance", "benchmark_id": benchmark_id, "active_return": metrics["active_return"]}
-            )
-    opposing_evidence.extend(
-        {"kind": "scenario_failure", "scenario_id": row["scenario_id"], "dimension": row["dimension"], "reasons": row["reasons"]}
-        for row in failures
-    )
-    opposing_evidence.extend(
-        {"kind": "evidence_insufficient", "scenario_id": row["scenario_id"], "dimension": row["dimension"], "reasons": row["reasons"]}
-        for row in insufficient
-    )
-    summary = {
-        "schema_version": "deterministic-strategy-analysis/1",
-        "formula_version": _FORMULA_VERSION,
-        "analysis_id": analysis_root.name,
-        "strategy_id": expanded["strategy_id"],
-        "authority": "local_exploratory",
-        "not_formal_joinquant_backtest": True,
-        "sources": {
-            "source_results": "source-results.json",
-            "benchmark_set_id": preparation["benchmark_set"]["benchmark_set_id"],
-            "analysis_plan_sha256": expanded["analysis_plan_sha256"],
-        },
-        "baseline": {
-            "status": baseline_status,
-            "reasons": baseline_reasons,
-            "metrics": baseline_metrics,
-            "risk_control": _risk_metrics(baseline, positions),
-        },
-        "benchmarks": {"alignment": alignment, "statistics": benchmark_statistics},
-        "attribution": _attribution(baseline, security_pnl),
-        "challenge_results": challenge_rows,
-        "robustness": {
-            "periods": period_rows,
-            "asset_deletions": deletion_rows,
-            "cost_execution": cost_rows,
-            "bootstrap": bootstrap_rows,
-            "historical_stress": stress_rows,
-            "position_shocks": shock_rows,
-            "cvar": cvar_rows,
-        },
-        "evidence_matrix": {
-            "path": evidence_path.relative_to(analysis_root).as_posix(),
-            "sha256": _sha256(evidence_path),
-            "rows": len(evidence),
-            "pass": sum(result.status == "pass" for result in evidence),
-            "fail": len(failures),
-            "evidence_insufficient": len(insufficient),
-        },
-        "opposing_evidence": opposing_evidence,
-        "pre_vibe_recommendation": recommendation,
-        "next_action": deterministic_next_action(),
-    }
-    analysis_path = analysis_root / "deterministic-analysis.json"
-    summary = _with_analysis_seconds(
-        summary,
-        time.perf_counter() - started,
-        analysis_path,
-    )
-    _atomic_json(analysis_path, summary)
-    return summary
-
-
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run deterministic analysis over standard result packages")
-    parser.add_argument("--repo-root", type=Path, default=Path.cwd())
-    parser.add_argument("--preparation-workspace", type=Path, required=True)
-    parser.add_argument(
-        "--source",
-        action="append",
-        required=True,
-        metavar="SCENARIO_ID=RUN_ID",
-        help="explicitly register one scenario result; repeat for every planned scenario",
-    )
-    return parser
-
-
-def _parse_source_registry(values: Sequence[str]) -> dict[str, str]:
-    registry: dict[str, str] = {}
-    for value in values:
-        scenario_id, separator, run_id = value.partition("=")
-        if not separator or not scenario_id or not run_id:
-            raise UnifiedAnalysisError(
-                "--source must use the SCENARIO_ID=RUN_ID form"
-            )
-        if scenario_id in registry:
-            raise UnifiedAnalysisError(
-                f"scenario {scenario_id} is registered more than once"
-            )
-        registry[scenario_id] = run_id
-    return registry
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
-    result = run_deterministic_analysis(
-        args.repo_root,
-        args.preparation_workspace,
-        _parse_source_registry(args.source),
-    )
-    print(
-        json.dumps(
-            {
-                "analysis_id": result["analysis_id"],
-                "status": "complete",
-                "next_action": result["next_action"],
-                "baseline": result["baseline"],
-                "evidence_matrix": result["evidence_matrix"],
-                "analysis_seconds": result["analysis_seconds"],
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-        )
-    )
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

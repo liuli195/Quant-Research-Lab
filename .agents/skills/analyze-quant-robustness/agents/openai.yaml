@@ -1,0 +1,4 @@
+interface:
+  display_name: "标准量化分析流程"
+  short_description: "只读复核已登记的本地研究、聚宽回测和聚宽模拟交易快照"
+  default_prompt: "使用 $analyze-quant-robustness 对已登记来源运行标准量化分析，并交付证据状态与报告。"

@@ -172,12 +172,16 @@ def _attribution_capability(source: AnalysisSource) -> Mapping[str, object]:
         return _evidence_insufficient("invalid_parquet")
     if physical_rows != expected_rows or physical_rows <= 0:
         return _evidence_insufficient("row_count_mismatch")
-    time_field = "time" if source.kind == "local_research" else "current_dt"
-    event_field = "event_type" if source.kind == "local_research" else "event"
-    if time_field not in fields or event_field not in fields:
+    local = source.kind == "local_research"
+    time_field = "time" if local else "current_dt"
+    event_field = "event_type" if local else "event"
+    identity_fields = ("event_id",) if local else ("audit_token", "seq")
+    if any(field not in fields for field in (time_field, event_field, *identity_fields)):
         return _evidence_insufficient("required_event_fields_missing")
     try:
-        frame = pq.read_table(path, columns=[time_field, event_field]).to_pandas()
+        frame = pq.read_table(
+            path, columns=[time_field, event_field, *identity_fields]
+        ).to_pandas()
         timestamps = pd.to_datetime(frame[time_field], errors="coerce", format="mixed")
     except Exception:
         return _evidence_insufficient("invalid_event_time")
@@ -188,10 +192,79 @@ def _attribution_capability(source: AnalysisSource) -> Mapping[str, object]:
     source_range = _source_result_range(source)
     event_start = pd.Timestamp(timestamps.min())
     event_end = pd.Timestamp(timestamps.max())
-    if source_range is None or event_start > event_end or (
-        event_end < source_range[0] or event_start > source_range[1]
-    ):
+    if source_range is None or event_start > event_end:
         return _evidence_insufficient("event_time_range_mismatch")
+    if local:
+        event_ids = frame["event_id"].fillna("").astype(str)
+        if event_ids.eq("").any() or event_ids.duplicated().any():
+            return _evidence_insufficient("invalid_event_id")
+        declared_range = entry.get("time_range")
+        if not isinstance(declared_range, Mapping):
+            return _evidence_insufficient("event_time_range_mismatch")
+        try:
+            declared_start = pd.Timestamp(str(declared_range["start"]))
+            declared_end = pd.Timestamp(str(declared_range["end"]))
+        except (KeyError, ValueError, TypeError):
+            return _evidence_insufficient("event_time_range_mismatch")
+        event_days = timestamps.dt.normalize()
+        source_start, source_end = (item.normalize() for item in source_range)
+        if (
+            event_start.normalize() != declared_start.normalize()
+            or event_end.normalize() != declared_end.normalize()
+            or ((event_days < source_start) | (event_days > source_end)).any()
+        ):
+            return _evidence_insufficient("event_time_range_mismatch")
+    else:
+        evidence = entry.get("evidence")
+        details = evidence.get("evidence") if isinstance(evidence, Mapping) else None
+        if not isinstance(evidence, Mapping) or not isinstance(details, Mapping):
+            return _evidence_insufficient("invalid_event_identity")
+        tokens = frame["audit_token"].fillna("").astype(str)
+        expected_token = evidence.get("token")
+        if (
+            not isinstance(expected_token, str)
+            or not expected_token
+            or details.get("expected_token") != expected_token
+            or set(tokens) != {expected_token}
+        ):
+            return _evidence_insufficient("invalid_event_token")
+        sequences = pd.to_numeric(frame["seq"], errors="coerce")
+        first_seq = evidence.get("first_seq")
+        last_seq = evidence.get("last_seq")
+        if (
+            sequences.isna().any()
+            or not isinstance(first_seq, int)
+            or not isinstance(last_seq, int)
+            or sorted(sequences.astype(int).tolist())
+            != list(range(first_seq, last_seq + 1))
+        ):
+            return _evidence_insufficient("invalid_event_sequence")
+        event_types = frame[event_field].astype(str)
+        if bool(event_types.eq("run_start").any()) != bool(evidence.get("run_start")) or bool(
+            event_types.eq("run_end").any()
+        ) != bool(evidence.get("run_end")):
+            return _evidence_insufficient("invalid_run_boundary")
+        expected_start = details.get("expected_start")
+        expected_end = details.get("expected_end")
+        try:
+            if expected_start and event_start.normalize() != pd.Timestamp(
+                str(expected_start)
+            ).normalize():
+                return _evidence_insufficient("event_time_range_mismatch")
+            if expected_end and event_end.normalize() != pd.Timestamp(
+                str(expected_end)
+            ).normalize():
+                return _evidence_insufficient("event_time_range_mismatch")
+        except (ValueError, TypeError):
+            return _evidence_insufficient("event_time_range_mismatch")
+        business_events = timestamps.loc[
+            ~event_types.isin(("run_start", "run_end"))
+        ].dt.normalize()
+        source_start, source_end = (item.normalize() for item in source_range)
+        if business_events.empty or (
+            (business_events < source_start) | (business_events > source_end)
+        ).any():
+            return _evidence_insufficient("event_time_range_mismatch")
     return {
         "status": "available",
         "path": str(reference["path"]),
@@ -200,6 +273,7 @@ def _attribution_capability(source: AnalysisSource) -> Mapping[str, object]:
         "rows": physical_rows,
         "time_field": time_field,
         "event_field": event_field,
+        "identity_fields": list(identity_fields),
         "reason_field": (
             "reason_code"
             if source.kind == "local_research" and "reason_code" in fields

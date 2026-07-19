@@ -10,7 +10,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
 **Goal:** 建立一个只读的标准策略分析入口，使用明确登记的本地研究、聚宽回测和聚宽模拟交易快照，交付共同绩效/风险、可验证的深度归因和按能力降级的稳健性分析。
 
-**Architecture:** 新增一个小型来源登记模块，负责路径、清单摘要、来源类型和模拟交易快照身份的验证；`analysis_data`（分析数据）仍是唯一读取共同事实表的入口。通用入口在既有确定性计算函数之上增加来源能力矩阵：四张共同表始终可计算，归因、成本敏感性和策略事件依赖其对应的已验证证据，缺失时仅产生 `evidence_insufficient`（证据不足）条目。
+**Architecture:** 来源登记模块与全部量化分析计算迁入 `analyze-quant-robustness` Skill（技能）的 `scripts/quant_analysis/`（量化分析）目录；`analysis_data`（分析数据）只保留中性标准结果格式读取。唯一入口脚本在确定性计算函数之上增加来源能力矩阵：四张共同表始终可计算，归因、成本敏感性和策略事件依赖其对应的已验证证据，缺失时仅产生 `evidence_insufficient`（证据不足）条目。
 
 **Tech Stack:** Python（编程语言）3.12、PyArrow（列式数据处理）、DuckDB（嵌入式分析数据库）、Pandas（表格数据处理）、pytest（测试框架）、JSON Schema（结构约束）。
 
@@ -27,16 +27,24 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 - 只使用三种结论状态：`pass`（通过）、`fail`（失败）和 `evidence_insufficient`（证据不足）；已知失败与证据不足必须同时保留。
 - 新标准分析输出只能写入 `.local/standard-strategy-analysis/<analysis_id>/`；输入来源的文件字节摘要在运行前后必须相同。
 
+## 实施纠正（优先于下方历史步骤）
+
+- 实际计算包的唯一位置是 `.agents/skills/analyze-quant-robustness/scripts/quant_analysis/`；下方所有 `scripts/research/quant_analysis/` 路径均以此路径替代。
+- 公开命令只能是 `.agents/skills/analyze-quant-robustness/scripts/analyze_quant_robustness.py run|report`；不保留旧 Python（编程语言）模块命令行接口或旧入口兼容层。
+- 本地研究与量化分析不互相调用：本地研究只产生单场景标准结果包，量化分析只读取显式登记的结果包。二者只共同依赖 `scripts/research/result_contract.py` 与 `scripts/research/result_package.py` 的中立结果契约；本地研究不导入 `analysis_data`（分析数据）。
+- `orchestration.py`（编排）及“生成本地研究运行配置”的测试不属于标准分析，已移除。
+
 ## 文件结构
 
 | 文件 | 责任 |
 | --- | --- |
 | `scripts/research/analysis_data/manifest.py` | 打开并验证聚宽回测或带指定快照的聚宽模拟交易清单，保留来源根目录与数据前缀。 |
 | `scripts/research/analysis_data/views.py` | 为三类来源建立只读 DuckDB（嵌入式分析数据库）视图，并将模拟交易官方风险额外字段排除在共同视图之外。 |
-| `scripts/research/quant_analysis/source_registry.py` | 读取、校验并归一化版本化来源登记，生成不可变来源能力摘要。 |
-| `scripts/research/quant_analysis/unified_analysis.py` | 加载已登记场景、编排共同指标/归因/稳健性，写入标准 JSON（结构化数据）和证据矩阵。 |
-| `scripts/research/quant_analysis/reporting.py` | 由标准分析 JSON（结构化数据）生成包含来源与能力矩阵的 Markdown（标记文档）报告。 |
-| `.agents/skills/analyze-quant-robustness/` | 唯一公开 Skill（技能）入口，只描述离线调用顺序和停止条件。 |
+| `scripts/research/result_contract.py`、`scripts/research/result_package.py` | 本地研究生产侧与分析读取侧共同依赖的中立标准结果契约，不含任何流程入口。 |
+| `.agents/skills/analyze-quant-robustness/scripts/quant_analysis/source_registry.py` | 读取、校验并归一化版本化来源登记，生成不可变来源能力摘要。 |
+| `.agents/skills/analyze-quant-robustness/scripts/quant_analysis/unified_analysis.py` | 加载已登记场景、编排共同指标/归因/稳健性，写入标准 JSON（结构化数据）和证据矩阵。 |
+| `.agents/skills/analyze-quant-robustness/scripts/quant_analysis/reporting.py` | 由标准分析 JSON（结构化数据）生成包含来源与能力矩阵的 Markdown（标记文档）报告。 |
+| `.agents/skills/analyze-quant-robustness/` | 唯一公开 Skill（技能）入口，含实际计算包、离线调用顺序和停止条件。 |
 | `.claude/skills/analyze-quant-robustness` | 指向上述 Skill（技能）目录的相对符号链接。 |
 | `tests/local_quant_research/test_analysis_data_views.py` | 聚宽模拟快照、共同表和风险参考的只读契约测试。 |
 | `tests/quant_analysis/test_source_registry.py` | 来源登记路径、摘要、类型、快照和能力矩阵测试。 |
@@ -216,10 +224,10 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
 **Files:**
 
-- Create: `scripts/research/quant_analysis/source_registry.py`
-- Create: `scripts/research/quant_analysis/schemas/source-registry.schema.json`
+- Create: `.agents/skills/analyze-quant-robustness/scripts/quant_analysis/source_registry.py`
+- Create: `.agents/skills/analyze-quant-robustness/scripts/quant_analysis/schemas/source-registry.schema.json`
 - Create: `tests/quant_analysis/test_source_registry.py`
-- Modify: `scripts/research/quant_analysis/__init__.py`
+- Modify: `.agents/skills/analyze-quant-robustness/scripts/quant_analysis/__init__.py`
 
 **Interfaces:**
 
@@ -379,7 +387,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 - [ ] **Step 7: 提交本任务**
 
   ```powershell
-  git add scripts/research/quant_analysis/source_registry.py scripts/research/quant_analysis/schemas/source-registry.schema.json scripts/research/quant_analysis/__init__.py tests/quant_analysis/test_source_registry.py
+  git add .agents/skills/analyze-quant-robustness/scripts/quant_analysis/source_registry.py .agents/skills/analyze-quant-robustness/scripts/quant_analysis/schemas/source-registry.schema.json .agents/skills/analyze-quant-robustness/scripts/quant_analysis/__init__.py tests/quant_analysis/test_source_registry.py
   git commit -m "feat: 增加标准分析来源登记"
   ```
 
@@ -387,7 +395,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
 **Files:**
 
-- Modify: `scripts/research/quant_analysis/unified_analysis.py:64-305`
+- Modify: `.agents/skills/analyze-quant-robustness/scripts/quant_analysis/unified_analysis.py`
 - Modify: `tests/quant_analysis/test_unified_analysis.py:1-450`
 - Modify: `tests/quant_analysis/test_source_registry.py`
 
@@ -395,7 +403,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
 - Consumes: `RegisteredSource`（已登记来源）、`SourceRegistry`（来源登记）和 `expand_analysis_plan`（展开分析计划）结果。
 - Produces: `load_registered_scenario(registered: RegisteredSource, *, analysis_params: Mapping[str, object]) -> ScenarioInput`。
-- Produces: `ScenarioInput` 新增 `source_type: str`、`source_manifest_sha256: str`、`capabilities: Mapping[str, Mapping[str, object]]`、`attribution_status: str`，现有字段对旧本地流程保持兼容。
+- Produces: `ScenarioInput` 包含 `source_type: str`、`source_manifest_sha256: str`、`capabilities: Mapping[str, Mapping[str, object]]`、`attribution_status: str`；不保留旧本地分析流程。
 
 - [ ] **Step 1: 先写共同四表和归因缺失的失败测试**
 
@@ -431,9 +439,9 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   Expected: FAIL，因为 `_load_scenario`（加载场景）要求 `manifest.run`、`params.json` 和 `performance.json`，并强制需要本地归因文件。
 
-- [ ] **Step 3: 增加已登记场景加载器，不替换旧本地入口**
+- [ ] **Step 3: 以已登记场景加载器替换旧本地分析入口**
 
-  保留 `_load_scenario` 和 `run_deterministic_analysis` 的既有本地研究调用链；新增一个由标准入口专用的加载器，任何数据访问只能通过 Task 1 的 `open_analysis_database`（打开分析数据库）。
+  删除 `_load_scenario` 和 `run_deterministic_analysis` 的旧本地分析调用链；标准入口只使用已登记场景加载器，任何数据访问只能通过 Task 1 的 `open_analysis_database`（打开分析数据库）。
 
   ```python
   @dataclass(frozen=True)
@@ -492,7 +500,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
 - [ ] **Step 4: 只在能力可用时投影事件归因**
 
-  实现 `_load_verified_attribution(registered)`：能力为 `available` 时读取 Task 2 已验证的单个 Parquet（列式数据）文件，要求字段 `time`、`event_type`、`reason_code`、`security`、`details_json`，填充 `event_time` 与 `date`；能力不是 `available` 时返回指定列的零行 DataFrame（表格数据）和原始状态。禁止由 `orders`（订单）或 `positions`（持仓）合成 `events`（事件）。
+  实现 `_load_verified_attribution(registered)`：能力为 `available` 时读取 Task 2 已验证的单个 Parquet（列式数据）文件，并按能力摘要声明的来源原生事件时间和事件标识字段填充 `event_time` 与 `date`；聚宽可选投影 `reason`（原因）和 `etf`/`security`（标的），但不制造 `details_json`（明细）或 `security_daily_pnl`（单标的日盈亏）。能力不是 `available` 时返回指定列的零行 DataFrame（表格数据）和原始状态。禁止由 `orders`（订单）或 `positions`（持仓）合成 `events`（事件）。
 
   ```python
   _EVENT_COLUMNS = ("time", "event_type", "reason_code", "security", "details_json")
@@ -512,7 +520,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
 - [ ] **Step 5: 收紧深度归因函数的降级行为**
 
-  让 `_attribution`（归因）在 `scenario.attribution_status != "available"` 时返回不含推断数值的明确结果；让 `_security_pnl_facts`（证券盈亏事实）返回空表，后续依赖项将产生证据不足而非“现金未分类”伪归因。
+  让 `_attribution`（归因）在 `scenario.attribution_status != "available"` 时返回不含推断数值的明确结果；来源原生事件日志可输出事件级计数，但在不存在 `security_daily_pnl`（单标的日盈亏）时，证券盈亏事实必须返回空表，后续依赖项将产生证据不足而非“现金未分类”伪归因。
 
   ```python
   def _attribution(scenario: ScenarioInput, pnl_facts: pd.DataFrame) -> dict[str, object]:
@@ -542,7 +550,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 - [ ] **Step 7: 提交本任务**
 
   ```powershell
-  git add scripts/research/quant_analysis/unified_analysis.py tests/quant_analysis/test_unified_analysis.py tests/quant_analysis/test_source_registry.py
+  git add .agents/skills/analyze-quant-robustness/scripts/quant_analysis/unified_analysis.py tests/quant_analysis/test_unified_analysis.py tests/quant_analysis/test_source_registry.py
   git commit -m "feat: 统一加载标准分析来源"
   ```
 
@@ -550,8 +558,8 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
 **Files:**
 
-- Modify: `scripts/research/quant_analysis/unified_analysis.py:683-1435`
-- Modify: `scripts/research/quant_analysis/evidence.py`
+- Modify: `.agents/skills/analyze-quant-robustness/scripts/quant_analysis/unified_analysis.py`
+- Modify: `.agents/skills/analyze-quant-robustness/scripts/quant_analysis/evidence.py`
 - Modify: `tests/quant_analysis/test_unified_analysis.py:450-720`
 
 **Interfaces:**
@@ -667,7 +675,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 - [ ] **Step 6: 提交本任务**
 
   ```powershell
-  git add scripts/research/quant_analysis/unified_analysis.py scripts/research/quant_analysis/evidence.py tests/quant_analysis/test_unified_analysis.py
+  git add .agents/skills/analyze-quant-robustness/scripts/quant_analysis/unified_analysis.py .agents/skills/analyze-quant-robustness/scripts/quant_analysis/evidence.py tests/quant_analysis/test_unified_analysis.py
   git commit -m "feat: 增加能力降级的稳健性分析"
   ```
 
@@ -675,8 +683,8 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
 **Files:**
 
-- Modify: `scripts/research/quant_analysis/unified_analysis.py:1438-1490`
-- Modify: `scripts/research/quant_analysis/reporting.py:135-760`
+- Modify: `.agents/skills/analyze-quant-robustness/scripts/quant_analysis/unified_analysis.py`
+- Modify: `.agents/skills/analyze-quant-robustness/scripts/quant_analysis/reporting.py`
 - Modify: `tests/quant_analysis/test_reporting.py`
 - Modify: `tests/test_skill_layout.py`
 - Create: `.agents/skills/analyze-quant-robustness/SKILL.md`
@@ -687,7 +695,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
 - Consumes: `run_standard_analysis(repo_root, source_registry_path)` 生成的 `.local/standard-strategy-analysis/<analysis_id>/deterministic-analysis.json` 与 `source-results.json`。
 - Produces: `write_analysis_delivery(workspace: Path) -> dict[str, Any]` 支持标准输出并写入 `standard-strategy-analysis-report.md` 与 `recommendation.json`。
-- Produces: 仅供 `analyze-quant-robustness` Skill（技能）调用的内部命令 `python -m scripts.research.quant_analysis.unified_analysis --repo-root <repo> --source-registry <relative-json>`；成功时打印一行 JSON（结构化数据）状态。
+- Produces: 唯一公开命令 `.agents/skills/analyze-quant-robustness/scripts/analyze_quant_robustness.py run --repository <repo> --source-registry <relative-json>`；成功时打印一行 JSON（结构化数据）状态。
 
 - [ ] **Step 1: 为命令行和报告可追溯性写失败测试**
 
@@ -727,9 +735,9 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   Expected: FAIL，因为报告只陈述本地探索性研究，CLI（命令行接口）只支持 `--preparation-workspace` 和重复 `--source`。
 
-- [ ] **Step 3: 扩展 CLI（命令行接口）且保持旧入口兼容**
+- [ ] **Step 3: 实现唯一 Skill（技能）CLI（命令行接口）并删除旧入口**
 
-  将参数拆为互斥调用模式：旧模式仍需要 `--preparation-workspace` 和至少一个 `--source`；新模式只接受一个仓库相对 `--source-registry`。禁止新模式接受 `--source`，避免退回运行目录猜测。
+  公开入口只接受一个仓库相对 `--source-registry`，并提供独立 `report`（报告）动作；删除 `--preparation-workspace`、重复 `--source` 和旧模块入口，避免退回运行目录猜测。
 
   ```python
   def _parser() -> argparse.ArgumentParser:
@@ -815,7 +823,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 - [ ] **Step 7: 提交本任务**
 
   ```powershell
-  git add scripts/research/quant_analysis/unified_analysis.py scripts/research/quant_analysis/reporting.py tests/quant_analysis/test_reporting.py tests/test_skill_layout.py .agents/skills/analyze-quant-robustness .claude/skills/analyze-quant-robustness
+  git add .agents/skills/analyze-quant-robustness/scripts/quant_analysis .agents/skills/analyze-quant-robustness/scripts/analyze_quant_robustness.py tests/quant_analysis/test_reporting.py tests/test_skill_layout.py .agents/skills/analyze-quant-robustness .claude/skills/analyze-quant-robustness
   git commit -m "feat: 发布标准策略分析入口"
   ```
 

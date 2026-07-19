@@ -21,7 +21,7 @@ from scripts.research.local_quant_research.contracts import (
     ExecutionRun,
     ResultExtension,
 )
-from scripts.research.local_quant_research.result_package import (
+from scripts.research.result_package import (
     ResultPackageRequest,
     write_result_package,
 )
@@ -295,7 +295,9 @@ class _AnalysisLedger:
         )
 
 
-def _write_result_package(root: Path) -> Path:
+def _write_result_package(
+    root: Path, *, extensions: tuple[ResultExtension, ...] | None = None
+) -> Path:
     code = root.parent / "strategy.py"
     code.write_text("VALUE = 1\n", encoding="utf-8")
     ledger = _AnalysisLedger()
@@ -307,7 +309,9 @@ def _write_result_package(root: Path) -> Path:
             run_id="run-analysis",
             output_dir=root,
             execution=ExecutionBundle(primary=run, final=run, stages=("primary",)),
-            extensions=(
+            extensions=extensions
+            if extensions is not None
+            else (
                 ResultExtension(
                     name="signals",
                     schema_version="signals/1",
@@ -379,7 +383,7 @@ def test_open_analysis_source_summarizes_each_core_table_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scripts.research.local_quant_research import result_package
+    from scripts.research import result_package
 
     root = _write_result_package(tmp_path / "result")
     names_by_fields = {

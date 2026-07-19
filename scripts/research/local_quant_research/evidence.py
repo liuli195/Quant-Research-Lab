@@ -8,19 +8,17 @@ import tempfile
 from pathlib import Path
 from typing import Iterable, Mapping
 
-import pyarrow as pa
-import pyarrow.compute as pc
 import numpy as np
 
-from .contracts import ExecutionBundle
+from scripts.research.result_contract import (
+    EvidenceError,
+    ExecutionBundle,
+    validate_extension_table as validate_extension_table,
+)
 
 
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _REASON_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,63}")
-
-
-class EvidenceError(RuntimeError):
-    """Raised when immutable research evidence is invalid."""
 
 
 def canonical_bytes(value: object) -> bytes:
@@ -58,22 +56,6 @@ def _array_digest(value: np.ndarray) -> dict[str, object]:
         "shape": list(array.shape),
         "sha256": digest.hexdigest(),
     }
-
-
-def validate_extension_table(table: object) -> None:
-    if not isinstance(table, pa.Table):
-        raise EvidenceError("extension table must be an Arrow table")
-    try:
-        table.validate(full=True)
-    except pa.ArrowException as exc:
-        raise EvidenceError("extension table is invalid") from exc
-    for field in table.schema:
-        if field.type not in (pa.string(), pa.bool_(), pa.int64(), pa.float64()):
-            raise EvidenceError("extension fields must use flat string/bool/int64/float64 types")
-        if pa.types.is_float64(field.type) and bool(
-            pc.any(pc.is_nan(table[field.name])).as_py()
-        ):
-            raise EvidenceError("extension float values must use Arrow null instead of NaN")
 
 
 def _run_digest_document(run: object) -> dict[str, object]:

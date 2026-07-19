@@ -12,11 +12,10 @@ import pyarrow.parquet as pq
 from jsonschema import Draft202012Validator, FormatChecker
 from jsonschema.exceptions import SchemaError, ValidationError
 
-from scripts.research.local_quant_research.result_package import (
+from scripts.research.result_package import (
     ResultContractError,
     validate_result_package,
 )
-
 
 CORE_DATASETS = (
     "results",
@@ -222,7 +221,6 @@ def _validate_local_files(root: Path, document: Mapping[str, object]) -> None:
             raise AnalysisManifestError(f"datasets.{name} is invalid Parquet") from exc
         if rows != entry["rows"] or rows != reference["rows"]:
             raise AnalysisManifestError(f"datasets.{name} row count mismatch")
-
 
 def _validate_joinquant_document(
     document: Mapping[str, object], *, snapshot_id: str | None

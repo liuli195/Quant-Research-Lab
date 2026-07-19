@@ -6,19 +6,19 @@ import numpy as np
 import pyarrow.parquet as pq
 import pytest
 
-from scripts.research.quant_analysis.benchmarks import (
+from quant_analysis.benchmarks import (
     BenchmarkAlignmentError,
     calculate_benchmark_statistics,
 )
-from scripts.research.quant_analysis.cvar import (
+from quant_analysis.cvar import (
     calculate_cvar,
     rolling_compound_returns,
 )
-from scripts.research.quant_analysis.evidence import (
+from quant_analysis.evidence import (
     ScenarioResult,
     build_evidence_matrix,
 )
-from scripts.research.quant_analysis.robustness import (
+from quant_analysis.robustness import (
     block_bootstrap,
     summarize_bootstrap,
 )

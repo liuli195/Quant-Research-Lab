@@ -502,6 +502,8 @@ def _runtime_lock(repo_root: Path) -> tuple[dict[str, object], tuple[Path, ...]]
                 for path in (
                     repo_root / "scripts/__init__.py",
                     repo_root / "scripts/research/__init__.py",
+                    repo_root / "scripts/research/result_contract.py",
+                    repo_root / "scripts/research/result_package.py",
                     *(path for root in source_roots for path in root.glob("*.py")),
                 )
                 if path.is_file()
@@ -755,7 +757,10 @@ def _package_identity(
     *,
     expected: Mapping[str, object],
 ) -> Mapping[str, object]:
-    from .result_package import ResultContractError, validate_result_package
+    from scripts.research.result_package import (
+        ResultContractError,
+        validate_result_package,
+    )
 
     try:
         document = validate_result_package(path)

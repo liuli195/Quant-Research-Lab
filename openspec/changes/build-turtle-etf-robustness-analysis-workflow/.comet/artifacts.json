@@ -2,5 +2,7 @@
   "openspec_proposal": "openspec/changes/build-turtle-etf-robustness-analysis-workflow/proposal.md",
   "openspec_design": "openspec/changes/build-turtle-etf-robustness-analysis-workflow/design.md",
   "openspec_tasks": "openspec/changes/build-turtle-etf-robustness-analysis-workflow/tasks.md",
-  "openspec_delta_spec": "openspec/changes/build-turtle-etf-robustness-analysis-workflow/specs/quant-robustness-analysis-workflow/spec.md"
+  "openspec_delta_spec": "openspec/changes/build-turtle-etf-robustness-analysis-workflow/specs/quant-robustness-analysis-workflow/spec.md",
+  "handoff_context": "openspec/changes/build-turtle-etf-robustness-analysis-workflow/.comet/handoff/spec-context.json",
+  "handoff_markdown": "openspec/changes/build-turtle-etf-robustness-analysis-workflow/.comet/handoff/spec-context.md"
 }

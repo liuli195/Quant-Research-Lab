@@ -27,7 +27,7 @@ from scripts.research.local_quant_research.contracts import (
     ExecutionRun,
     ResultExtension,
 )
-from scripts.research.local_quant_research.result_package import (
+from scripts.research.result_package import (
     ResultPackageRequest,
     write_result_package,
 )
@@ -117,11 +117,8 @@ def _boom(*_args: object, **_kwargs: object) -> None:
 def _guard_recomputation(monkeypatch: pytest.MonkeyPatch) -> None:
     import vectorbt as vbt
 
-    from scripts.research.local_quant_research import (
-        result_package,
-        runner,
-        strategy_loader,
-    )
+    from scripts.research import result_package
+    from scripts.research.local_quant_research import runner, strategy_loader
 
     monkeypatch.setattr(strategy_loader, "load_strategy", _boom)
     monkeypatch.setattr(vbt.Portfolio, "from_order_func", _boom)
