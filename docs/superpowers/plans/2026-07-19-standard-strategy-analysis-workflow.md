@@ -2,6 +2,7 @@
 change: build-turtle-etf-robustness-analysis-workflow
 design-doc: docs/superpowers/specs/2026-07-19-standard-strategy-analysis-workflow-design.md
 base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
+archived-with: 2026-07-19-build-turtle-etf-robustness-analysis-workflow
 ---
 
 # 标准策略分析流程实施计划

@@ -2,6 +2,8 @@
 comet_change: build-turtle-etf-robustness-analysis-workflow
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-07-19-build-turtle-etf-robustness-analysis-workflow
+status: final
 ---
 
 # 标准策略分析流程设计
