@@ -33,6 +33,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 - 公开命令只能是 `.agents/skills/analyze-quant-robustness/scripts/analyze_quant_robustness.py run|report`；不保留旧 Python（编程语言）模块命令行接口或旧入口兼容层。
 - 本地研究与量化分析不互相调用：本地研究只产生单场景标准结果包，量化分析只读取显式登记的结果包。二者只共同依赖 `scripts/research/result_contract.py` 与 `scripts/research/result_package.py` 的中立结果契约；本地研究不导入 `analysis_data`（分析数据）。
 - `orchestration.py`（编排）及“生成本地研究运行配置”的测试不属于标准分析，已移除。
+- 下方步骤已由提交 `3adae4c` 汇总完成；各“提交本任务”步骤以该最终功能提交为准。
 
 ## 文件结构
 
@@ -69,7 +70,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 - Produces: `open_analysis_source(result_dir: Path, *, snapshot_id: str | None = None) -> AnalysisSource`，其中 `AnalysisSource.kind` 为 `joinquant_backtest` 或 `joinquant_simulation`，并新增 `data_prefix: PurePosixPath`、`snapshot_id: str | None`。
 - Produces: `open_analysis_database(result_dir: Path, *, snapshot_id: str | None = None) -> AnalysisDatabase`；共同视图字段继续使用 `_SCHEMAS`（字段约束）。
 
-- [ ] **Step 1: 为模拟交易快照写失败测试**
+- [x] **Step 1: 为模拟交易快照写失败测试**
 
   在 `tests/local_quant_research/test_analysis_data_views.py` 增加使用现有 `strategy-001` 模拟归档的测试；先断言当前实现拒绝模拟交易或没有 `snapshot_id` 参数。
 
@@ -91,7 +92,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
       assert _tree_sha(root) == before
   ```
 
-- [ ] **Step 2: 运行测试并确认失败原因**
+- [x] **Step 2: 运行测试并确认失败原因**
 
   Run:
 
@@ -101,7 +102,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   Expected: FAIL，错误说明聚宽清单不是 `backtest`（回测）或函数不接受 `snapshot_id`（快照标识）。
 
-- [ ] **Step 3: 最小化扩展清单验证和数据路径解析**
+- [x] **Step 3: 最小化扩展清单验证和数据路径解析**
 
   在 `manifest.py` 中将来源类型和数据前缀变为 `AnalysisSource`（分析来源）的显式属性；只允许聚宽回测在没有快照参数时打开，模拟交易必须匹配根清单 `streams.snapshots.cursor` 且所有 `data/*.parquet` 声明都位于 `snapshots/<snapshot_id>/data/`。
 
@@ -146,7 +147,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   `_validate_simulation_snapshot_files`（验证模拟交易快照文件）必须逐个复用已有大小、SHA256（完整性摘要）、Parquet（列式数据）行数检查；遇到当前游标、文件路径或摘要漂移时抛出 `AnalysisManifestError`（分析清单错误），不得选择其他快照。
 
-- [ ] **Step 4: 使视图只投影共同字段并保留风险参考状态**
+- [x] **Step 4: 使视图只投影共同字段并保留风险参考状态**
 
   在 `views.py` 的 `_declared_parquet_path` 使用 `source.data_prefix`，在 `_validate_physical_fields` 仅对 `joinquant_simulation` 的 `risk`（风险）允许字段超集，其余共同表仍要求现有字段集合。`_parquet_query` 保持只选择 `_SCHEMAS["risk"]` 中已有的 31 个共同字段，因此 `intraday_return` 和 `monthly_return` 不会进入分析视图。
 
@@ -176,7 +177,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   同时为 `local_research`（本地研究）扩展 `AnalysisDatabase.reference_status`：当调用者查询 `risk` 或 `period_risks` 时返回 `("missing_at_source", "local-research-package/2 has no physical official risk table")`，但 `table_names` 仍只返回四张物理表。
 
-- [ ] **Step 5: 扩充失败场景与通过场景**
+- [x] **Step 5: 扩充失败场景与通过场景**
 
   在同一测试文件加入这两个断言：
 
@@ -203,7 +204,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
       assert "sharpe" in fields
   ```
 
-- [ ] **Step 6: 运行定向分析数据回归**
+- [x] **Step 6: 运行定向分析数据回归**
 
   Run:
 
@@ -213,7 +214,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   Expected: PASS；既有本地研究和聚宽回测视图测试不改变，新增模拟快照与额外风险字段测试通过。
 
-- [ ] **Step 7: 提交本任务**
+- [x] **Step 7: 提交本任务**
 
   ```powershell
   git add scripts/research/analysis_data/manifest.py scripts/research/analysis_data/views.py tests/local_quant_research/test_analysis_data_views.py
@@ -235,7 +236,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 - Produces: `load_source_registry(repo_root: Path, registry_path: Path) -> SourceRegistry`。
 - Produces: `SourceRegistration(scenario_id: str, source_type: str, root: Path, manifest_sha256: str, snapshot_id: str | None)` 与 `RegisteredSource(registration: SourceRegistration, source: AnalysisSource, capabilities: Mapping[str, Mapping[str, object]])`。
 
-- [ ] **Step 1: 写来源登记契约失败测试**
+- [x] **Step 1: 写来源登记契约失败测试**
 
   在新测试文件先固定一个最小、可读的登记文档。它必须同时登记本地研究包、聚宽回测和聚宽模拟快照，且根路径全部相对仓库。
 
@@ -266,7 +267,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
       ]
   ```
 
-- [ ] **Step 2: 运行测试并确认新模块尚不存在**
+- [x] **Step 2: 运行测试并确认新模块尚不存在**
 
   Run:
 
@@ -276,7 +277,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   Expected: FAIL，原因是 `source_registry`（来源登记）模块或 `load_source_registry`（加载来源登记）尚不存在。
 
-- [ ] **Step 3: 实现严格登记解析与来源验证**
+- [x] **Step 3: 实现严格登记解析与来源验证**
 
   在 `source-registry.schema.json` 明确顶层和来源条目，不允许额外字段。`source_registry.py` 以 JSON Schema（结构约束）先校验文件，再完成安全路径、清单摘要、声明类型和模拟快照的实体验证。
 
@@ -315,7 +316,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   `_open_registration`（打开登记）必须拒绝 `path == "latest"`、目录、绝对路径、含 `..` 的路径和摘要不匹配；调用 `open_analysis_source(root, snapshot_id=entry_snapshot)` 后要求 `source.kind == source_type`。它只读取明确的 `root/manifest.json`，不使用 `glob`（通配扫描）、时间排序或目录搜索。
 
-- [ ] **Step 4: 产生固定能力摘要**
+- [x] **Step 4: 产生固定能力摘要**
 
   将能力摘要限定为下列键和状态，供后续统一分析使用；它不能把缺失证据转换为成功。
 
@@ -336,7 +337,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   `_attribution_capability`（归因能力）只检查已声明文件、摘要、Parquet（列式数据）来源原生的事件时间和事件标识字段，以及可解析、非倒置且与共同收益区间重叠的时间范围；返回 `available`、`missing_at_source` 或 `evidence_insufficient`。本地检查登记的 `attribution_log` 扩展，聚宽检查 `datasets.attribution_log` 指定快照文件。聚宽以 `current_dt`（事件时间）和 `event`（事件标识）为最小契约，可选保留 `reason`（原因）与 `etf`/`security`（标的），不得改写成 `security_daily_pnl`（单标的日盈亏）。`_cost_capability` 只有在显式来源证明可安全定位同一市场快照时才返回 `available`；其他来源直接是 `missing_at_source`。
 
-- [ ] **Step 5: 补齐拒绝和能力测试**
+- [x] **Step 5: 补齐拒绝和能力测试**
 
   ```python
   @pytest.mark.parametrize("mutate, message", [
@@ -374,7 +375,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   `_copy_result_package_into_repo`（复制结果包到仓库）必须把现有测试包复制到 `repo_root / ".local" / "source-registry-tests" / tmp_path.name`，并通过测试的 `finally` 清理该目录；`_entry`（登记条目帮助函数）必须从 `root / "manifest.json"` 计算 `manifest_sha256`，将路径转换为 `relative_to(repo_root).as_posix()`。
 
-- [ ] **Step 6: 运行来源登记回归**
+- [x] **Step 6: 运行来源登记回归**
 
   Run:
 
@@ -384,7 +385,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   Expected: PASS；三类来源均按显式登记打开，五类不安全或漂移登记均被拒绝。
 
-- [ ] **Step 7: 提交本任务**
+- [x] **Step 7: 提交本任务**
 
   ```powershell
   git add .agents/skills/analyze-quant-robustness/scripts/quant_analysis/source_registry.py .agents/skills/analyze-quant-robustness/scripts/quant_analysis/schemas/source-registry.schema.json .agents/skills/analyze-quant-robustness/scripts/quant_analysis/__init__.py tests/quant_analysis/test_source_registry.py
@@ -405,7 +406,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 - Produces: `load_registered_scenario(registered: RegisteredSource, *, analysis_params: Mapping[str, object]) -> ScenarioInput`。
 - Produces: `ScenarioInput` 包含 `source_type: str`、`source_manifest_sha256: str`、`capabilities: Mapping[str, Mapping[str, object]]`、`attribution_status: str`；不保留旧本地分析流程。
 
-- [ ] **Step 1: 先写共同四表和归因缺失的失败测试**
+- [x] **Step 1: 先写共同四表和归因缺失的失败测试**
 
   ```python
   def test_registered_sources_share_the_four_common_facts(repo_root: Path, registry: SourceRegistry) -> None:
@@ -429,7 +430,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
       assert scenario.attribution_status == "missing_at_source"
   ```
 
-- [ ] **Step 2: 运行测试并确认旧加载器只接受本地运行目录**
+- [x] **Step 2: 运行测试并确认旧加载器只接受本地运行目录**
 
   Run:
 
@@ -439,7 +440,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   Expected: FAIL，因为 `_load_scenario`（加载场景）要求 `manifest.run`、`params.json` 和 `performance.json`，并强制需要本地归因文件。
 
-- [ ] **Step 3: 以已登记场景加载器替换旧本地分析入口**
+- [x] **Step 3: 以已登记场景加载器替换旧本地分析入口**
 
   删除 `_load_scenario` 和 `run_deterministic_analysis` 的旧本地分析调用链；标准入口只使用已登记场景加载器，任何数据访问只能通过 Task 1 的 `open_analysis_database`（打开分析数据库）。
 
@@ -498,7 +499,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   对 `local_research` 的 `run_id` 使用 `object.run_id`；对聚宽来源使用 `object.local_id`。实现中将这两个分支放入 `_source_run_id`（来源运行标识）小函数，避免错误地假设聚宽有 `run`（运行）对象。
 
-- [ ] **Step 4: 只在能力可用时投影事件归因**
+- [x] **Step 4: 只在能力可用时投影事件归因**
 
   实现 `_load_verified_attribution(registered)`：能力为 `available` 时读取 Task 2 已验证的单个 Parquet（列式数据）文件，并按能力摘要声明的来源原生事件时间和事件标识字段填充 `event_time` 与 `date`；聚宽可选投影 `reason`（原因）和 `etf`/`security`（标的），但不制造 `details_json`（明细）或 `security_daily_pnl`（单标的日盈亏）。能力不是 `available` 时返回指定列的零行 DataFrame（表格数据）和原始状态。禁止由 `orders`（订单）或 `positions`（持仓）合成 `events`（事件）。
 
@@ -518,7 +519,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
       return events, "available"
   ```
 
-- [ ] **Step 5: 收紧深度归因函数的降级行为**
+- [x] **Step 5: 收紧深度归因函数的降级行为**
 
   让 `_attribution`（归因）在 `scenario.attribution_status != "available"` 时返回不含推断数值的明确结果；来源原生事件日志可输出事件级计数，但在不存在 `security_daily_pnl`（单标的日盈亏）时，证券盈亏事实必须返回空表，后续依赖项将产生证据不足而非“现金未分类”伪归因。
 
@@ -537,7 +538,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   将当前 `_attribution` 的完整已验证算术日盈亏实现原样移动到新函数 `_available_attribution(scenario: ScenarioInput, pnl_facts: pd.DataFrame) -> dict[str, object]`；该函数继续计算 `security`、`asset_group`、`trading_reason`、`period`、`exposure`、`event_counts` 和精确的 `reconciliation_error=0.0`。现有纯本地测试的默认 `attribution_status="available"` 必须继续覆盖该路径。
 
-- [ ] **Step 6: 运行共同表和归因测试**
+- [x] **Step 6: 运行共同表和归因测试**
 
   Run:
 
@@ -547,7 +548,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   Expected: PASS；三种来源使用同一共同表加载路径，本地和聚宽归因分别可用，归因缺失只降级深度归因。
 
-- [ ] **Step 7: 提交本任务**
+- [x] **Step 7: 提交本任务**
 
   ```powershell
   git add .agents/skills/analyze-quant-robustness/scripts/quant_analysis/unified_analysis.py tests/quant_analysis/test_unified_analysis.py tests/quant_analysis/test_source_registry.py
@@ -568,7 +569,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 - Produces: `run_standard_analysis(repo_root: Path, source_registry_path: Path) -> dict[str, object]`。
 - Produces: 每个稳健性条目均包含 `scenario_id`、`dimension`、`status`、`reasons`、`metrics`；`build_evidence_matrix`（构建证据矩阵）保留三种状态的原始行。
 
-- [ ] **Step 1: 编写能力降级和并存状态失败测试**
+- [x] **Step 1: 编写能力降级和并存状态失败测试**
 
   ```python
   def test_standard_analysis_keeps_pass_fail_and_evidence_insufficient_together(
@@ -590,7 +591,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
       assert result["cross_scenario"]["status"] == "evidence_insufficient"
   ```
 
-- [ ] **Step 2: 运行测试并确认当前入口依赖本地准备工作区**
+- [x] **Step 2: 运行测试并确认当前入口依赖本地准备工作区**
 
   Run:
 
@@ -600,7 +601,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   Expected: FAIL，因为当前 `run_deterministic_analysis`（运行确定性分析）要求 `preparation_workspace`（准备工作区）、七个本地运行和市场快照。
 
-- [ ] **Step 3: 以登记与分析计划编排标准入口**
+- [x] **Step 3: 以登记与分析计划编排标准入口**
 
   新增 `run_standard_analysis`，它读取一个来源登记，调用 `expand_analysis_plan`，要求登记中的场景是分析计划场景的非空子集且包含基线；不要求两个或七个场景。分析标识只由来源登记字节摘要、展开计划摘要、基准清单摘要和所有已验证来源清单摘要决定。
 
@@ -630,7 +631,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   `_run_standard_analysis_to_workspace`（运行到工作区）必须复用 `calculate_return_metrics`、`align_three_way_benchmarks`、`_fixed_and_rolling`、`_bootstrap`、`_historical_stress`、`_position_shocks` 和 `_cvar`，不复制算法。它应将每个登记来源的 `source_type`、清单摘要、`snapshot_id` 和 `capabilities` 写入 `source-results.json` 与返回摘要。
 
-- [ ] **Step 4: 将依赖能力的检查转换为明确的证据不足行**
+- [x] **Step 4: 将依赖能力的检查转换为明确的证据不足行**
 
   保持只使用四张共同表的检查运行：收益、回撤、双基准、固定期、滚动期、区块抽样、历史压力、普通持仓冲击和 CVaR（条件风险价值）。以下路径必须由能力门禁包装：
 
@@ -660,7 +661,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
   - `_position_shocks` 的 `use_stop_failure_loss=true` 保持现有 `stop_failure_loss_missing_at_source`；其他冲击继续使用共同持仓表。
   - 跨场景比较在登记只有一个场景时写一条 `cross_scenario` / `single_registered_source` 的证据不足行，而不是阻断 bootstrap（区块抽样）和 CVaR（条件风险价值）。
 
-- [ ] **Step 5: 完成聚合规则与回归测试**
+- [x] **Step 5: 完成聚合规则与回归测试**
 
   `pre_vibe_recommendation`（Vibe 前推荐）和标准输出必须将 `fail` 与 `evidence_insufficient` 分别计数；只有基线通过、严重维度无失败且证据不足计数为零时才能返回 `recommend_joinquant_confirmation`（建议聚宽确认），否则返回 `revise_before_joinquant`（修改后再评估）。
 
@@ -672,7 +673,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   Expected: PASS；现有本地确定性分析回归保持通过，新标准入口覆盖单来源、多来源、失败和证据不足并存。
 
-- [ ] **Step 6: 提交本任务**
+- [x] **Step 6: 提交本任务**
 
   ```powershell
   git add .agents/skills/analyze-quant-robustness/scripts/quant_analysis/unified_analysis.py .agents/skills/analyze-quant-robustness/scripts/quant_analysis/evidence.py tests/quant_analysis/test_unified_analysis.py
@@ -697,7 +698,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 - Produces: `write_analysis_delivery(workspace: Path) -> dict[str, Any]` 支持标准输出并写入 `standard-strategy-analysis-report.md` 与 `recommendation.json`。
 - Produces: 唯一公开命令 `.agents/skills/analyze-quant-robustness/scripts/analyze_quant_robustness.py run --repository <repo> --source-registry <relative-json>`；成功时打印一行 JSON（结构化数据）状态。
 
-- [ ] **Step 1: 为命令行和报告可追溯性写失败测试**
+- [x] **Step 1: 为命令行和报告可追溯性写失败测试**
 
   ```python
   def test_standard_report_lists_source_identity_and_capabilities(tmp_path: Path) -> None:
@@ -725,7 +726,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
       assert "--source-registry" in completed.stderr
   ```
 
-- [ ] **Step 2: 运行测试并确认当前入口仍要求旧参数**
+- [x] **Step 2: 运行测试并确认当前入口仍要求旧参数**
 
   Run:
 
@@ -735,7 +736,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   Expected: FAIL，因为报告只陈述本地探索性研究，CLI（命令行接口）只支持 `--preparation-workspace` 和重复 `--source`。
 
-- [ ] **Step 3: 实现唯一 Skill（技能）CLI（命令行接口）并删除旧入口**
+- [x] **Step 3: 实现唯一 Skill（技能）CLI（命令行接口）并删除旧入口**
 
   公开入口只接受一个仓库相对 `--source-registry`，并提供独立 `report`（报告）动作；删除 `--preparation-workspace`、重复 `--source` 和旧模块入口，避免退回运行目录猜测。
 
@@ -766,7 +767,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
       return 0
   ```
 
-- [ ] **Step 4: 报告来源能力与三态证据，不误称正式裁判**
+- [x] **Step 4: 报告来源能力与三态证据，不误称正式裁判**
 
   在 `render_analysis_report` 开头基于 `analysis["schema_version"]` 选择标题；标准版本必须显示来源表、每行的类型/清单 SHA256（完整性摘要）/模拟快照/归因状态，以及证据矩阵的通过、失败、证据不足计数。`build_recommendation` 对标准版本把权限写为 `read_only_analysis`（只读分析），并保留“不是 JoinQuant（聚宽）正式回测、模拟交易或最终验收”的文字。
 
@@ -786,7 +787,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   `write_analysis_delivery` 必须在标准版本读取 `deterministic-analysis.json` 后写入 `standard-strategy-analysis-report.md`、`recommendation.json` 和既有 `vibe-evidence.json`；不能写回任何登记来源。
 
-- [ ] **Step 5: 创建最小公开 Skill（技能）和布局测试**
+- [x] **Step 5: 创建最小公开 Skill（技能）和布局测试**
 
   `SKILL.md` 是唯一公开流程入口，只声明输入、内部命令、三态停止条件与只读边界；调用者不得绕过该 Skill（技能）直接编排 Python（编程语言）参数。它不保存数据，也不调用聚宽认证或同步。其内部命令为：
 
@@ -810,7 +811,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   在 `tests/test_skill_layout.py` 添加新 Skill（技能）断言，按现有三个 Skill（技能）的同一结构验证真实目录、`openai.yaml`、相对符号链接解析结果和两侧 `SKILL.md` 摘要相等。
 
-- [ ] **Step 6: 运行报告、入口与布局回归**
+- [x] **Step 6: 运行报告、入口与布局回归**
 
   Run:
 
@@ -820,7 +821,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   Expected: PASS；旧本地报告继续可用，标准报告包含来源能力与快照，CLI（命令行接口）不接受隐式来源。
 
-- [ ] **Step 7: 提交本任务**
+- [x] **Step 7: 提交本任务**
 
   ```powershell
   git add .agents/skills/analyze-quant-robustness/scripts/quant_analysis .agents/skills/analyze-quant-robustness/scripts/analyze_quant_robustness.py tests/quant_analysis/test_reporting.py tests/test_skill_layout.py .agents/skills/analyze-quant-robustness .claude/skills/analyze-quant-robustness
@@ -839,7 +840,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 - Consumes: 已创建的 `analyze-quant-robustness` Skill（技能）、三个固定测试来源、显式来源登记和项目 `.venv`。
 - Produces: 可重复的离线 E2E（端到端）测试，证明没有网络访问、没有上游调用、所有来源摘要未改变且同时产生 JSON（结构化数据）与 Markdown（标记文档）交付。
 
-- [ ] **Step 1: 写真实 Skill（技能）入口的失败 E2E（端到端）测试**
+- [x] **Step 1: 写真实 Skill（技能）入口的失败 E2E（端到端）测试**
 
   在临时仓库目录放入三个最小来源和一份已知的分析计划/基准清单；使用 `subprocess.run(command, shell=False)` 调用 Task 5 的两个公开命令。对来源目录先后计算树摘要。
 
@@ -863,7 +864,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
       assert {row["status"] for row in analysis["evidence_rows"]} >= {"pass", "evidence_insufficient"}
   ```
 
-- [ ] **Step 2: 运行 E2E（端到端）测试并确认当前发布入口不存在**
+- [x] **Step 2: 运行 E2E（端到端）测试并确认当前发布入口不存在**
 
   Run:
 
@@ -873,7 +874,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   Expected: FAIL，直到 Task 5 的 Skill（技能）入口、标准注册表和报告文件全部存在。
 
-- [ ] **Step 3: 固化三类来源、缺失归因与多场景通过覆盖**
+- [x] **Step 3: 固化三类来源、缺失归因与多场景通过覆盖**
 
   `_prepare_three_source_fixture`（准备三来源样例）必须复用现有本地结果包测试帮助函数和仓库内小型聚宽回测/模拟归档；它不能下载、同步或创建 `.local` 以外的运行产物。测试至少覆盖：
 
@@ -888,7 +889,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   若真实归档日期不足以满足 `historical_stress`（历史压力）定义，样例分析计划必须使用其共同日期范围；对 CVaR（条件风险价值）保留足够尾部样本的通过定义。不要篡改归档或放宽来源验证。
 
-- [ ] **Step 4: 运行全部定向回归与格式检查**
+- [x] **Step 4: 运行全部定向回归与格式检查**
 
   Run:
 
@@ -899,7 +900,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   Expected: 全部 PASS，`git diff --check` 无输出。
 
-- [ ] **Step 5: 标记已完成的 OpenSpec（开放规范）任务并提交**
+- [x] **Step 5: 标记已完成的 OpenSpec（开放规范）任务并提交**
 
   仅在 Step 4 成功后，将当前 change 的 `tasks.md` 中 1.1–5.3 标为完成；5.4 仍等待完整验证确认。然后提交：
 
@@ -908,7 +909,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
   git commit -m "test: 覆盖标准策略分析端到端流程"
   ```
 
-- [ ] **Step 6: 请求完整验证授权并运行完整验证**
+- [x] **Step 6: 请求完整验证授权并运行完整验证**
 
   向用户说明 `build-and-verify:build-and-verify`（构建与验证）完整模式会运行仓库所有检查，取得本次明确确认后执行：
 
@@ -918,7 +919,7 @@ base-ref: 272a6bca1246b965bb36cf91902086fe7d7d9bc8
 
   Expected: 完整验证通过。若出现测试、构建或运行异常，先加载 `superpowers:systematic-debugging`（系统化调试）技能，完成根因调查后再修改代码。
 
-- [ ] **Step 7: 记录完整验证并完成最后提交**
+- [x] **Step 7: 记录完整验证并完成最后提交**
 
   将完整验证命令、日期、结果和无法覆盖项写入现有 `tasks.md` 的 5.4 下方；仅当完整验证通过时勾选 5.4，然后提交。
 
