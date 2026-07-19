@@ -77,6 +77,8 @@ class AnalysisSource:
     kind: str
     schema_version: int | str
     manifest: Mapping[str, object]
+    data_prefix: str = "data"
+    snapshot_id: str | None = None
     authority: str | None = None
     backend: str | None = None
     formula_version: str | None = None
@@ -222,14 +224,23 @@ def _validate_local_files(root: Path, document: Mapping[str, object]) -> None:
             raise AnalysisManifestError(f"datasets.{name} row count mismatch")
 
 
-def _validate_joinquant_document(document: Mapping[str, object]) -> None:
+def _validate_joinquant_document(
+    document: Mapping[str, object], *, snapshot_id: str | None
+) -> str:
     _validate_schema(document, _JOINQUANT_SCHEMA, "joinquant manifest")
     object_identity = cast(Mapping[str, object], document["object"])
-    if object_identity.get("kind") != "backtest":
-        raise AnalysisManifestError("joinquant manifest is not a backtest")
+    object_kind = object_identity.get("kind")
+    if object_kind not in {"backtest", "simulation"}:
+        raise AnalysisManifestError("joinquant manifest is not an analysis source")
+    if object_kind == "simulation" and snapshot_id is None:
+        raise AnalysisManifestError("joinquant simulation requires an explicit snapshot_id")
+    if object_kind == "backtest" and snapshot_id is not None:
+        raise AnalysisManifestError("joinquant backtest cannot use snapshot_id")
     gate = cast(Mapping[str, object], document["gate"])
     gate_exceptions = cast(list[object], gate["exceptions"])
     allowed_exceptions = {"attribution_log:missing_at_source"}
+    if object_kind == "simulation":
+        allowed_exceptions.add("performance_profile:unsupported_api_version")
     if gate.get("status") != "pass" or any(
         item not in allowed_exceptions for item in gate_exceptions
     ):
@@ -241,10 +252,11 @@ def _validate_joinquant_document(document: Mapping[str, object]) -> None:
             raise AnalysisManifestError(f"joinquant datasets.{name} is incomplete")
         if "rows" not in entry:
             raise AnalysisManifestError(f"joinquant datasets.{name}.rows is missing")
+    return str(object_kind)
 
 
 def _joinquant_parquet_reference(
-    entry: Mapping[str, object], name: str
+    entry: Mapping[str, object], name: str, data_prefix: str
 ) -> Mapping[str, object] | None:
     files = entry.get("files", [])
     if not isinstance(files, list):
@@ -253,7 +265,7 @@ def _joinquant_parquet_reference(
         item
         for item in files
         if isinstance(item, Mapping)
-        and item.get("path") == f"data/{name}.parquet"
+        and item.get("path") == f"{data_prefix}/{name}.parquet"
         and item.get("format") == "parquet"
     ]
     if len(matches) > 1:
@@ -263,12 +275,14 @@ def _joinquant_parquet_reference(
     return None if not matches else matches[0]
 
 
-def _validate_joinquant_files(root: Path, document: Mapping[str, object]) -> None:
+def _validate_joinquant_files(
+    root: Path, document: Mapping[str, object], *, data_prefix: str
+) -> None:
     datasets = cast(Mapping[str, object], document["datasets"])
     for name in CORE_DATASETS:
         entry = _object(datasets[name], f"joinquant datasets.{name}")
         rows = int(entry["rows"])
-        reference = _joinquant_parquet_reference(entry, name)
+        reference = _joinquant_parquet_reference(entry, name, data_prefix)
         if reference is None:
             if rows != 0 or entry.get("verified_empty") is not True:
                 raise AnalysisManifestError(
@@ -296,7 +310,38 @@ def _validate_joinquant_files(root: Path, document: Mapping[str, object]) -> Non
             raise AnalysisManifestError(f"joinquant datasets.{name} row count mismatch")
 
 
-def open_analysis_source(result_dir: Path) -> AnalysisSource:
+def _validate_simulation_snapshot(
+    document: Mapping[str, object], snapshot_id: str
+) -> str:
+    streams = _object(document.get("streams"), "joinquant streams")
+    snapshots = _object(streams.get("snapshots"), "joinquant streams.snapshots")
+    data = _object(streams.get("data"), "joinquant streams.data")
+    if snapshots.get("cursor") != snapshot_id or data.get("cursor") != snapshot_id:
+        raise AnalysisManifestError("joinquant simulation registered snapshot is stale")
+    prefix = f"snapshots/{snapshot_id}/"
+    datasets = _object(document.get("datasets"), "joinquant datasets")
+    for name in CORE_DATASETS:
+        entry = _object(datasets.get(name), f"joinquant datasets.{name}")
+        files = entry.get("files")
+        if not isinstance(files, list):
+            raise AnalysisManifestError(f"joinquant datasets.{name}.files is invalid")
+        for reference in files:
+            if not isinstance(reference, Mapping) or not isinstance(
+                reference.get("path"), str
+            ):
+                raise AnalysisManifestError(
+                    f"joinquant datasets.{name}.files is invalid"
+                )
+            if not str(reference["path"]).startswith(prefix):
+                raise AnalysisManifestError(
+                    "joinquant simulation data is outside the registered snapshot"
+                )
+    return f"{prefix}data"
+
+
+def open_analysis_source(
+    result_dir: Path, *, snapshot_id: str | None = None
+) -> AnalysisSource:
     root = Path(result_dir).resolve()
     manifest_path = root / "manifest.json"
     try:
@@ -307,9 +352,13 @@ def open_analysis_source(result_dir: Path) -> AnalysisSource:
         raise AnalysisManifestError("analysis manifest must be an object")
     version = document.get("schema_version")
     if version == 1 and not isinstance(version, bool):
-        _validate_joinquant_document(document)
-        _validate_joinquant_files(root, document)
-        kind = "joinquant_backtest"
+        object_kind = _validate_joinquant_document(document, snapshot_id=snapshot_id)
+        data_prefix = "data"
+        if object_kind == "simulation":
+            assert snapshot_id is not None
+            data_prefix = _validate_simulation_snapshot(document, snapshot_id)
+        _validate_joinquant_files(root, document, data_prefix=data_prefix)
+        kind = f"joinquant_{object_kind}"
     elif version == "local-backtest/1":
         validate_local_manifest_document(document)
         if cast(Mapping[str, object], document["gate"])["status"] != "pass":
@@ -329,6 +378,8 @@ def open_analysis_source(result_dir: Path) -> AnalysisSource:
         kind=kind,
         schema_version=version,
         manifest=document,
+        data_prefix=data_prefix if version == 1 and not isinstance(version, bool) else "data",
+        snapshot_id=snapshot_id if kind == "joinquant_simulation" else None,
         authority=(
             str(document["authority"])
             if isinstance(document.get("authority"), str)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
+from datetime import date
 from pathlib import Path
 
 import numpy as np
@@ -362,6 +363,14 @@ def test_local_research_package_exposes_identity_core_and_named_extension(
         assert database.table_names == ("results", "balances", "positions", "orders")
         assert database.connection.sql("select count(*) from results").fetchone() == (2,)
         assert database.extension("signals").fetchall() == [("signal-1", 0.5)]
+        assert database.reference_status("risk") == (
+            "missing_at_source",
+            "local-research-package/2",
+        )
+        assert database.reference_status("period_risks") == (
+            "missing_at_source",
+            "local-research-package/2",
+        )
         with pytest.raises(KeyError, match="unknown"):
             database.extension("unknown")
 
@@ -514,6 +523,52 @@ def test_joinquant_source_builds_six_read_only_logical_views(repo_root: Path) ->
         assert dict((name, kind) for name, kind, *_ in columns)["cancel_time"] == "VARCHAR"
 
     assert _tree_sha(root) == before
+
+
+def test_joinquant_simulation_requires_and_pins_one_snapshot(repo_root: Path) -> None:
+    root = repo_root / "joinquant/strategies/strategy-001/simulations/simulation-001"
+    snapshot_id = "5cc582a778eca2ddc481282b"
+    before = _tree_sha(root)
+
+    with pytest.raises(AnalysisManifestError, match="explicit snapshot_id"):
+        open_analysis_source(root)
+
+    with open_analysis_database(root, snapshot_id=snapshot_id) as database:
+        assert database.source.kind == "joinquant_simulation"
+        assert database.source.snapshot_id == snapshot_id
+        assert database.connection.sql("select count(*) from results").fetchone()[0] > 0
+        assert database.connection.sql("select count(*) from risk").fetchone() == (1,)
+        risk_fields = [
+            row[0] for row in database.connection.sql("describe risk").fetchall()
+        ]
+        assert "intraday_return" not in risk_fields
+        assert "monthly_return" not in risk_fields
+        assert "sharpe" in risk_fields
+        final_day = database.connection.sql(
+            "select trading_date, cumulative_returns from strategy_daily_returns "
+            "where trading_date = date '2026-07-17'"
+        ).fetchall()
+        assert final_day == [(date(2026, 7, 17), -0.014533449871168003)]
+
+    assert _tree_sha(root) == before
+
+
+def test_joinquant_simulation_rejects_data_outside_registered_snapshot(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    source = (
+        repo_root / "joinquant/strategies/strategy-001/simulations/simulation-001"
+    )
+    document = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
+    document["datasets"]["results"]["files"][1]["path"] = (
+        "snapshots/other-snapshot/data/results.parquet"
+    )
+    root = tmp_path / "simulation"
+    root.mkdir()
+    (root / "manifest.json").write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(AnalysisManifestError, match="outside the registered snapshot"):
+        open_analysis_source(root, snapshot_id="5cc582a778eca2ddc481282b")
 
 
 def test_joinquant_legal_missing_attribution_exception_remains_read_only(
