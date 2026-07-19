@@ -112,6 +112,34 @@ def test_registry_opens_only_three_explicit_source_kinds(
     assert registry.sources[2].capabilities["official_risk"][
         "source_only_extra_fields"
     ] == ["intraday_return", "monthly_return"]
+    for source in registry.sources[1:]:
+        attribution = source.capabilities["attribution"]
+        assert attribution["status"] == "available"
+        assert attribution["time_field"] == "current_dt"
+        assert attribution["event_field"] == "event"
+        assert attribution["rows"] > 0
+        assert attribution["time_range"]["start"] <= attribution["time_range"]["end"]
+
+
+def test_registry_marks_tampered_attribution_evidence_insufficient(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    root, entries = _prepared_sources(repo_root, tmp_path)
+    backtest = root / "sources/backtest"
+    attribution_path = next(
+        (backtest / str(reference["path"]))
+        for reference in json.loads(
+            (backtest / "manifest.json").read_text(encoding="utf-8")
+        )["datasets"]["attribution_log"]["files"]
+        if reference["format"] == "parquet"
+    )
+    attribution_path.write_bytes(attribution_path.read_bytes() + b"drift")
+
+    registry = load_source_registry(root, _registry(root, entries))
+
+    attribution = registry.sources[1].capabilities["attribution"]
+    assert attribution["status"] == "evidence_insufficient"
+    assert attribution["reason"] == "digest_or_size_mismatch"
 
 
 @pytest.mark.parametrize(

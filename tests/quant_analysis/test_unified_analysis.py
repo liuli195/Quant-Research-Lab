@@ -20,7 +20,10 @@ from scripts.research.quant_analysis.unified_analysis import (
     calculate_return_metrics,
     deterministic_next_action,
     evaluate_metrics,
+    load_registered_scenario,
 )
+from scripts.research.quant_analysis.source_registry import load_source_registry
+from tests.quant_analysis.test_source_registry import _prepared_sources, _registry
 
 
 SCENARIO_IDS = (
@@ -145,6 +148,40 @@ def test_calculate_return_metrics_compounds_and_measures_drawdown() -> None:
     assert metrics["observations"] == 3
     assert metrics["cagr"] is not None
     assert metrics["calmar"] is not None
+
+
+def test_registered_sources_share_the_four_common_facts(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    root, entries = _prepared_sources(repo_root, tmp_path)
+    registry = load_source_registry(root, _registry(root, entries))
+
+    scenarios = [
+        load_registered_scenario(source, analysis_params={})
+        for source in registry.sources
+    ]
+
+    assert [scenario.source_type for scenario in scenarios] == [
+        "local_research",
+        "joinquant_backtest",
+        "joinquant_simulation",
+    ]
+    assert all(not scenario.returns.empty for scenario in scenarios)
+    assert all(
+        {"date", "total_value", "net_value", "cash", "aval_cash"}
+        .issubset(scenario.balances.columns)
+        for scenario in scenarios
+    )
+    assert scenarios[0].attribution_status == "missing_at_source"
+    assert scenarios[0].events.empty
+    for scenario in scenarios[1:]:
+        assert scenario.attribution_status == "available"
+        assert {"time", "event_time", "date", "event_type", "reason_code", "security"}.issubset(
+            scenario.events.columns
+        )
+        assert not scenario.events.empty
+        assert scenario.events["event_time"].notna().all()
+        assert "run_start" in set(scenario.events["event_type"])
 
 
 def test_aligns_strategy_and_both_benchmarks_on_one_shared_calendar() -> None:

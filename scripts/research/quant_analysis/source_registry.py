@@ -8,6 +8,8 @@ from typing import Mapping
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
+import pandas as pd
+import pyarrow.parquet as pq
 
 from scripts.research.analysis_data.manifest import (
     AnalysisManifestError,
@@ -83,13 +85,140 @@ def _validate_document(document: Mapping[str, object]) -> None:
         raise SourceRegistryError(f"source registry schema validation failed: {exc.message}") from exc
 
 
-def _attribution_status(source: AnalysisSource) -> str:
+def _evidence_insufficient(reason: str) -> Mapping[str, object]:
+    return {"status": "evidence_insufficient", "reason": reason}
+
+
+def _attribution_entry(source: AnalysisSource) -> Mapping[str, object] | None:
     if source.kind == "local_research":
         extensions = source.manifest.get("extensions")
-        return "declared" if isinstance(extensions, Mapping) and "attribution_log" in extensions else "missing_at_source"
+        entry = extensions.get("attribution_log") if isinstance(extensions, Mapping) else None
+        return entry if isinstance(entry, Mapping) else None
     datasets = source.manifest.get("datasets")
     entry = datasets.get("attribution_log") if isinstance(datasets, Mapping) else None
-    return "declared" if isinstance(entry, Mapping) and entry.get("status") == "complete" else "missing_at_source"
+    return entry if isinstance(entry, Mapping) and entry.get("status") == "complete" else None
+
+
+def _attribution_path(
+    source: AnalysisSource, reference: Mapping[str, object]
+) -> Path | None:
+    value = reference.get("path")
+    if not isinstance(value, str) or not value:
+        return None
+    relative = Path(value)
+    if relative.is_absolute() or ".." in relative.parts:
+        return None
+    path = (source.root / relative).resolve()
+    if not path.is_relative_to(source.root):
+        return None
+    if source.kind.startswith("joinquant_"):
+        data_root = (source.root / source.data_prefix).resolve()
+        if not path.is_relative_to(data_root):
+            return None
+    return path
+
+
+def _source_result_range(source: AnalysisSource) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    path = (source.root / source.data_prefix / "results.parquet").resolve()
+    if not path.is_file():
+        return None
+    try:
+        values = pd.to_datetime(
+            pq.read_table(path, columns=["time"]).to_pandas()["time"],
+            errors="coerce",
+            format="mixed",
+        )
+    except Exception:
+        return None
+    if values.empty or values.isna().any():
+        return None
+    return pd.Timestamp(values.min()), pd.Timestamp(values.max())
+
+
+def _attribution_capability(source: AnalysisSource) -> Mapping[str, object]:
+    entry = _attribution_entry(source)
+    if entry is None:
+        return {"status": "missing_at_source"}
+    files = entry.get("files")
+    if not isinstance(files, list):
+        return _evidence_insufficient("invalid_file_declaration")
+    references = [
+        item
+        for item in files
+        if isinstance(item, Mapping) and item.get("format") == "parquet"
+    ]
+    if len(references) != 1:
+        return _evidence_insufficient("invalid_parquet_declaration")
+    reference = references[0]
+    path = _attribution_path(source, reference)
+    if path is None or not path.is_file():
+        return _evidence_insufficient("invalid_source_path")
+    digest = reference.get("sha256")
+    expected_bytes = reference.get("bytes")
+    expected_rows = reference.get("rows")
+    if (
+        not isinstance(digest, str)
+        or not isinstance(expected_bytes, int)
+        or not isinstance(expected_rows, int)
+        or path.stat().st_size != expected_bytes
+        or _sha256(path) != digest
+    ):
+        return _evidence_insufficient("digest_or_size_mismatch")
+    try:
+        parquet = pq.ParquetFile(path)
+        physical_rows = parquet.metadata.num_rows
+        fields = tuple(parquet.schema_arrow.names)
+    except Exception:
+        return _evidence_insufficient("invalid_parquet")
+    if physical_rows != expected_rows or physical_rows <= 0:
+        return _evidence_insufficient("row_count_mismatch")
+    time_field = "time" if source.kind == "local_research" else "current_dt"
+    event_field = "event_type" if source.kind == "local_research" else "event"
+    if time_field not in fields or event_field not in fields:
+        return _evidence_insufficient("required_event_fields_missing")
+    try:
+        frame = pq.read_table(path, columns=[time_field, event_field]).to_pandas()
+        timestamps = pd.to_datetime(frame[time_field], errors="coerce", format="mixed")
+    except Exception:
+        return _evidence_insufficient("invalid_event_time")
+    if timestamps.isna().any() or frame[event_field].isna().any() or (
+        frame[event_field].astype(str).str.len() == 0
+    ).any():
+        return _evidence_insufficient("invalid_event_time_or_identity")
+    source_range = _source_result_range(source)
+    event_start = pd.Timestamp(timestamps.min())
+    event_end = pd.Timestamp(timestamps.max())
+    if source_range is None or event_start > event_end or (
+        event_end < source_range[0] or event_start > source_range[1]
+    ):
+        return _evidence_insufficient("event_time_range_mismatch")
+    return {
+        "status": "available",
+        "path": str(reference["path"]),
+        "sha256": digest,
+        "bytes": expected_bytes,
+        "rows": physical_rows,
+        "time_field": time_field,
+        "event_field": event_field,
+        "reason_field": (
+            "reason_code"
+            if source.kind == "local_research" and "reason_code" in fields
+            else "reason"
+            if source.kind.startswith("joinquant_") and "reason" in fields
+            else None
+        ),
+        "security_field": (
+            "security"
+            if "security" in fields
+            else "etf"
+            if "etf" in fields
+            else None
+        ),
+        "time_range": {
+            "start": event_start.isoformat(),
+            "end": event_end.isoformat(),
+        },
+    }
 
 
 def _capabilities(source: AnalysisSource) -> Mapping[str, Mapping[str, object]]:
@@ -105,7 +234,7 @@ def _capabilities(source: AnalysisSource) -> Mapping[str, Mapping[str, object]]:
     return {
         "common_facts": {"status": "available"},
         "official_risk": official_risk,
-        "attribution": {"status": _attribution_status(source)},
+        "attribution": _attribution_capability(source),
         "cost_execution": {"status": "missing_at_source"},
     }
 

@@ -7,7 +7,7 @@ import math
 import os
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -23,6 +23,7 @@ from .benchmarks import calculate_benchmark_statistics
 from .cvar import calculate_cvar, rolling_compound_returns
 from .evidence import ScenarioResult, build_evidence_matrix, evidence_digest
 from .robustness import block_bootstrap, summarize_bootstrap
+from .source_registry import RegisteredSource
 
 
 BENCHMARK_IDS = (
@@ -79,6 +80,10 @@ class ScenarioInput:
     events: pd.DataFrame
     params: Mapping[str, object]
     performance: Mapping[str, object]
+    source_type: str = "local_research"
+    source_manifest_sha256: str = ""
+    capabilities: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
+    attribution_status: str = "available"
 
 
 def _atomic_json(path: Path, value: object) -> None:
@@ -251,14 +256,10 @@ def _find_attribution_file(result_dir: Path, manifest: Mapping[str, object]) -> 
     return path
 
 
-def _load_scenario(result_dir: Path) -> ScenarioInput:
-    result_dir = Path(result_dir).resolve()
-    source = open_analysis_source(result_dir)
-    manifest = dict(source.manifest)
-    run = manifest.get("run")
-    if not isinstance(run, Mapping):
-        raise UnifiedAnalysisError("result run identity is missing")
-    with open_analysis_database(result_dir) as database:
+def _load_common_facts(
+    result_dir: Path, *, snapshot_id: str | None = None
+) -> tuple[pd.Series, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    with open_analysis_database(result_dir, snapshot_id=snapshot_id) as database:
         returns_frame = database.connection.sql(
             "select trading_date, daily_returns from strategy_daily_returns "
             "where comparable order by trading_date"
@@ -276,6 +277,17 @@ def _load_scenario(result_dir: Path) -> ScenarioInput:
     for frame in (balances, positions, orders):
         if "time" in frame:
             frame["date"] = pd.to_datetime(frame["time"]).dt.normalize()
+    return returns, balances, positions, orders
+
+
+def _load_scenario(result_dir: Path) -> ScenarioInput:
+    result_dir = Path(result_dir).resolve()
+    source = open_analysis_source(result_dir)
+    manifest = dict(source.manifest)
+    run = manifest.get("run")
+    if not isinstance(run, Mapping):
+        raise UnifiedAnalysisError("result run identity is missing")
+    returns, balances, positions, orders = _load_common_facts(result_dir)
     events = pq.read_table(_find_attribution_file(result_dir, manifest)).to_pandas()
     events["event_time"] = pd.to_datetime(events["time"])
     events["date"] = events["event_time"].dt.normalize()
@@ -292,6 +304,94 @@ def _load_scenario(result_dir: Path) -> ScenarioInput:
         events=events,
         params=params,
         performance=performance,
+    )
+
+
+def _registered_run_id(registered: RegisteredSource) -> str:
+    identity = registered.source.manifest.get("object")
+    if not isinstance(identity, Mapping):
+        raise UnifiedAnalysisError("registered source identity is missing")
+    key = "run_id" if registered.source.kind == "local_research" else "local_id"
+    value = identity.get(key)
+    if not isinstance(value, str) or not value:
+        raise UnifiedAnalysisError("registered source run identity is missing")
+    return value
+
+
+def _registered_attribution_events(registered: RegisteredSource) -> pd.DataFrame:
+    capability = registered.capabilities["attribution"]
+    if capability.get("status") != "available":
+        return pd.DataFrame()
+    relative = Path(str(capability["path"]))
+    path = (registered.registration.root / relative).resolve()
+    if (
+        relative.is_absolute()
+        or ".." in relative.parts
+        or not path.is_relative_to(registered.registration.root)
+        or not path.is_file()
+        or _sha256(path) != capability["sha256"]
+    ):
+        raise UnifiedAnalysisError("registered attribution evidence changed")
+    time_field = str(capability["time_field"])
+    event_field = str(capability["event_field"])
+    reason_field = capability.get("reason_field")
+    security_field = capability.get("security_field")
+    columns = [
+        time_field,
+        event_field,
+        *([str(reason_field)] if isinstance(reason_field, str) else []),
+        *([str(security_field)] if isinstance(security_field, str) else []),
+    ]
+    frame = pq.read_table(path, columns=list(dict.fromkeys(columns))).to_pandas()
+    event_time = pd.to_datetime(frame[time_field], errors="coerce", format="mixed")
+    if event_time.isna().any():
+        raise UnifiedAnalysisError("registered attribution evidence has invalid event times")
+    events = pd.DataFrame(
+        {
+            "time": frame[time_field],
+            "event_time": event_time,
+            "date": event_time.dt.normalize(),
+            "event_type": frame[event_field].fillna("").astype(str),
+            "reason_code": (
+                frame[str(reason_field)].fillna("").astype(str)
+                if isinstance(reason_field, str)
+                else ""
+            ),
+            "security": (
+                frame[str(security_field)].fillna("").astype(str)
+                if isinstance(security_field, str)
+                else ""
+            ),
+        }
+    )
+    if events["event_type"].eq("").any():
+        raise UnifiedAnalysisError("registered attribution evidence has invalid event identities")
+    return events
+
+
+def load_registered_scenario(
+    registered: RegisteredSource, *, analysis_params: Mapping[str, object]
+) -> ScenarioInput:
+    registration = registered.registration
+    returns, balances, positions, orders = _load_common_facts(
+        registration.root, snapshot_id=registration.snapshot_id
+    )
+    attribution_status = str(registered.capabilities["attribution"]["status"])
+    return ScenarioInput(
+        scenario_id=registration.scenario_id,
+        run_id=_registered_run_id(registered),
+        result_dir=registration.root,
+        returns=returns,
+        balances=balances,
+        positions=positions,
+        orders=orders,
+        events=_registered_attribution_events(registered),
+        params=dict(analysis_params),
+        performance={},
+        source_type=registration.source_type,
+        source_manifest_sha256=registration.manifest_sha256,
+        capabilities=registered.capabilities,
+        attribution_status=attribution_status,
     )
 
 
