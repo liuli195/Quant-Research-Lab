@@ -4,7 +4,6 @@ import argparse
 import hashlib
 import json
 import os
-import sys
 import time
 from pathlib import Path
 
@@ -33,13 +32,6 @@ from joinquant_sync.browser import (
     persist_authenticated_session,
 )
 from joinquant_sync.query import export_csv, query_rows
-from joinquant_sync.scheduler import (
-    SchedulerError,
-    install_scheduler,
-    scheduler_status,
-    uninstall_scheduler,
-)
-from joinquant_sync.scheduled_sync import run_scheduled_sync
 from joinquant_sync.selftest import run_self_test
 from joinquant_sync.sync_pipeline import (
     commit_paid_log_supplement,
@@ -92,9 +84,6 @@ def build_parser() -> argparse.ArgumentParser:
     active_sync.add_argument("--repository", default=".")
     active_sync.add_argument("--profile")
 
-    scheduled_sync = commands.add_parser("scheduled-sync-pr")
-    scheduled_sync.add_argument("--repository", required=True)
-
     list_targets = commands.add_parser("list-targets")
     list_targets.add_argument("--strategy", required=True)
     list_targets.add_argument("--profile")
@@ -131,13 +120,6 @@ def build_parser() -> argparse.ArgumentParser:
     paid_download.add_argument("--destination", required=True)
     paid_download.add_argument("--profile")
 
-    schedule_install = commands.add_parser("schedule-install")
-    schedule_install.add_argument("--repo-root", default=".")
-    schedule_install.add_argument("--task-name", default="JoinQuantArchiveSync")
-    schedule_status = commands.add_parser("schedule-status")
-    schedule_status.add_argument("--task-name", default="JoinQuantArchiveSync")
-    schedule_uninstall = commands.add_parser("schedule-uninstall")
-    schedule_uninstall.add_argument("--task-name", default="JoinQuantArchiveSync")
     self_test = commands.add_parser("self-test")
     self_test.add_argument("--repo-root", default=".")
     return parser
@@ -172,14 +154,6 @@ def main(argv: list[str] | None = None) -> int:
         except ProfileError as error:
             print(json.dumps({"status": "invalid_profile", "message": str(error)}))
             return 2
-    if args.command == "scheduled-sync-pr":
-        code, state = run_scheduled_sync(
-            Path(args.repository).resolve(),
-            python_exe=Path(sys.executable),
-            cli=Path(__file__).resolve(),
-        )
-        print(json.dumps(state, ensure_ascii=False))
-        return code
     if args.command == "auth":
         try:
             return _run_auth(args)
@@ -471,34 +445,6 @@ def main(argv: list[str] | None = None) -> int:
         except IntegrityError as error:
             print(json.dumps({"status": "integrity_failed", "message": str(error)}))
             return 3
-    if args.command == "schedule-install":
-        root = Path(args.repo_root).resolve()
-        command = [
-            str(root / ".venv" / "Scripts" / "python.exe"),
-            str(Path(__file__).resolve()),
-            "scheduled-sync-pr",
-            "--repository",
-            str(root),
-        ]
-        try:
-            install_scheduler(args.task_name, command)
-        except SchedulerError as error:
-            print(json.dumps({"status": "failed", "error": str(error)}))
-            return 1
-        print(json.dumps({"status": "installed", "task_name": args.task_name}))
-        return 0
-    if args.command == "schedule-status":
-        result = scheduler_status(args.task_name)
-        print(json.dumps(result, ensure_ascii=False))
-        return 0 if result.get("installed") else 1
-    if args.command == "schedule-uninstall":
-        try:
-            uninstall_scheduler(args.task_name)
-        except SchedulerError as error:
-            print(json.dumps({"status": "failed", "error": str(error)}))
-            return 1
-        print(json.dumps({"status": "uninstalled", "task_name": args.task_name}))
-        return 0
     if args.command == "self-test":
         print(json.dumps(run_self_test(), ensure_ascii=False))
         return 0

@@ -148,48 +148,26 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 - **WHEN** 调用者确认了指定运行、日志类型、范围和聚宽返回的积分价格
 - **THEN** 系统明确披露聚宽按完整日志固定计费且不提供远端分段下载；只有调用者确认完整日志范围、当次积分价格和本地保留范围后才下载一次完整日志，在本地只保留指定行范围，并把完整付费源文件、费用确认、选择范围和文件摘要写入清单
 
-### Requirement: 活动模拟交易必须按北京时间增量同步
-系统 SHALL 使用 Windows Task Scheduler（Windows 任务计划程序）每天北京时间 04:00 调用仓库 Skill（技能）内同一计划任务发布入口，扫描并增量同步全部活动模拟交易。发布入口 MUST 在任何归档写入前获取跨进程运行锁，检查 JoinQuant（聚宽）登录状态、GitHub 凭证和远端 `main` 基线，并只在仓库外的自动化专用 worktree（工作树）中执行同步、验证和 Git 操作；用户当前工作区无论是否有修改都 MUST NOT 被切换、暂存、提交或清理。
+### Requirement: 活动模拟交易必须由显式手动命令同步
+系统 MUST 只在调用者显式运行 `sync-active-simulations --repository <仓库路径>` 时扫描和增量同步全部活动模拟交易。该入口 MUST 复用既有采集、归档清单和完整性门禁；它 MUST NOT 创建或调用 Windows 任务计划程序、专用 worktree（工作树）、自动分支、Git（版本管理）提交或 PR Flow（拉取请求流程）。
 
-失败后 MUST 每 30 分钟重试，最多 3 次；仍失败时 MUST 记录失败并在次日从已验证游标继续。若本次同步在开始时干净的自动化 worktree 中产生部分变化后失败，系统 MUST 在记录失败后只回滚本次运行产生且位于已识别归档范围内的变化，使下一次重试回到相同已验证 Git 基线；运行前已存在的脏状态或范围外路径 MUST 原样保留并阻止自动清理。模拟交易关闭后 MUST 执行一次最终同步并停止跟踪。
+#### Scenario: 用户手动同步活动模拟交易
+- **WHEN** 调用者在目标仓库显式运行 `sync-active-simulations --repository .`
+- **THEN** 系统同步活动对象并返回每个对象的归档结果，且不暂存、提交、推送、创建 PR 或修改任务计划
 
-#### Scenario: 正常的每日增量同步
-- **WHEN** 04:00 计划任务发现两个活动模拟交易
-- **THEN** 系统在专用 worktree 中分别从各自已验证游标同步新增代码版本、快照、数据和日志，验证两个对象后才允许进入 Git 发布阶段
-
-#### Scenario: 用户当前工作区有未提交修改
-- **WHEN** 计划任务触发时用户当前工作区包含已跟踪或未跟踪修改
-- **THEN** 系统仍只在专用 worktree 中运行，不读取这些修改作为归档输入，也不切换、暂存、提交或清理用户当前工作区
-
-#### Scenario: 同一任务发生并发调用
-- **WHEN** 计划任务、重试或手动命令在已有同步运行持锁时再次调用发布入口
-- **THEN** 后来的调用以结构化 `run_locked` 状态安全跳过，不启动第二次同步、Git 或 PR 操作
-
-#### Scenario: 前置认证或远端基线检查失败
-- **WHEN** JoinQuant 登录、GitHub 凭证、PR Flow runtime（运行时）或远端 `main` 任一项不可用
-- **THEN** 系统在任何归档写入前返回失败状态和恢复入口，不创建提交、分支或 PR
-
-#### Scenario: 连续三次重试失败
-- **WHEN** 首次同步及之后三次 30 分钟间隔重试均失败
-- **THEN** 系统保留最后完整版本、记录每次失败阶段和最终恢复入口，并在次日从该版本继续而不覆盖已验证数据
-
-#### Scenario: 当前批次部分写入后失败
-- **WHEN** 一个活动对象已产生归档变化而另一个活动对象同步失败
-- **THEN** 系统不暂存或提交任何对象，记录失败后只回滚本次运行在自动化专用 worktree 中产生的已识别归档变化，使后续重试从批次开始前的已验证 Git 基线重新采集
-
-#### Scenario: 模拟交易关闭
-- **WHEN** 已跟踪模拟交易由活动变为关闭
-- **THEN** 系统完成一次包含结束状态的最终同步，验证归因 `run_end`（如源端实现），然后停止每日跟踪
+#### Scenario: 手动同步遇到对象失败
+- **WHEN** 任一活动模拟交易在手动同步中未通过采集或完整性门禁
+- **THEN** 系统返回失败对象和原因，不创建 Git 提交或 PR，并保留既有已验证归档
 
 ### Requirement: 浏览器认证和下载不得暴露明文凭证
-生产同步 MUST 使用仓库现有 Playwright（浏览器自动化）及仓库外专用持久浏览器目录复用登录状态。认证流程 MAY（可以）只在内存中读取聚宽域名的会话 Cookie（浏览器凭证），并使用 Windows DPAPI（数据保护接口）在仓库外保存只允许当前 Windows 用户解密的密文。系统 MUST NOT（不得）保存用户名、密码、明文 Cookie、`storage_state`（浏览器状态导出）或非聚宽域名 Cookie，也不得打印或提交任何凭证与浏览器配置；计划任务 MUST 不依赖 Codex 会话。大文件 MUST 通过浏览器下载事件进入临时目录而不能通过 Agent 对话传输。
+生产同步 MUST 使用仓库现有 Playwright（浏览器自动化）及仓库外专用持久浏览器目录复用登录状态。认证流程 MAY（可以）只在内存中读取聚宽域名的会话 Cookie（浏览器凭证），并使用 Windows DPAPI（数据保护接口）在仓库外保存只允许当前 Windows 用户解密的密文。系统 MUST NOT（不得）保存用户名、密码、明文 Cookie、`storage_state`（浏览器状态导出）或非聚宽域名 Cookie，也不得打印或提交任何凭证与浏览器配置；同步流程 MUST 不依赖 Codex 会话。大文件 MUST 通过浏览器下载事件进入临时目录而不能通过 Agent 对话传输。
 
 #### Scenario: 首次认证
 - **WHEN** 用户运行认证命令
 - **THEN** 系统打开可见浏览器供用户自行登录，并在认证成功后保存浏览器持久状态和经 DPAPI 加密的聚宽域名会话 Cookie，不保存账号或密码
 
 #### Scenario: 登录状态过期
-- **WHEN** 交互式或计划任务访问聚宽时被重定向到登录页
+- **WHEN** 交互式同步访问聚宽时被重定向到登录页
 - **THEN** 系统返回 `auth_required`、不尝试自动填写凭证，并且不修改已有归档
 
 #### Scenario: 加密登录状态损坏
@@ -216,7 +194,7 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 - **THEN** 系统只生成该范围的 CSV，并记录来源文件摘要和过滤条件
 
 ### Requirement: 仓库 Skill 必须提供统一同步入口
-仓库 MUST 只在 `.agents/skills/joinquant-archive-sync/` 保存一份真实 Skill（技能）目录，并在其中自包含 `SKILL.md`、Python CLI（命令行接口）、运行依赖和参考资料。`.claude/skills/joinquant-archive-sync` MUST 使用同仓库相对 SymbolicLink（符号链接）指向该目录；不得创建 Plugin（插件）、marketplace（市场）、第二份同步脚本或缓存更新层。认证、抓取、解析、落盘、完整性校验和查询逻辑 MUST 只实现一次，Codex、Claude、人工命令和 Windows Task Scheduler MUST 调用该同一入口。
+仓库 MUST 只在 `.agents/skills/joinquant-archive-sync/` 保存一份真实 Skill（技能）目录，并在其中自包含 `SKILL.md`、Python CLI（命令行接口）、运行依赖和参考资料。`.claude/skills/joinquant-archive-sync` MUST 使用同仓库相对 SymbolicLink（符号链接）指向该目录；不得创建 Plugin（插件）、marketplace（市场）、第二份同步脚本或缓存更新层。认证、抓取、解析、落盘、完整性校验和查询逻辑 MUST 只实现一次，Codex、Claude 和人工命令 MUST 调用该同一入口；系统 MUST NOT 提供 Windows 任务计划程序调用入口。
 
 #### Scenario: Agent 调用 Skill 同步回测
 - **WHEN** Agent 通过 Skill 传入策略和一个回测详情链接
@@ -226,10 +204,6 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 - **WHEN** 分别从 Codex 和 Claude 项目入口加载 `joinquant-archive-sync`
 - **THEN** 两端解析到同一仓库目录，且 `SKILL.md` 与执行脚本的 SHA256 完全一致
 
-#### Scenario: 计划任务调用模拟交易同步
-- **WHEN** Windows Task Scheduler 触发活动模拟交易命令
-- **THEN** 它调用 Skill 内同一同步核心和完整性门禁
-
 ### Requirement: 正式运行必须保持在聚宽云端
 系统 MUST 只进行策略编写辅助、资料同步、本地归档、查询和复盘，不得在本地把任何结果声明为正式回测或模拟交易结果。
 
@@ -237,8 +211,8 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 - **WHEN** Vibe-Trading 或 Agent 查询本地 Parquet 或 CSV
 - **THEN** 输出明确保留聚宽运行身份和来源链接，不把本地计算替代为正式云端裁决
 
-### Requirement: 端到端回归必须覆盖发布入口
-实现完成前 MUST 从 Codex、Claude 的仓库 Skill 或计划任务发布入口执行 `self-test` 端到端回归。`self-test` MUST 在进程内生成小型证据并复用生产同步核心，覆盖明确目标选择、完整性门禁、临时归档、重复同步、查询和 CSV 输出；DuckDB 使用内存数据库，归档只写系统临时目录，不得访问网络或加载历史归档。单元测试组合不得替代该主流程回归。真实聚宽能力只由首次实施 PoC 验证，不进入常规端到端回归。
+### Requirement: 端到端回归必须覆盖手动同步入口
+实现完成前 MUST 从 Codex、Claude 的仓库 Skill 或手动同步入口执行 `self-test`（自检）端到端回归。`self-test` MUST 在进程内生成小型证据并复用生产同步核心，覆盖明确目标选择、完整性门禁、临时归档、重复同步、查询和 CSV（逗号分隔值）输出；DuckDB（嵌入式分析数据库）使用内存数据库，归档只写系统临时目录，不得访问网络或加载历史归档。单元测试组合不得替代该主流程回归。真实聚宽能力只由首次实施 PoC（概念验证）验证，不进入常规端到端回归。
 
 #### Scenario: 仓库 Skill 内存端到端回归
 - **WHEN** Codex 和 Claude 分别通过仓库 Skill 调用同一 `self-test`
@@ -248,9 +222,9 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 - **WHEN** 内存证据包含失败或取消运行、不合法日志响应、普通日志 1000 条边界、归因日志完整或缺页或断序或无终止事件或无写入器，以及不支持接口版本
 - **THEN** 每种情况分别产生正确状态且没有任何对象被误报为全量完整
 
-#### Scenario: 计划任务发布入口回归
-- **WHEN** 验收创建临时 Windows 计划任务并通过 `schtasks /Run` 调用同一 `self-test`
-- **THEN** 任务返回成功状态且不访问聚宽，验收结束后删除该临时任务
+#### Scenario: 手动模拟交易入口回归
+- **WHEN** 验收从 `sync-active-simulations` 入口使用受控外部边界执行活动模拟交易同步
+- **THEN** 入口验证同一 `.venv`、CLI 路径和完整性门禁，且不访问真实聚宽、创建 Git 提交、PR、专用工作树或 Windows 任务
 
 ### Requirement: 官方回测摘要必须保留来源和用途边界
 系统 MUST 将 `data/official-summary.csv` 作为聚宽回测详情页官方导出源文件的唯一合法路径，`reports/` MUST 只存放人工分析报告。所有回测清单的 `official_summary` 数据集 MUST 明确记录版本化证据，包括详情页下载来源、编码、表头、行数和关联的 Research（研究环境）数据集。系统 MUST 迁移既有官方摘要和清单引用，不得保留 `reports/` 下的旧位置、双路径或旧路径兼容读取。文档 MUST 区分可近似对齐、仅可交叉校验和不可由官方摘要推导的字段，并说明日常分析应读取的权威明细数据集。
@@ -266,64 +240,3 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 #### Scenario: 迁移既有官方摘要
 - **WHEN** 既有回测仍将官方摘要保存在 `reports/` 下的旧位置或清单尚未包含版本化来源证据
 - **THEN** 系统在保持文件内容摘要不变的前提下移动文件、更新清单路径和证据，并在迁移完成后拒绝任何残留旧路径
-
-### Requirement: 自动归档只能发布通过严格门禁的归档变化
-系统 MUST 通过现有 `sync-active-simulations` 发布入口同步全部活动模拟交易，并 MUST 对每个发生变化的模拟交易调用现有 `verify` 门禁。只有当全部同步结果均未失败、每个变化对象的 `gate.status=pass`、manifest 引用文件摘要匹配，且 Git 变化仅属于策略索引、对应策略清单/默认代码及对应模拟交易归档目录时，系统才能暂存和提交精确路径。系统 MUST NOT 使用未受范围门禁约束的全仓库暂存。
-
-#### Scenario: 所有归档变化通过门禁
-- **WHEN** 所有活动对象同步成功，变化对象的 manifest、文件摘要和 Git 路径范围均通过校验
-- **THEN** 系统只暂存已校验路径并创建一个简体中文说明的归档提交
-
-#### Scenario: manifest 或文件摘要失败
-- **WHEN** 任一变化对象无法通过现有 `verify`，或 manifest 引用文件的实际摘要不匹配
-- **THEN** 系统不暂存、不提交、不推送且不创建或合并 PR，并记录失败对象和恢复入口
-
-#### Scenario: 出现归档范围外变化
-- **WHEN** 同步后 Git 状态包含不属于允许归档路径的已跟踪或未跟踪文件
-- **THEN** 系统停止整个批次、原样保留范围外路径且不得使用自动清理掩盖该变化
-
-### Requirement: 有效归档变化必须通过唯一 PR Flow 闭环进入主干
-没有归档变化且没有待恢复发布时，系统 MUST 以成功无操作状态结束，不创建提交、分支或 PR。有有效归档变化时，系统 MUST 使用固定 ASCII（英文字符）分支 `codex/joinquant-archive-auto` 和简体中文提交说明，并 MUST 调用现有 PR Flow `complete`（完成流程）创建或更新该分支唯一活动 PR。PR MUST 等待 Full Verify（完整验证）、CodeQL（代码扫描）和 GitHub review gate（审查门禁）；全部通过后才能自动合并并安全清理源分支。系统 MUST NOT 无人值守直推 `main`、绕过检查、调用第二套 PR 发现或合并逻辑或强制推送。
-
-#### Scenario: 同步没有产生归档变化
-- **WHEN** 全部活动对象返回未变化且 Git 状态为空，并且没有待恢复的自动化发布
-- **THEN** 系统记录 `noop` 并成功退出，不创建本地提交、远端分支或 PR
-
-#### Scenario: 有效变化完成自动合并
-- **WHEN** 已校验归档提交推送后，唯一自动化 PR 的 Full Verify、CodeQL 和 review gate 全部通过
-- **THEN** PR Flow 合并该 PR、删除远端和本地自动化分支，并使专用 worktree 回到最新远端 `main`
-
-#### Scenario: 已有自动化发布尚未完成
-- **WHEN** 新一次计划任务启动时 worktree 仍位于干净固定自动化分支，可能处于提交后尚未创建 PR、PR 检查中或合并后清理未完成
-- **THEN** 系统不查询 PR 数量、不启动新的同步批次或增加提交；默认重跑 PR Flow `complete`，仅在其结构化状态明确指向合并后清理时调用现有 `cleanup`
-
-#### Scenario: 检查或审查阻止合并
-- **WHEN** Full Verify、CodeQL、review gate 或 GitHub 合并规则任一失败、待处理或超时
-- **THEN** 系统不得合并，保留唯一 PR 和干净分支，记录 PR Flow stop state（停止状态）及其恢复命令供后续重试
-
-### Requirement: 自动归档失败状态必须可恢复且不得包含凭证
-计划任务发布入口 MUST 原子保存最后一次运行的结构化状态，最少包含运行编号、时间、阶段、状态、原因、worktree、分支、PR 编号和恢复命令。任一前置检查、同步、验证、提交、推送、检查、审查、合并或清理失败都 MUST 阻止后续合并并返回非成功状态；锁冲突 MUST 返回不会触发重复工作的结构化跳过状态。状态、日志、提交和 PR 内容 MUST NOT 包含账号、密码、token（访问令牌）、Cookie（浏览器凭证）、浏览器 profile（配置目录）、环境变量或未经筛选的完整外部命令输出。
-
-#### Scenario: 同步失败产生恢复状态
-- **WHEN** JoinQuant 同步返回失败或完整性异常
-- **THEN** 最后运行状态记录 `sync` 或 `verify` 阶段、无敏感信息的原因和下一条恢复命令，且不存在提交、推送或合并
-
-#### Scenario: PR Flow 返回停止状态
-- **WHEN** PR Flow 因检查失败、审查阻塞、远端分叉或清理异常而停止
-- **THEN** 最后运行状态引用同一 PR、分支和 PR Flow 恢复命令，不复制敏感外部输出且不启动替代合并路径
-
-#### Scenario: 凭证出现在子进程环境中
-- **WHEN** JoinQuant、GitHub 或 Git 子进程通过当前用户环境访问凭证
-- **THEN** 系统只使用凭证完成对应调用，不把凭证值、完整环境或浏览器状态写入仓库、最后运行状态、提交或 PR
-
-### Requirement: 自动归档闭环必须从计划任务发布命令端到端回归
-实现完成前 MUST 从计划任务实际调用的 `scheduled-sync-pr` 发布命令运行端到端回归。回归 MUST 使用临时 Git 远端和可控的 JoinQuant/PR Flow 外部边界运行完整本地编排，至少覆盖无变化、成功合并、同步失败和检查失败；不得用若干只测试内部函数的单元测试拼接替代。Windows 验收 MUST 精确验证生产任务 XML（配置文本）中的同一发布命令、工作目录和参数，并 MUST 通过 Skill 已有的无外部访问临时任务验证 Task Scheduler 实际使用 `.venv`、CLI 和返回状态；不得占用生产运行锁、访问真实 JoinQuant、创建真实 GitHub PR 或加载历史归档。
-
-#### Scenario: 四条发布路径端到端回归
-- **WHEN** 验收依次向同一发布命令提供无变化、有效归档变化、同步失败和 PR 检查失败的可控外部结果
-- **THEN** 四条路径分别产生 `noop`、合并并清理、同步阶段失败且无提交、检查阶段失败且不合并的完整可复核运行结果
-
-#### Scenario: Windows 计划任务发布形态回归
-- **WHEN** 验收生产任务 XML 并安装、运行 Skill 拥有的临时 Windows `self-test` 任务
-- **THEN** XML 精确包含仓库 `.venv`、`scheduled-sync-pr` CLI、仓库参数和既有工作目录，临时任务实际验证同一 `.venv`、CLI 路径、工作目录和返回码，验收后只删除该临时任务
-

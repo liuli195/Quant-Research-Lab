@@ -64,7 +64,7 @@
       },
       {
         "id": "verify.self-test",
-        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\joinquant_sync\\test_self_test.py",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\joinquant_sync\\test_self_test.py tests\\joinquant_sync\\test_manual_sync_cli.py",
         "paths": [".agents/skills/joinquant-archive-sync/**", ".claude/skills/joinquant-archive-sync", "tests/joinquant_sync/**", "requirements*.txt"],
         "inputs": [".agents/skills/joinquant-archive-sync/**", ".claude/skills/joinquant-archive-sync", "tests/joinquant_sync/**", "requirements.txt", "requirements-dev.txt"],
         "checkParallel": true
@@ -107,14 +107,6 @@
       {
         "id": "verify.archive",
         "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\joinquant_sync\\test_archive.py",
-        "paths": [".agents/skills/joinquant-archive-sync/**", "tests/joinquant_sync/**", "requirements*.txt"],
-        "inputs": [".agents/skills/joinquant-archive-sync/**", "tests/joinquant_sync/**", "requirements.txt", "requirements-dev.txt"],
-        "checkParallel": true
-      },
-      {
-        "id": "verify.scheduler-unit",
-        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest -p xdist.plugin tests\\joinquant_sync\\test_scheduler.py tests\\joinquant_sync\\test_scheduled_sync.py -k \"not schtasks_runs_self_test\"",
-        "pytestXdistWorkers": 4,
         "paths": [".agents/skills/joinquant-archive-sync/**", "tests/joinquant_sync/**", "requirements*.txt"],
         "inputs": [".agents/skills/joinquant-archive-sync/**", "tests/joinquant_sync/**", "requirements.txt", "requirements-dev.txt"],
         "checkParallel": true
