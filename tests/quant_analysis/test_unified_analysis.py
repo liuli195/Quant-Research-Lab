@@ -12,6 +12,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from quant_analysis import unified_analysis as analysis
+from quant_analysis import package_source
 from quant_analysis.unified_analysis import (
     ScenarioInput,
     UnifiedAnalysisError,
@@ -113,7 +114,7 @@ def _standard_package_inputs(
         {
             "schema_version": "strategy-analysis-plan/1",
             "strategy_id": "minimal",
-            "baseline_config": "config/baseline.json",
+            "baseline_config": "baseline.json",
             "scenarios": [
                 {"scenario_id": "baseline", "dimension": "baseline", "overrides": {}}
             ],
@@ -216,12 +217,56 @@ def test_standard_analysis_identity_does_not_depend_on_package_location(
     assert second == first
 
 
+def test_standard_analysis_does_not_call_legacy_source_readers(
+    repo_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
+
+    def reject_legacy_reader(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("standard analysis must not use a legacy source reader")
+
+    monkeypatch.setattr(analysis, "open_analysis_database", reject_legacy_reader, raising=False)
+    monkeypatch.setattr(package_source, "open_analysis_source", reject_legacy_reader, raising=False)
+
+    assert run_standard_analysis(root, packages, plan, benchmark)["analysis_id"]
+
+
+def test_standard_analysis_resolves_baseline_from_the_plan_bundle(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    bundle = tmp_path / "portable-plan"
+    bundle.mkdir()
+    portable_plan = json.loads(plan.read_text(encoding="utf-8"))
+    portable_plan["baseline_config"] = "baseline.json"
+    _write_json(bundle / "analysis-plan.json", portable_plan)
+    shutil.copy(plan.parent / "baseline.json", bundle / "baseline.json")
+
+    result = run_standard_analysis(root, packages, bundle / "analysis-plan.json", benchmark)
+
+    assert result["analysis_configuration"]["baseline_config"]["path"] == "baseline.json"
+
+
+def test_standard_analysis_rejects_missing_plan_scenario_package(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    root, packages, plan_path, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan["scenarios"].append(
+        {"scenario_id": "alternate", "dimension": "parameter", "overrides": {}}
+    )
+    _write_json(plan_path, plan)
+
+    with pytest.raises(UnifiedAnalysisError, match="scenarios differ"):
+        run_standard_analysis(root, packages, plan_path, benchmark)
+
+
 def test_standard_analysis_rejects_package_params_that_differ_from_plan(
     repo_root: Path, tmp_path: Path
 ) -> None:
     root, packages, plan_path, benchmark = _standard_package_inputs(repo_root, tmp_path)
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    baseline_path = root / plan["baseline_config"]
+    baseline_path = plan_path.parent / plan["baseline_config"]
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     baseline["risk"] = {"unit": 0.01}
     _write_json(baseline_path, baseline)
@@ -360,9 +405,7 @@ def test_standard_analysis_keeps_independent_results_and_evidence_gaps(
     assert result["analysis_configuration"]["analysis_plan"]["path"] == (
         "config/analysis-plan.json"
     )
-    assert result["analysis_configuration"]["baseline_config"]["path"] == (
-        "config/baseline.json"
-    )
+    assert result["analysis_configuration"]["baseline_config"]["path"] == "baseline.json"
     assert result["analysis_configuration"]["analyses"]["bootstrap"]["seed"] == (
         7
     )

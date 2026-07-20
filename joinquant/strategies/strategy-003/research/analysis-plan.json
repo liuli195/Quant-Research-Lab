@@ -1,7 +1,7 @@
 {
   "schema_version": "strategy-analysis-plan/1",
   "strategy_id": "strategy-003",
-  "baseline_config": "joinquant/strategies/strategy-003/research/baseline.json",
+  "baseline_config": "baseline.json",
   "scenarios": [
     {"scenario_id": "baseline", "dimension": "baseline", "overrides": {}},
     {"scenario_id": "entry-40", "dimension": "parameter", "overrides": {"signal": {"entry_days": 40}}},

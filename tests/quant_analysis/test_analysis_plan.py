@@ -79,11 +79,14 @@ def test_rejects_inconsistent_plan(
     mutation(plan)
     path = tmp_path / "analysis-plan.json"
     path.write_text(json.dumps(plan), encoding="utf-8")
+    (tmp_path / "baseline.json").write_bytes(
+        (repo_root / PLAN_PATH.parent / "baseline.json").read_bytes()
+    )
 
     with pytest.raises(AnalysisPlanError, match=message):
         expand_analysis_plan(repo_root, path)
 
-def test_rejects_baseline_path_outside_repository(
+def test_rejects_baseline_path_outside_plan_bundle(
     repo_root: Path, tmp_path: Path
 ) -> None:
     plan = _load_plan(repo_root)

@@ -16,7 +16,7 @@ description: Use when 用户或 Agent 需要对标准结果包运行量化分析
 
 ## 固定调用
 
-从仓库根目录仅使用项目 `.venv`（虚拟环境）执行本 Skill 的 `run`（运行）命令：
+从仓库根目录仅使用项目 `.venv`（虚拟环境）执行本 Skill 的 `run`（运行）命令。`--repository`（仓库目录）只确定本地交付目录，不参与分析身份；分析计划与其声明的基线配置作为同一计划包传入：
 
 ```powershell
 & .\.venv\Scripts\python.exe .agents\skills\analyze-quant-robustness\scripts\analyze_quant_robustness.py run `

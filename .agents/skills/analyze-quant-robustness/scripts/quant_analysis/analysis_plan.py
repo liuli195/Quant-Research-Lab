@@ -48,17 +48,17 @@ def _resolve_plan_path(repo_root: Path, path: str | Path) -> Path:
     )
 
 
-def _resolve_repo_file(repo_root: Path, value: object, *, label: str) -> Path:
+def _resolve_plan_file(plan_root: Path, value: object, *, label: str) -> Path:
     if not isinstance(value, str) or not value:
-        raise AnalysisPlanError(f"{label} must be a repository-relative path")
+        raise AnalysisPlanError(f"{label} must be a plan-relative path")
     candidate = Path(value)
     if candidate.is_absolute() or ".." in candidate.parts:
-        raise AnalysisPlanError(f"{label} must stay inside the repository")
-    resolved = (repo_root / candidate).resolve()
+        raise AnalysisPlanError(f"{label} must stay inside the analysis plan bundle")
+    resolved = (plan_root / candidate).resolve()
     try:
-        resolved.relative_to(repo_root)
+        resolved.relative_to(plan_root)
     except ValueError as exc:
-        raise AnalysisPlanError(f"{label} must stay inside the repository") from exc
+        raise AnalysisPlanError(f"{label} must stay inside the analysis plan bundle") from exc
     if not resolved.is_file():
         raise AnalysisPlanError(f"{label} does not exist: {value}")
     return resolved
@@ -96,8 +96,8 @@ def expand_analysis_plan(
     plan = _load_json(plan_file, label="analysis plan")
     _validate_plan(plan)
 
-    baseline_file = _resolve_repo_file(
-        root,
+    baseline_file = _resolve_plan_file(
+        plan_file.parent,
         plan["baseline_config"],
         label="baseline_config",
     )
@@ -150,7 +150,7 @@ def expand_analysis_plan(
         if plan_file.is_relative_to(root)
         else str(plan_file),
         "analysis_plan_sha256": _sha256(plan),
-        "baseline_config": baseline_file.relative_to(root).as_posix(),
+        "baseline_config": baseline_file.relative_to(plan_file.parent).as_posix(),
         "baseline_config_sha256": _sha256(baseline),
         "universe": universe,
         "analyses": copy.deepcopy(plan["analyses"]),

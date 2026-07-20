@@ -9,11 +9,7 @@ from typing import Mapping, Sequence
 import pandas as pd
 import pyarrow.parquet as pq
 
-from scripts.research.analysis_data.manifest import (
-    AnalysisManifestError,
-    AnalysisSource,
-    open_analysis_source,
-)
+from scripts.research.result_package import ResultContractError, validate_result_package
 
 
 class PackageSourceError(ValueError):
@@ -23,7 +19,6 @@ class PackageSourceError(ValueError):
 @dataclass(frozen=True)
 class PackageSource:
     root: Path
-    source: AnalysisSource
     manifest_sha256: str
     content_sha256: str
     strategy_id: str
@@ -60,8 +55,8 @@ def _load_json(path: Path, label: str) -> dict[str, object]:
     return value
 
 
-def _source_result_range(source: AnalysisSource) -> tuple[pd.Timestamp, pd.Timestamp]:
-    path = source.root / source.data_prefix / "results.parquet"
+def _source_result_range(root: Path) -> tuple[pd.Timestamp, pd.Timestamp]:
+    path = root / "data" / "results.parquet"
     values = pd.to_datetime(
         pq.read_table(path, columns=["time"]).to_pandas()["time"],
         errors="coerce",
@@ -72,8 +67,10 @@ def _source_result_range(source: AnalysisSource) -> tuple[pd.Timestamp, pd.Times
     return pd.Timestamp(values.min()).normalize(), pd.Timestamp(values.max()).normalize()
 
 
-def _attribution_capability(source: AnalysisSource) -> Mapping[str, object]:
-    extensions = source.manifest.get("extensions")
+def _attribution_capability(
+    root: Path, manifest: Mapping[str, object]
+) -> Mapping[str, object]:
+    extensions = manifest.get("extensions")
     if not isinstance(extensions, Mapping):
         return {"status": "missing_at_source"}
     candidates: list[tuple[Mapping[str, object], set[str]]] = []
@@ -102,8 +99,8 @@ def _attribution_capability(source: AnalysisSource) -> Mapping[str, object]:
     relative = reference.get("path")
     if not isinstance(relative, str):
         return {"status": "evidence_insufficient", "reason": "invalid_source_path"}
-    path = (source.root / relative).resolve()
-    if not path.is_relative_to(source.root) or not path.is_file():
+    path = (root / relative).resolve()
+    if not path.is_relative_to(root) or not path.is_file():
         return {"status": "evidence_insufficient", "reason": "invalid_source_path"}
     try:
         frame = pq.read_table(path, columns=["time", "event_id", "event_type"]).to_pandas()
@@ -120,7 +117,7 @@ def _attribution_capability(source: AnalysisSource) -> Mapping[str, object]:
         or event_types.eq("").any()
     ):
         return {"status": "evidence_insufficient", "reason": "invalid_event_identity"}
-    source_start, source_end = _source_result_range(source)
+    source_start, source_end = _source_result_range(root)
     event_days = timestamps.dt.normalize()
     if ((event_days < source_start) | (event_days > source_end)).any():
         return {"status": "evidence_insufficient", "reason": "event_time_range_mismatch"}
@@ -137,11 +134,13 @@ def _attribution_capability(source: AnalysisSource) -> Mapping[str, object]:
     }
 
 
-def _capabilities(source: AnalysisSource) -> Mapping[str, Mapping[str, object]]:
+def _capabilities(
+    root: Path, manifest: Mapping[str, object]
+) -> Mapping[str, Mapping[str, object]]:
     return {
         "common_facts": {"status": "available"},
         "official_risk": {"status": "missing_at_source"},
-        "attribution": _attribution_capability(source),
+        "attribution": _attribution_capability(root, manifest),
         "cost_execution": {"status": "missing_at_source"},
     }
 
@@ -149,11 +148,11 @@ def _capabilities(source: AnalysisSource) -> Mapping[str, Mapping[str, object]]:
 def open_package_source(path: Path) -> PackageSource:
     root = Path(path).resolve()
     try:
-        source = open_analysis_source(root)
-    except AnalysisManifestError as exc:
+        manifest = validate_result_package(root)
+    except ResultContractError as exc:
         raise PackageSourceError(str(exc)) from exc
-    identity = source.manifest.get("object")
-    content_sha256 = source.manifest.get("package_sha256")
+    identity = manifest.get("object")
+    content_sha256 = manifest.get("package_sha256")
     if (
         not isinstance(identity, Mapping)
         or identity.get("status") != "complete"
@@ -167,13 +166,12 @@ def open_package_source(path: Path) -> PackageSource:
         raise PackageSourceError("package scenario identity does not match its frozen config")
     return PackageSource(
         root=root,
-        source=source,
         manifest_sha256=_sha256(root / "manifest.json"),
         content_sha256=content_sha256,
         strategy_id=str(identity["strategy_id"]),
         scenario_id=str(identity["scenario_id"]),
         params=params,
-        capabilities=_capabilities(source),
+        capabilities=_capabilities(root, manifest),
     )
 
 
