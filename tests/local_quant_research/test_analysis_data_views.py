@@ -5,6 +5,7 @@ import json
 from collections import Counter
 from datetime import date
 from pathlib import Path
+from typing import Mapping
 
 import numpy as np
 import pyarrow as pa
@@ -296,7 +297,11 @@ class _AnalysisLedger:
 
 
 def _write_result_package(
-    root: Path, *, extensions: tuple[ResultExtension, ...] | None = None
+    root: Path,
+    *,
+    extensions: tuple[ResultExtension, ...] | None = None,
+    strategy_id: str = "minimal",
+    scenario: Mapping[str, object] | None = None,
 ) -> Path:
     code = root.parent / "strategy.py"
     code.write_text("VALUE = 1\n", encoding="utf-8")
@@ -304,8 +309,8 @@ def _write_result_package(
     run = ExecutionRun(ledger=ledger, trace={})
     package = write_result_package(
         ResultPackageRequest(
-            strategy_id="minimal",
-            scenario_id="baseline",
+            strategy_id=strategy_id,
+            scenario_id=str((scenario or {}).get("scenario_id", "baseline")),
             run_id="run-analysis",
             output_dir=root,
             execution=ExecutionBundle(primary=run, final=run, stages=("primary",)),
@@ -322,7 +327,7 @@ def _write_result_package(
             ),
             code_files={"strategy.py": code},
             config_documents={
-                "scenario.json": {"scenario_id": "baseline"},
+                "scenario.json": dict(scenario or {"scenario_id": "baseline"}),
                 "project-run.json": {"schema_version": 2},
                 "code-identity.json": {"digest": "b" * 64},
             },

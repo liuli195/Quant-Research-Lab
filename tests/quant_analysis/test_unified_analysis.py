@@ -23,16 +23,15 @@ from quant_analysis.unified_analysis import (
     align_three_way_benchmarks,
     calculate_return_metrics,
     evaluate_metrics,
-    load_registered_scenario,
     run_standard_analysis,
 )
-from quant_analysis.source_registry import load_source_registry
 from scripts.research.market_data.benchmark_sets import (
     BENCHMARK_IDS as CONTRACT_BENCHMARK_IDS,
     SourcePayload,
     write_benchmark_set,
 )
-from tests.quant_analysis.test_source_registry import _prepared_sources, _registry
+from scripts.research.local_quant_research.contracts import ResultExtension
+from tests.local_quant_research.test_analysis_data_views import _write_result_package
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -87,75 +86,36 @@ def test_calculate_return_metrics_compounds_and_measures_drawdown() -> None:
     assert metrics["calmar"] is not None
 
 
-def test_registered_sources_share_the_four_common_facts(
-    repo_root: Path, tmp_path: Path
-) -> None:
-    root, entries = _prepared_sources(repo_root, tmp_path)
-    registry = load_source_registry(root, _registry(root, entries))
-
-    scenarios = [
-        load_registered_scenario(source, analysis_params={})
-        for source in registry.sources
-    ]
-
-    assert [source.registration.source_type for source in registry.sources] == [
-        "local_research",
-        "joinquant_backtest",
-        "joinquant_simulation",
-    ]
-    assert all(not scenario.returns.empty for scenario in scenarios)
-    assert all(
-        {"date", "total_value", "net_value", "cash", "aval_cash"}
-        .issubset(scenario.balances.columns)
-        for scenario in scenarios
+def _standard_package_inputs(
+    repo_root: Path,
+    tmp_path: Path,
+    *,
+    extensions: tuple[ResultExtension, ...] | None = None,
+) -> tuple[Path, list[Path], Path, Path]:
+    root = tmp_path / "package-repository"
+    root.mkdir()
+    scenario = {
+        "project_id": "minimal",
+        "scenario_id": "baseline",
+        "universe": [{"security": "TEST.X", "asset_group": "etf"}],
+        "risk": {},
+    }
+    package = _write_result_package(
+        root / "package",
+        strategy_id="minimal",
+        scenario=scenario,
+        extensions=extensions,
     )
-    assert scenarios[0].attribution_status == "missing_at_source"
-    assert scenarios[0].events.empty
-    for scenario in scenarios[1:]:
-        assert scenario.attribution_status == "available"
-        assert {"time", "event_time", "date", "event_type", "reason_code", "security"}.issubset(
-            scenario.events.columns
-        )
-        assert not scenario.events.empty
-        assert scenario.events["event_time"].notna().all()
-        assert "run_start" in set(scenario.events["event_type"])
-
-    attribution = _attribution(scenarios[1], pd.DataFrame())
-    assert attribution["status"] == "available"
-    assert attribution["method"] == "verified source-native event log"
-    assert attribution["event_counts"]["rebalance_signals"] > 0
-    assert attribution["pnl_contribution"]["status"] == "evidence_insufficient"
-
-
-def _standard_registry(repo_root: Path, tmp_path: Path, *, single_source: bool) -> tuple[Path, Path]:
-    root, entries = _prepared_sources(repo_root, tmp_path)
-    if single_source:
-        entries = entries[:1]
-    positions = pq.read_table(
-        root / "sources/backtest/data/positions.parquet", columns=["security"]
-    ).to_pandas()
-    universe = [
-        {"security": security, "asset_group": "etf"}
-        for security in sorted(set(positions["security"].dropna().astype(str)))
-    ]
     config = root / "config"
-    _write_json(
-        config / "baseline.json",
-        {"project_id": "standard-fixture", "universe": universe, "risk": {}},
-    )
+    _write_json(config / "baseline.json", scenario)
     _write_json(
         config / "analysis-plan.json",
         {
             "schema_version": "strategy-analysis-plan/1",
-            "strategy_id": "standard-fixture",
+            "strategy_id": "minimal",
             "baseline_config": "config/baseline.json",
             "scenarios": [
-                {
-                    "scenario_id": entry["scenario_id"],
-                    "dimension": "baseline" if index == 0 else "comparison",
-                    "overrides": {},
-                }
-                for index, entry in enumerate(entries)
+                {"scenario_id": "baseline", "dimension": "baseline", "overrides": {}}
             ],
             "analyses": {
                 "fixed_periods": [
@@ -163,10 +123,18 @@ def _standard_registry(repo_root: Path, tmp_path: Path, *, single_source: bool) 
                 ],
                 "rolling": {"window_years": 1, "step_months": 3},
                 "cost_execution": [
-                    {"id": "fixture", "commission_multiplier": 1.0, "slippage": 0.0, "delay_days": 0}
+                    {
+                        "id": "fixture",
+                        "commission_multiplier": 1.0,
+                        "slippage": 0.0,
+                        "delay_days": 0,
+                    }
                 ],
                 "bootstrap": {
-                    "block_sizes": [1], "paths": 3, "horizon_days": 1, "seed": 7,
+                    "block_sizes": [1],
+                    "paths": 3,
+                    "horizon_days": 1,
+                    "seed": 7,
                     "thresholds": {
                         "probability_drawdown_over_20pct_max": 1.0,
                         "probability_drawdown_over_30pct_max": 1.0,
@@ -174,16 +142,35 @@ def _standard_registry(repo_root: Path, tmp_path: Path, *, single_source: bool) 
                     },
                 },
                 "historical_stress": [
-                    {"id": "stress-fixture", "start": "2024-01-01", "end": "2024-12-31", "max_drawdown_abs_max": 1.0}
+                    {
+                        "id": "stress-fixture",
+                        "start": "2024-01-01",
+                        "end": "2024-12-31",
+                        "max_drawdown_abs_max": 1.0,
+                    }
                 ],
                 "position_shocks": [
-                    {"id": "shock-fixture", "asset_group_shocks": {"etf": -0.1}, "maximum_loss_abs_max": 1.0}
+                    {
+                        "id": "shock-fixture",
+                        "asset_group_shocks": {"etf": -0.1},
+                        "maximum_loss_abs_max": 1.0,
+                    }
                 ],
                 "cvar": [
-                    {"id": "cvar-fixture", "horizon_days": 1, "confidence": 0.95, "maximum_loss_abs_max": 1.0, "minimum_tail_observations": 1}
+                    {
+                        "id": "cvar-fixture",
+                        "horizon_days": 1,
+                        "confidence": 0.95,
+                        "maximum_loss_abs_max": 1.0,
+                        "minimum_tail_observations": 1,
+                    }
                 ],
             },
-            "thresholds": {"cagr_min_exclusive": 0.0, "max_drawdown_abs_max": 0.2, "calmar_min": 0.5},
+            "thresholds": {
+                "cagr_min_exclusive": 0.0,
+                "max_drawdown_abs_max": 0.2,
+                "calmar_min": 0.5,
+            },
         },
     )
     benchmark_set = write_benchmark_set(
@@ -201,48 +188,101 @@ def _standard_registry(repo_root: Path, tmp_path: Path, *, single_source: bool) 
         start_date=date(2024, 1, 2),
         end_date=date(2024, 1, 3),
     )
-    registry = root / "standard-source-registry.json"
-    _write_json(
-        registry,
-        {
-            "schema_version": "standard-analysis-source-registry/1",
-            "analysis_plan": "config/analysis-plan.json",
-            "benchmark_manifest": (
-                benchmark_set.root / "manifest.json"
-            ).relative_to(root).as_posix(),
-            "baseline_scenario_id": "baseline",
-            "sources": entries,
-        },
+    return root, [package], config / "analysis-plan.json", benchmark_set.root / "manifest.json"
+
+
+def test_standard_analysis_accepts_explicit_package_without_registry(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
+
+    result = run_standard_analysis(root, packages, plan, benchmark)
+
+    assert result["sources"]["package_count"] == 1
+    assert result["baseline"]["scenario_id"] == "baseline"
+
+
+def test_standard_analysis_identity_does_not_depend_on_package_location(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    first = run_standard_analysis(root, packages, plan, benchmark)
+    relocated = tmp_path / "unrelated-location" / "renamed-package"
+    shutil.copytree(packages[0], relocated)
+
+    second = run_standard_analysis(root, [relocated], plan, benchmark)
+
+    assert second["analysis_id"] == first["analysis_id"]
+    assert second == first
+
+
+def test_standard_analysis_rejects_package_params_that_differ_from_plan(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    root, packages, plan_path, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    baseline_path = root / plan["baseline_config"]
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    baseline["risk"] = {"unit": 0.01}
+    _write_json(baseline_path, baseline)
+
+    with pytest.raises(UnifiedAnalysisError, match="parameters differ"):
+        run_standard_analysis(root, packages, plan_path, benchmark)
+
+
+def test_standard_analysis_discovers_attribution_by_fields_not_extension_name(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    extension = ResultExtension(
+        name="turtle_etf",
+        schema_version="turtle-etf-attribution/2",
+        table=pa.table(
+            {
+                "time": ["2024-01-02 16:00:00"],
+                "event_id": ["decision-1"],
+                "event_type": ["decision"],
+                "security": ["TEST.X"],
+                "reason_code": ["breakout_entry"],
+                "details_json": ["{}"],
+            }
+        ),
+        unique_key=("event_id",),
+        evidence={"status": "complete"},
     )
-    return root, registry
+    root, packages, plan, benchmark = _standard_package_inputs(
+        repo_root, tmp_path, extensions=(extension,)
+    )
+
+    result = run_standard_analysis(root, packages, plan, benchmark)
+
+    assert result["attribution"]["status"] == "available"
+    assert result["attribution"]["event_counts"] == {"breakout_entry": 1}
 
 
 def test_standard_analysis_rejects_tampered_benchmark_data(
     repo_root: Path, tmp_path: Path
 ) -> None:
-    root, registry = _standard_registry(repo_root, tmp_path, single_source=True)
-    registry_document = json.loads(registry.read_text(encoding="utf-8"))
-    benchmark_manifest = root / registry_document["benchmark_manifest"]
-    benchmark_data = benchmark_manifest.parent / "benchmark-returns.parquet"
+    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    benchmark_data = benchmark.parent / "benchmark-returns.parquet"
     table = pq.read_table(benchmark_data)
     returns = table["returns"].to_pylist()
     returns[-1] = float(returns[-1]) + 0.01
     pq.write_table(table.set_column(2, "returns", pa.array(returns)), benchmark_data)
 
     with pytest.raises(UnifiedAnalysisError, match="benchmark.*digest"):
-        run_standard_analysis(root, registry)
+        run_standard_analysis(root, packages, plan, benchmark)
 
 
 def test_standard_analysis_is_byte_deterministic_after_fresh_output(
     repo_root: Path, tmp_path: Path
 ) -> None:
-    root, registry = _standard_registry(repo_root, tmp_path, single_source=True)
-    first = run_standard_analysis(root, registry)
+    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    first = run_standard_analysis(root, packages, plan, benchmark)
     workspace = root / ".local/standard-strategy-analysis" / first["analysis_id"]
     first_bytes = (workspace / "deterministic-analysis.json").read_bytes()
     shutil.rmtree(workspace)
 
-    second = run_standard_analysis(root, registry)
+    second = run_standard_analysis(root, packages, plan, benchmark)
 
     assert second == first
     assert (workspace / "deterministic-analysis.json").read_bytes() == first_bytes
@@ -253,19 +293,19 @@ def test_standard_analysis_rejects_source_drift_before_publishing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root, registry = _standard_registry(repo_root, tmp_path, single_source=False)
-    source_manifest = root / "sources/simulation/manifest.json"
+    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    package_manifest = packages[0] / "manifest.json"
     real_benchmark_series = analysis._benchmark_series
 
     def mutate_source_after_reads(path: Path) -> dict[str, pd.Series]:
         result = real_benchmark_series(path)
-        source_manifest.write_bytes(source_manifest.read_bytes() + b" ")
+        package_manifest.write_bytes(package_manifest.read_bytes() + b" ")
         return result
 
     monkeypatch.setattr(analysis, "_benchmark_series", mutate_source_after_reads)
 
     with pytest.raises(UnifiedAnalysisError, match="changed during analysis"):
-        run_standard_analysis(root, registry)
+        run_standard_analysis(root, packages, plan, benchmark)
     assert not list(
         (root / ".local/standard-strategy-analysis").glob(
             "*/deterministic-analysis.json"
@@ -276,8 +316,7 @@ def test_standard_analysis_rejects_source_drift_before_publishing(
 def test_missing_period_observations_degrade_to_evidence_insufficient(
     repo_root: Path, tmp_path: Path
 ) -> None:
-    root, registry = _standard_registry(repo_root, tmp_path, single_source=True)
-    plan_path = root / "config/analysis-plan.json"
+    root, packages, plan_path, benchmark = _standard_package_inputs(repo_root, tmp_path)
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     plan["analyses"]["fixed_periods"] = [
         {"id": "missing", "start": "1990-01-01", "end": "1990-12-31"}
@@ -293,7 +332,7 @@ def test_missing_period_observations_degrade_to_evidence_insufficient(
     ]
     _write_json(plan_path, plan)
 
-    result = run_standard_analysis(root, registry)
+    result = run_standard_analysis(root, packages, plan_path, benchmark)
 
     period_rows = result["robustness"]["periods"]
     assert {row["dimension"] for row in period_rows} == {
@@ -309,15 +348,15 @@ def test_missing_period_observations_degrade_to_evidence_insufficient(
 def test_standard_analysis_keeps_independent_results_and_evidence_gaps(
     repo_root: Path, tmp_path: Path
 ) -> None:
-    root, registry = _standard_registry(repo_root, tmp_path, single_source=False)
+    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
 
-    result = run_standard_analysis(root, registry)
+    result = run_standard_analysis(root, packages, plan, benchmark)
 
     statuses = {row["status"] for row in result["evidence_rows"]}
     assert {"pass", "evidence_insufficient"}.issubset(statuses)
     assert result["attribution"]["status"] == "evidence_insufficient"
     assert result["robustness"]["cost_execution"][0]["status"] == "evidence_insufficient"
-    assert result["sources"]["registered_count"] == 3
+    assert result["sources"]["package_count"] == 1
     assert result["analysis_configuration"]["analysis_plan"]["path"] == (
         "config/analysis-plan.json"
     )
@@ -364,16 +403,16 @@ def test_rolling_window_accepts_exact_calendar_year() -> None:
 def test_standard_analysis_runs_single_source_return_checks(
     repo_root: Path, tmp_path: Path
 ) -> None:
-    root, registry = _standard_registry(repo_root, tmp_path, single_source=True)
+    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
 
-    result = run_standard_analysis(root, registry)
+    result = run_standard_analysis(root, packages, plan, benchmark)
 
     assert result["challenge_results"] == []
     assert result["robustness"]["bootstrap"]
     assert result["cross_scenario"]["status"] == "evidence_insufficient"
 
 
-def test_standard_skill_script_requires_one_explicit_source_registry(repo_root: Path) -> None:
+def test_standard_skill_script_requires_explicit_package_plan_and_benchmark(repo_root: Path) -> None:
     completed = subprocess.run(
         [
             str(repo_root / ".venv/Scripts/python.exe"),
@@ -393,7 +432,10 @@ def test_standard_skill_script_requires_one_explicit_source_registry(repo_root: 
     )
 
     assert completed.returncode == 2
-    assert "--source-registry" in completed.stderr
+    assert "--package" in completed.stderr
+    assert "--analysis-plan" in completed.stderr
+    assert "--benchmark-manifest" in completed.stderr
+    assert "--source-registry" not in completed.stderr
 
 
 def test_aligns_strategy_and_both_benchmarks_on_one_shared_calendar() -> None:

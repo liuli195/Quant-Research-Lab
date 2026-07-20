@@ -94,7 +94,7 @@ def build_standard_recommendation(analysis: Mapping[str, Any]) -> dict[str, Any]
         "evidence_insufficient_count": int(
             evidence.get("evidence_insufficient", 0)
         ),
-        "authority": "read_only_archived_sources",
+        "authority": "read_only_standard_result_packages",
         "next_action": "human_confirmation_required",
     }
 
@@ -102,26 +102,19 @@ def build_standard_recommendation(analysis: Mapping[str, Any]) -> dict[str, Any]
 def render_standard_analysis_report(
     analysis: Mapping[str, Any], recommendation: Mapping[str, Any]
 ) -> str:
-    source_names = {
-        "local_research": "本地研究",
-        "joinquant_backtest": "聚宽回测",
-        "joinquant_simulation": "聚宽模拟交易",
-    }
     sources = _mapping(analysis.get("sources"))
     source_rows: list[list[str]] = []
-    for source in _rows(sources.get("sources")):
-        capabilities = _mapping(source.get("capabilities"))
+    for package in _rows(sources.get("packages")):
+        capabilities = _mapping(package.get("capabilities"))
         capability_text = ", ".join(
             f"{key}={_mapping(value).get('status', 'unknown')}"
             for key, value in sorted(capabilities.items())
         )
-        source_type = str(source.get("source_type", "—"))
         source_rows.append(
             [
-                str(source.get("scenario_id", "—")),
-                source_names.get(source_type, source_type),
-                str(source.get("snapshot_id") or "—"),
-                str(source.get("manifest_sha256", "—")),
+                str(package.get("scenario_id", "—")),
+                str(package.get("content_sha256", "—")),
+                str(package.get("manifest_sha256", "—")),
                 capability_text or "—",
             ]
         )
@@ -161,9 +154,9 @@ def render_standard_analysis_report(
         f"分析标识：`{analysis.get('analysis_id', '—')}`",
         f"策略：`{analysis.get('strategy_id', '—')}`",
         "",
-        "## 来源与能力",
+        "## 结果包与能力",
         "",
-        *_table(["场景", "来源", "模拟快照", "清单摘要", "能力"], source_rows),
+        *_table(["场景", "内容摘要", "清单摘要", "能力"], source_rows),
         "",
         "## 分析配置与版本",
         "",
@@ -251,8 +244,8 @@ def render_standard_analysis_report(
             "## 人工确认",
             "",
             f"建议：`{recommendation.get('decision', 'revise_before_joinquant')}`。"
-            "本报告只读取已登记归档；不得启动、提交、同步或修改本地研究、"
-            "聚宽回测或聚宽模拟交易。",
+            "本报告只读取显式提供的标准结果包；不得修改结果包或启动任何研究、"
+            "回测、模拟交易、提交或同步操作。",
             "",
         ]
     )

@@ -25,7 +25,9 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run")
     run.add_argument("--repository", type=Path, required=True)
-    run.add_argument("--source-registry", type=Path, required=True)
+    run.add_argument("--package", type=Path, action="append", required=True)
+    run.add_argument("--analysis-plan", type=Path, required=True)
+    run.add_argument("--benchmark-manifest", type=Path, required=True)
     report = commands.add_parser("report")
     report.add_argument("--repository", type=Path, required=True)
     report.add_argument("--workspace", type=Path, required=True)
@@ -37,7 +39,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "run":
         started = time.perf_counter()
         result = unified_analysis.run_standard_analysis(
-            args.repository, args.source_registry
+            args.repository,
+            args.package,
+            args.analysis_plan,
+            args.benchmark_manifest,
         )
         print(
             json.dumps(

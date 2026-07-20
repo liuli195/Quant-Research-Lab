@@ -422,6 +422,7 @@ CallbackState = namedtuple(
         "unit_count",
         "unit_signal_n",
         "unit_base_quantities",
+        "position_costs",
         "initial_fill_price",
         "initial_signal_n",
         "common_stop",
@@ -438,6 +439,9 @@ CallbackState = namedtuple(
         "event_group_scales",
         "event_portfolio_scales",
         "event_cash_scales",
+        "event_risk_budgets",
+        "event_planned_losses",
+        "event_risk_cap_applied",
         "planned_row_indices",
         "execution_adjustment_codes",
         "frozen_signal_n",
@@ -450,6 +454,11 @@ CallbackState = namedtuple(
         "scratch_unit_bases",
         "scratch_group_units",
         "scratch_group_scales",
+        "scratch_buy_prices",
+        "scratch_risk_stops",
+        "scratch_risk_budgets",
+        "scratch_risk_allowances",
+        "scratch_risk_cap_applied",
     ),
 )
 
@@ -565,6 +574,159 @@ def _targets_for_scale_into_nb(
 
 
 @njit
+def _planned_loss_nb(
+    target: int,
+    current: int,
+    position_cost: float,
+    buy_price: float,
+    stop: float,
+) -> float:
+    if target <= 0:
+        return 0.0
+    if not _finite_positive(stop) or current < 0:
+        return np.inf
+    if current > 0 and (not np.isfinite(position_cost) or position_cost < 0.0):
+        return np.inf
+    if target <= current:
+        projected_cost = position_cost * target / current
+    else:
+        if not _finite_positive(buy_price):
+            return np.inf
+        projected_cost = position_cost + (target - current) * buy_price
+    return max(projected_cost - target * stop, 0.0)
+
+
+@njit
+def _risk_capped_target_nb(
+    target: int,
+    current: int,
+    position_cost: float,
+    buy_price: float,
+    stop: float,
+    allowance: float,
+    lot_size: int,
+) -> int:
+    if (
+        target <= 0
+        or not np.isfinite(allowance)
+        or allowance < 0.0
+        or not _finite_positive(stop)
+    ):
+        return 0
+    if (
+        current > 0
+        and (not np.isfinite(position_cost) or position_cost < 0.0)
+    ):
+        return 0
+    if (
+        _planned_loss_nb(target, current, position_cost, buy_price, stop)
+        <= allowance + 1e-9
+    ):
+        return target
+    average_cost = position_cost / current if current > 0 else buy_price
+    existing_distance = max(average_cost - stop, 0.0)
+    safe_existing = current
+    if existing_distance > 0.0:
+        safe_existing = int((allowance / existing_distance) // lot_size) * lot_size
+    if safe_existing < current:
+        return min(target, safe_existing)
+    current_loss = _planned_loss_nb(
+        current, current, position_cost, buy_price, stop
+    )
+    added_distance = max(buy_price - stop, 0.0)
+    if added_distance <= 0.0:
+        return target
+    safe_added = int(
+        ((allowance - current_loss) / added_distance) // lot_size
+    ) * lot_size
+    return min(target, current + max(safe_added, 0))
+
+
+@njit
+def _risk_cap_targets_nb(
+    targets: np.ndarray,
+    positions: np.ndarray,
+    position_costs: np.ndarray,
+    buy_prices: np.ndarray,
+    stops: np.ndarray,
+    risk_budgets: np.ndarray,
+    asset_group_ids: np.ndarray,
+    from_column: int,
+    group_count: int,
+    locked_quantities: np.ndarray,
+    lot_size: int,
+    allowances: np.ndarray,
+    capped: np.ndarray,
+) -> None:
+    for offset in range(targets.shape[0]):
+        budget = risk_budgets[offset]
+        allowances[offset] = budget if np.isfinite(budget) and budget >= 0.0 else 0.0
+        capped[offset] = False
+
+    for group in range(group_count):
+        group_budget = 0.0
+        locked_loss = 0.0
+        adjustable_budget = 0.0
+        for offset in range(targets.shape[0]):
+            if asset_group_ids[from_column + offset] != group:
+                continue
+            group_budget += allowances[offset]
+            if locked_quantities[offset] >= 0:
+                locked_loss += _planned_loss_nb(
+                    int(targets[offset]),
+                    int(round(positions[offset])),
+                    position_costs[offset],
+                    buy_prices[offset],
+                    stops[offset],
+                )
+            else:
+                adjustable_budget += allowances[offset]
+        remaining = max(group_budget - locked_loss, 0.0)
+        scale = min(remaining / adjustable_budget, 1.0) if adjustable_budget > 0.0 else 0.0
+        for offset in range(targets.shape[0]):
+            if (
+                asset_group_ids[from_column + offset] == group
+                and locked_quantities[offset] < 0
+            ):
+                allowances[offset] *= scale
+
+    portfolio_budget = 0.0
+    locked_loss = 0.0
+    adjustable_budget = 0.0
+    for offset in range(targets.shape[0]):
+        budget = risk_budgets[offset]
+        if np.isfinite(budget) and budget > 0.0:
+            portfolio_budget += budget
+        if locked_quantities[offset] >= 0:
+            locked_loss += _planned_loss_nb(
+                int(targets[offset]),
+                int(round(positions[offset])),
+                position_costs[offset],
+                buy_prices[offset],
+                stops[offset],
+            )
+        else:
+            adjustable_budget += allowances[offset]
+    remaining = max(portfolio_budget - locked_loss, 0.0)
+    scale = min(remaining / adjustable_budget, 1.0) if adjustable_budget > 0.0 else 0.0
+    for offset in range(targets.shape[0]):
+        if locked_quantities[offset] >= 0:
+            continue
+        allowances[offset] *= scale
+        before = int(targets[offset])
+        targets[offset] = _risk_capped_target_nb(
+            before,
+            int(round(positions[offset])),
+            position_costs[offset],
+            buy_prices[offset],
+            stops[offset],
+            allowances[offset],
+            lot_size,
+        )
+        capped[offset] = targets[offset] < before
+
+
+@njit
 def _cash_after_targets_nb(
     row: int,
     from_column: int,
@@ -613,6 +775,13 @@ def _cash_feasible_targets_nb(
     group_scales: np.ndarray,
     portfolio_scale: float,
     locked_quantities: np.ndarray,
+    position_costs: np.ndarray,
+    buy_prices: np.ndarray,
+    risk_stops: np.ndarray,
+    risk_budgets: np.ndarray,
+    risk_allowances: np.ndarray,
+    risk_cap_applied: np.ndarray,
+    group_count: int,
     inputs: CallbackInputs,
     params: CallbackParams,
     targets: np.ndarray,
@@ -629,6 +798,21 @@ def _cash_feasible_targets_nb(
         locked_quantities,
         params.lot_size,
         targets,
+    )
+    _risk_cap_targets_nb(
+        targets,
+        positions,
+        position_costs,
+        buy_prices,
+        risk_stops,
+        risk_budgets,
+        inputs.asset_group_ids,
+        from_column,
+        group_count,
+        locked_quantities,
+        params.lot_size,
+        risk_allowances,
+        risk_cap_applied,
     )
     if _cash_after_targets_nb(
         row, from_column, targets, positions, cash, inputs, params
@@ -648,6 +832,21 @@ def _cash_feasible_targets_nb(
         params.lot_size,
         targets,
     )
+    _risk_cap_targets_nb(
+        targets,
+        positions,
+        position_costs,
+        buy_prices,
+        risk_stops,
+        risk_budgets,
+        inputs.asset_group_ids,
+        from_column,
+        group_count,
+        locked_quantities,
+        params.lot_size,
+        risk_allowances,
+        risk_cap_applied,
+    )
     for _ in range(64):
         candidate_scale = (lower + upper) / 2.0
         if candidate_scale == lower or candidate_scale == upper:
@@ -663,6 +862,21 @@ def _cash_feasible_targets_nb(
             locked_quantities,
             params.lot_size,
             candidate_targets,
+        )
+        _risk_cap_targets_nb(
+            candidate_targets,
+            positions,
+            position_costs,
+            buy_prices,
+            risk_stops,
+            risk_budgets,
+            inputs.asset_group_ids,
+            from_column,
+            group_count,
+            locked_quantities,
+            params.lot_size,
+            risk_allowances,
+            risk_cap_applied,
         )
         matches_feasible_targets = True
         for column in range(targets.shape[0]):
@@ -685,6 +899,33 @@ def _cash_feasible_targets_nb(
                 targets[column] = candidate_targets[column]
         else:
             upper = candidate_scale
+    _targets_for_scale_into_nb(
+        unit_base_quantities,
+        unit_counts,
+        inputs.asset_group_ids,
+        from_column,
+        group_scales,
+        portfolio_scale,
+        lower,
+        locked_quantities,
+        params.lot_size,
+        targets,
+    )
+    _risk_cap_targets_nb(
+        targets,
+        positions,
+        position_costs,
+        buy_prices,
+        risk_stops,
+        risk_budgets,
+        inputs.asset_group_ids,
+        from_column,
+        group_count,
+        locked_quantities,
+        params.lot_size,
+        risk_allowances,
+        risk_cap_applied,
+    )
     return lower
 
 
@@ -698,6 +939,7 @@ def _clear_position_state_nb(column: int, state: CallbackState) -> None:
     state.initial_signal_n[column] = np.nan
     state.common_stop[column] = np.nan
     state.next_add_index[column] = 0
+    state.position_costs[column] = 0.0
 
 
 @njit
@@ -813,10 +1055,21 @@ def prepare_segment_nb(view, inputs, params, state, trace, orders) -> None:
         bases = state.scratch_unit_bases[:column_count]
         group_units = state.scratch_group_units
         group_scales = state.scratch_group_scales
+        buy_prices = state.scratch_buy_prices[:column_count]
+        risk_stops = state.scratch_risk_stops[:column_count]
+        risk_budgets = state.scratch_risk_budgets[:column_count]
+        risk_allowances = state.scratch_risk_allowances[:column_count]
+        risk_cap_applied = state.scratch_risk_cap_applied[:column_count]
         for offset in range(column_count):
             column = view.from_col + offset
             locked[offset] = -1
             targets[offset] = int(round(view.positions[offset]))
+            open_price = inputs.execution_open[row, column]
+            buy_prices[offset] = (
+                _buy_price(open_price, params.one_way_slippage)
+                if _finite_positive(open_price)
+                else np.nan
+            )
             if (
                 not _finite_positive(inputs.execution_open[row, column])
                 or inputs.paused[row, column]
@@ -854,6 +1107,37 @@ def prepare_segment_nb(view, inputs, params, state, trace, orders) -> None:
                 group_units,
                 group_scales,
             )
+            for offset in range(column_count):
+                column = view.from_col + offset
+                group = inputs.asset_group_ids[column]
+                stop = state.common_stop[column]
+                unit_budget = 0.0
+                if not exit_active[offset]:
+                    for unit in range(state.unit_count[column]):
+                        unit_budget += (
+                            state.unit_base_quantities[column, unit]
+                            * state.unit_signal_n[column, unit]
+                        )
+                    if candidate_active[offset]:
+                        signal_n = state.candidate_signal_n[row, column]
+                        unit_budget += (
+                            state.candidate_base_quantity[row, column] * signal_n
+                        )
+                        candidate_stop = (
+                            buy_prices[offset] - params.stop_n * signal_n
+                        )
+                        if _finite_positive(candidate_stop):
+                            if not _finite_positive(stop):
+                                stop = candidate_stop
+                            else:
+                                stop = max(stop, candidate_stop)
+                risk_stops[offset] = stop
+                risk_budgets[offset] = (
+                    params.stop_n
+                    * unit_budget
+                    * group_scales[group]
+                    * portfolio_scale
+                )
             cash_scale = _cash_feasible_targets_nb(
                 row,
                 view.from_col,
@@ -864,6 +1148,13 @@ def prepare_segment_nb(view, inputs, params, state, trace, orders) -> None:
                 group_scales,
                 portfolio_scale,
                 locked,
+                state.position_costs[view.from_col : view.to_col],
+                buy_prices,
+                risk_stops,
+                risk_budgets,
+                risk_allowances,
+                risk_cap_applied,
+                group_count,
                 inputs,
                 params,
                 targets,
@@ -900,6 +1191,17 @@ def prepare_segment_nb(view, inputs, params, state, trace, orders) -> None:
                 column = view.from_col + offset
                 group = inputs.asset_group_ids[column]
                 state.event_group_scales[row, column] = group_scales[group]
+                state.event_risk_budgets[row, column] = risk_budgets[offset]
+                state.event_planned_losses[row, column] = _planned_loss_nb(
+                    int(targets[offset]),
+                    int(round(view.positions[offset])),
+                    state.position_costs[column],
+                    buy_prices[offset],
+                    risk_stops[offset],
+                )
+                state.event_risk_cap_applied[row, column] = risk_cap_applied[
+                    offset
+                ]
             state.event_portfolio_scales[row] = portfolio_scale
             state.event_cash_scales[row] = cash_scale
             for offset in range(column_count):
@@ -1005,13 +1307,22 @@ def after_fill_nb(event, inputs, params, state, trace, orders) -> None:
     action = state.action_codes[row, column]
     if event.status == FILL_ACCEPTED:
         if event.side == SIDE_SELL:
+            position_before = event.position_after + event.size
+            if event.position_after <= 1e-9 or position_before <= 1e-9:
+                state.position_costs[column] = 0.0
+            else:
+                state.position_costs[column] *= (
+                    event.position_after / position_before
+                )
             if action == ACTION_FULL_EXIT and event.position_after <= 1e-9:
                 _clear_position_state_nb(column, state)
-        elif action == ACTION_ENTRY:
-            _clear_position_state_nb(column, state)
-            _record_candidate_unit_nb(row, column, event.price, state, params)
-        elif action == ACTION_ADDITION:
-            _record_candidate_unit_nb(row, column, event.price, state, params)
+        else:
+            if action == ACTION_ENTRY:
+                _clear_position_state_nb(column, state)
+                _record_candidate_unit_nb(row, column, event.price, state, params)
+            elif action == ACTION_ADDITION:
+                _record_candidate_unit_nb(row, column, event.price, state, params)
+            state.position_costs[column] += event.size * event.price
     elif event.status == FILL_REJECTED:
         state.reason_codes[row, column] = REASON_ORDER_REJECTED
 
@@ -1125,6 +1436,7 @@ def _mutable_state(
         unit_count=np.zeros(columns, dtype=np.int64),
         unit_signal_n=np.full((columns, max_units), np.nan, dtype=np.float64),
         unit_base_quantities=np.zeros((columns, max_units), dtype=np.int64),
+        position_costs=np.zeros(columns, dtype=np.float64),
         initial_fill_price=np.full(columns, np.nan, dtype=np.float64),
         initial_signal_n=np.full(columns, np.nan, dtype=np.float64),
         common_stop=np.full(columns, np.nan, dtype=np.float64),
@@ -1141,6 +1453,9 @@ def _mutable_state(
         event_group_scales=np.ones((rows, columns), dtype=np.float64),
         event_portfolio_scales=np.ones(rows, dtype=np.float64),
         event_cash_scales=np.ones(rows, dtype=np.float64),
+        event_risk_budgets=np.full((rows, columns), np.nan, dtype=np.float64),
+        event_planned_losses=np.full((rows, columns), np.nan, dtype=np.float64),
+        event_risk_cap_applied=np.zeros((rows, columns), dtype=np.bool_),
         planned_row_indices=np.full((rows, columns), -1, dtype=np.int64),
         execution_adjustment_codes=np.zeros((rows, columns), dtype=np.int16),
         frozen_signal_n=np.full((rows, columns), np.nan, dtype=np.float64),
@@ -1153,6 +1468,11 @@ def _mutable_state(
         scratch_unit_bases=np.zeros((columns, max_units), dtype=np.int64),
         scratch_group_units=np.zeros(group_count, dtype=np.float64),
         scratch_group_scales=np.ones(group_count, dtype=np.float64),
+        scratch_buy_prices=np.full(columns, np.nan, dtype=np.float64),
+        scratch_risk_stops=np.full(columns, np.nan, dtype=np.float64),
+        scratch_risk_budgets=np.zeros(columns, dtype=np.float64),
+        scratch_risk_allowances=np.zeros(columns, dtype=np.float64),
+        scratch_risk_cap_applied=np.zeros(columns, dtype=np.bool_),
     )
 
 
@@ -1182,6 +1502,9 @@ def _trace(state: CallbackState, rows: int, columns: int) -> dict[str, np.ndarra
         "event_group_scales": state.event_group_scales,
         "event_portfolio_scales": state.event_portfolio_scales,
         "event_cash_scales": state.event_cash_scales,
+        "event_risk_budgets": state.event_risk_budgets,
+        "event_planned_losses": state.event_planned_losses,
+        "event_risk_cap_applied": state.event_risk_cap_applied,
         "planned_row_indices": state.planned_row_indices,
         "execution_adjustment_codes": state.execution_adjustment_codes,
         "frozen_signal_n": state.frozen_signal_n,
