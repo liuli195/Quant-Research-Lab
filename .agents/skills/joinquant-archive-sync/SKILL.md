@@ -1,6 +1,6 @@
 ---
 name: joinquant-archive-sync
-description: Use when 用户或 Agent 需要认证聚宽、列出候选对象、同步明确指定的历史回测、增量同步活动模拟交易、补充日志、验证归档、查询 Parquet、导出 CSV 或管理北京时间计划任务。
+description: Use when 用户或 Agent 需要认证聚宽、列出候选对象、同步明确指定的历史回测、增量同步活动模拟交易、补充日志、验证归档、查询 Parquet 或导出 CSV。
 ---
 
 # 聚宽归档同步
@@ -11,9 +11,9 @@ description: Use when 用户或 Agent 需要认证聚宽、列出候选对象、
 
 1. 使用仓库 `.venv` 运行 `auth`。返回 `auth_required` 时停止同步并让用户重新登录；不要读取或打印 Cookie（浏览器凭证）。
 2. 历史对象先运行 `list-targets`，再让调用者或 Agent 指定页面序号或详情 URL（链接）。拒绝空目标、`latest`、`all` 和裸远端 ID；只对明确目标运行 `sync-backtest`。
-3. 手动模拟交易同步仍通过 `sync-active-simulations` 扫描全部活动对象；计划任务发布通过 `scheduled-sync-pr` 在仓库外专用 worktree（工作树）中完成批次门禁和 PR Flow（拉取请求流程）。
+3. 手动模拟交易同步通过 `sync-active-simulations` 扫描全部活动对象，只写入指定仓库；该命令不创建 worktree（工作树）、分支、提交或 PR（拉取请求）。
 4. 使用 `verify` 检查人工补录或现有归档。只有 manifest（清单）门禁通过后，才可用 `query` 或 `export-csv`。
-5. 使用 `self-test` 做无网络内存回归。生产入口通过后，才使用 `schedule-install`；用 `schedule-status` 查看，用 `schedule-uninstall` 卸载。
+5. 使用 `self-test` 做无网络内存回归。同步后的版本管理与 PR（拉取请求）操作由调用者另行显式执行。
 
 统一命令：
 
@@ -37,13 +37,11 @@ description: Use when 用户或 Agent 需要认证聚宽、列出候选对象、
 | 只读列出候选 | `list-targets` |
 | 同步指定回测 | `sync-backtest` |
 | 同步活动模拟交易 | `sync-active-simulations` |
-| 计划任务归档发布/恢复 | `scheduled-sync-pr` |
 | 校验/人工补录 | `verify` |
 | 查询归档 | `query` |
 | 按范围导出 | `export-csv` |
 | 积分日志预览/确认下载 | `paid-log preview` / `paid-log download --confirm` |
 | 内存端到端自检 | `self-test` |
-| 安装/查看/卸载 04:00 任务 | `schedule-install` / `schedule-status` / `schedule-uninstall` |
 
 ## 状态解释
 
@@ -52,7 +50,5 @@ description: Use when 用户或 Agent 需要认证聚宽、列出候选对象、
 - `missing_at_source`：源端确实没有，并有证据。
 - `unsupported_api_version`：当前接口明确不支持。
 - `failed`：保留上次完整版本，从未推进的游标重试。
-- `noop`：本批次没有可发布变化，不创建分支、提交或 PR（拉取请求）。
-- `run_locked`：已有同一发布入口持锁，本次安全跳过。
 
-需要命令示例、认证恢复和调度操作时读 `references/operations.md`；需要目录、数据集状态和门禁语义时读 `references/manifest.md`。
+需要命令示例与认证恢复时读 `references/operations.md`；需要目录、数据集状态和门禁语义时读 `references/manifest.md`。

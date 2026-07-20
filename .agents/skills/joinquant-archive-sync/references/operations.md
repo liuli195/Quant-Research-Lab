@@ -52,9 +52,6 @@
 # 增量同步全部活动模拟交易
 & .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py sync-active-simulations --repository .
 
-# 计划任务实际发布入口；同一命令也用于恢复未完成的 PR Flow
-& .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py scheduled-sync-pr --repository .
-
 # 查询和按需导出
 & .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py query --object <对象目录> --dataset <数据集>
 & .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py export-csv --object <对象目录> --dataset <数据集> --fields <字段列表> --destination <文件>
@@ -66,16 +63,11 @@
 & .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py paid-log download --preview-id <预览ID> --confirm --destination <补充日志.jsonl.gz>
 ```
 
-`scheduled-sync-pr` 先获取 `%LOCALAPPDATA%\QuantResearchLab\joinquant-archive-sync\` 的运行锁，再检查 GitHub（代码托管）凭证、PR Flow runtime（运行时）、远端 `main` 和 JoinQuant（聚宽）登录。它优先使用 `codex plugin list --json` 发现 PR Flow，Codex 不可用时回退 `claude plugin list --json`；两者都不可用时在同步前失败。运行结果原子保存在同目录的 `last-run.json`：`noop` 表示没有变化，`run_locked` 表示已有运行，`failed` 的 `recovery_command` 仍指向同一入口。不要把外部输出或凭证复制进该文件。
-
-安装计划任务前，`self-test` 和目标回归必须成功。安装命令会校验 Windows 时区为 `China Standard Time`，沿用仓库 `.venv`、每天 04:00、每 30 分钟最多重试 3 次的原生任务；不写常驻轮询或无限重试。`sync-active-simulations` 继续作为手动入口。现有生产任务只有在实现 PR 合并后获得单独授权，才能用 `schedule-uninstall` 和 `schedule-install` 迁移；实现或测试阶段不得替换、启停或删除它。
-
 ```powershell
 & .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py self-test
-& .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py schedule-install --repo-root .
-& .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py schedule-status
-& .\.venv\Scripts\python.exe .agents\skills\joinquant-archive-sync\scripts\jq_sync.py schedule-uninstall
 ```
+
+`sync-active-simulations` 是唯一的模拟交易同步入口：它只归档数据，不创建工作树、分支、提交或 PR（拉取请求）。同步后如需提交或发布，由调用者按仓库流程单独执行。
 
 ## 人工补录
 

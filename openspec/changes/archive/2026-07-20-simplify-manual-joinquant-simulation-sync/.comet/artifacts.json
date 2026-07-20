@@ -1,0 +1,6 @@
+{
+  "openspec_proposal": "openspec/changes/simplify-manual-joinquant-simulation-sync/proposal.md",
+  "openspec_design": "openspec/changes/simplify-manual-joinquant-simulation-sync/design.md",
+  "openspec_tasks": "openspec/changes/simplify-manual-joinquant-simulation-sync/tasks.md",
+  "openspec_delta_spec": "openspec/changes/simplify-manual-joinquant-simulation-sync/specs/joinquant-archive-sync/spec.md"
+}
