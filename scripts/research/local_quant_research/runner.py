@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from scripts.research.market_data.query import open_snapshot
-from scripts.research.market_data.storage import MarketDataError
+from scripts.research.market_data.storage import MarketDataError, publish_directory
 
 from .contracts import RunConfig, RunResult, StageRecord
 from .evidence import (
@@ -51,19 +51,6 @@ class InputIntegrityError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
-
-
-def _publish_directory(source: Path, target: Path) -> None:
-    """Atomically publish once a transient Windows directory lock is released."""
-    for delay_seconds in (0.02, 0.05, 0.1, 0.2, 0.4):
-        try:
-            os.replace(source, target)
-            return
-        except PermissionError:
-            if target.exists() or not source.exists():
-                raise
-            time.sleep(delay_seconds)
-    os.replace(source, target)
 
 
 def _resolve_repo_path(value: object, *, repo_root: Path, field: str) -> Path:
@@ -174,12 +161,6 @@ def _attempt_result(
         reasons=(message,),
         stages=tuple(stages),
     )
-
-
-def _snapshot_requirements_match(actual: object, expected: Mapping[str, object]) -> bool:
-    return actual == dict(expected)
-
-
 
 
 def _copy_verified_file(source: Path, target: Path, expected_sha256: str) -> None:
@@ -1003,9 +984,7 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
             run_id=None,
             stages=(StageRecord("snapshot_validation", "failed"),),
         )
-    if not _snapshot_requirements_match(
-        snapshot_document.get("selection"), config.snapshot_requirements
-    ):
+    if snapshot_document.get("selection") != config.snapshot_requirements:
         return _attempt_result(
             repo_root=repo_root,
             project_id=project_id,
@@ -1243,7 +1222,7 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
     stages.append(StageRecord("output_validation", "complete"))
     published = False
     try:
-        _publish_directory(staging, run_dir)
+        publish_directory(staging, run_dir)
         published = True
         _package_identity(run_dir, expected=identity)
     except (OSError, EvidenceError):

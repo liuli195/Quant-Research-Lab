@@ -11,85 +11,85 @@
     {
       "cash": {
         "rows": 3432,
-        "sha256": "dc677f3cc8474b9fcd30b5fade4a2e26e19eef0d35fcfa4e3ea91b8c4511f693"
+        "sha256": "935e15959be9c5b39fbee2c0513f98a16dd1364854210475c406a790cc27062f"
       },
       "fees": {
-        "rows": 1175,
-        "sha256": "068515cb6b9ac919ea236fc8328ae63c48f822a59a9333234802cbb516130cca"
+        "rows": 1167,
+        "sha256": "c858ea8acc751144a1260fb6a354ef94a3f943b20b9ce44d1e3a2450ff8f500b"
       },
-      "logic": "61ad786371c0d45f5dc59263e69bc65d89b68dfd6867632c036cded15af02396",
+      "logic": "b295569fec44152315c9123d75e5d4da84adff8e8e04346cf4e2e6d36b6f685e",
       "orders": {
-        "rows": 1175,
-        "sha256": "57bee02a5ce8b8674fda3ca972b88ddfde21de474e5ef748921fefce488d1c67"
+        "rows": 1167,
+        "sha256": "ef224ab680bee79b75441ba2a86475782a20aee0343f55a8da00c5b5f128ede8"
       },
       "positions": {
-        "rows": 4847,
-        "sha256": "7b33f38971ba96de5107836017c4c71042d24c90e5f3ce97b54760cfdf04e507"
+        "rows": 4818,
+        "sha256": "a235e2e4097f7f9f3777746a7609961e5c38b0e6608f3b6f5ca82bc97d42ffa0"
       },
       "scenario": "immediate-11-etf",
       "state": {
-        "events": 3249,
-        "sha256": "46260fb20344348bac7995c1cdd07400ecfe3c7844cbc3f02e6b924020d5ce37"
+        "events": 3246,
+        "sha256": "d278eae4aaf4c1c45dccdc35829b1815a1066c0e9e86d74ebfe47644cd359f63"
       },
       "value": {
         "rows": 3432,
-        "sha256": "c2c591416ece0f4b20c50ddd18e56f8fa2cc9e2fb7e43b40def8e470d76ab864"
+        "sha256": "5e6ef7fccd3757026355a33361ced0e098698e7334cc187d908d0310ddaf3749"
       }
     },
     {
       "cash": {
         "rows": 3432,
-        "sha256": "1f5023ded63daa19b4761adc608054e06064373362fc2e0131639c0acfb87722"
+        "sha256": "918ff6cf415a3f4a06ebcef8791600dc48932700edd57834bc1815fb5b92f1f6"
       },
       "fees": {
-        "rows": 3120,
-        "sha256": "12e27c82a86d918012faddfaf3b741dad92f859425a3472208858897d82556ab"
+        "rows": 3453,
+        "sha256": "6fef2711f5a3a3ef29608bacaedbc0e7dd0700af50f9d5f76fb6259e84ab3f34"
       },
-      "logic": "854db348723254a6a28dfaed9fd6c40e04776a92e14db922c3880d1a0a077962",
+      "logic": "ce4884940b68e5f37fb08d3d85c2ba60f6f6adad496893719038b7d608f9307b",
       "orders": {
-        "rows": 3120,
-        "sha256": "fa7363e9d7d8efc0123410971945cc89d22b76041804d2243f3096ae23d55955"
+        "rows": 3453,
+        "sha256": "373f96e740c78db408d594b4afc150d5c2e34f77a59e69b5ab0e88b48ee58464"
       },
       "positions": {
-        "rows": 8281,
-        "sha256": "3e2a6d781c72ff6832588bd00e5e7ac611c280be87c78b68fde140607df2c8a7"
+        "rows": 8618,
+        "sha256": "ea80212e731bd33e52d083cc6ff78dcb6598ba9cc922503387c45b60f3665dd7"
       },
       "scenario": "immediate-17-etf",
       "state": {
-        "events": 5148,
-        "sha256": "9ff69d630275163b2c4df5e67afc2279041fd6f1fbeac1c6f914c83d96559136"
+        "events": 4760,
+        "sha256": "b9f1bcb2c28956738f6fcc8caf476194ab26bb79b424ec590d2a2537c9efa5af"
       },
       "value": {
         "rows": 3432,
-        "sha256": "bdfc6b270882eee1a2b11de5922b42269928ac6234129743076e227b438de3aa"
+        "sha256": "074dac45f8ff3f5ecf3cc8a5478b0ff9b1d33acc25c5a0f8a194fe066d84a5a5"
       }
     },
     {
       "cash": {
         "rows": 3432,
-        "sha256": "b17574b64fd806ea2968dfe6ef74d20311599701964ace4c82459646713c918f"
+        "sha256": "7ec98a85379ab50a6e8fec8763415dc147752bbc8d59b745522dc0de7ef4ed8f"
       },
       "fees": {
-        "rows": 1169,
-        "sha256": "0b89b10d72852415a0c396bc46bf2f3b2a791212a70ff17ea8cfd05052a8fffa"
+        "rows": 762,
+        "sha256": "f25ac65af015aeb2bc144a221c53658752b2abfa6f019fc3d15b1810e9a25d30"
       },
-      "logic": "61c897b7c3b800c14766a7e5558922bc00ed4b8fa883042beb888c35ab9dc2f0",
+      "logic": "55696e8df1c66ec9512fabdf9b418eb0673f95d831132807c9c82e720a557043",
       "orders": {
-        "rows": 1169,
-        "sha256": "56d60dbebbd1cdabedb88af3760b7dca4de560b86061ad6729bdfce3aa43f8d1"
+        "rows": 762,
+        "sha256": "60cafd13dbf6ebda1d2b90a0628aea6d6a47d80bc4cd4ab3f82270381f5ff4cc"
       },
       "positions": {
-        "rows": 5691,
-        "sha256": "5d0924b014e69dfdb75e0d3794a8b56b6c417a507fe6935b3fc50f3522e5a14c"
+        "rows": 4080,
+        "sha256": "c9efe778a0a6abab4baa3b9dd26f49c441283c27c91aa6764042be51ac4836df"
       },
       "scenario": "delayed-11-etf-1d",
       "state": {
-        "events": 1175,
-        "sha256": "1fc6d5b118865fe2e9470bcb71d17354bdd807e9875ad78de583db276b368974"
+        "events": 1167,
+        "sha256": "ad095348d404083ca551d05c031cd3cc9df6c2aecbc0f5f37805e325b64bbb19"
       },
       "value": {
         "rows": 3432,
-        "sha256": "35d866ae6bd3a2e214f1f6388040f00fba0052348ceb56c612eb4eacc8b60152"
+        "sha256": "667c42b5bb50652d1e24221f526dc1d0f2fc4f4e0125b4f5189ac982ae23c583"
       }
     }
   ],

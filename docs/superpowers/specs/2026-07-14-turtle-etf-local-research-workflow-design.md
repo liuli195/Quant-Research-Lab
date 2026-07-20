@@ -493,3 +493,7 @@ backtests/<local_backtest_id>/
 - vectorbt 1.1.0 官方许可：<https://github.com/polakowo/vectorbt/blob/v1.1.0/LICENSE.md>
 
 官方文档把 `from_orders()`（预生成订单）、`from_signals()`（信号模拟）和 `from_order_func()` 列为三种主要模拟方式，并把 `from_order_func()` 定义为支持任意回调逻辑的最强模式。本设计只使用这些公开扩展点，不依赖未声明的私有实现。
+
+## 实现差异
+
+2026-07-20：第 12.5 节的 `quick_validate.py`（快速校验脚本）已不再是仓库可执行的验收项。当前验收以 `openspec/specs/local-quant-research-workflow/spec.md` 为准：仓库布局、契约、确定性回归、共享行情链路和公开 `run`（运行）入口 E2E（端到端）回归共同覆盖该职责。本节保留原始设计记录，不再作为当前验收依据。
