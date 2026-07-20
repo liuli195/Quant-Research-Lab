@@ -198,6 +198,16 @@ def test_standard_analysis_skill_is_the_only_public_entry(repo_root: Path) -> No
     assert "scripts\\analyze_quant_robustness.py" in skill
     assert "`run`" in skill
     assert "`report`" in skill
+    assert "--package" in skill
+    assert "--analysis-plan" in skill
+    assert "--benchmark-manifest" in skill
+    assert "--source-registry" not in skill
+    assert not (
+        source / "scripts" / "quant_analysis" / "source_registry.py"
+    ).exists()
+    assert not (
+        source / "scripts" / "quant_analysis" / "schemas" / "source-registry.schema.json"
+    ).exists()
     assert "-m scripts.research.quant_analysis" not in skill
     assert "不得启动、提交、同步或修改" in skill
 

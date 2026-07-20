@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from scripts.research.local_quant_research.contracts import (  # noqa: E402
     ExecutionRun,
@@ -94,6 +95,7 @@ def _run(
     immediate: SimpleNamespace,
     *,
     initial_cash: float = 100_000.0,
+    risk_budgets: np.ndarray | None = None,
 ):
     config = {
         "research": {"initial_cash": initial_cash},
@@ -118,6 +120,11 @@ def _run(
         "event_group_scales": np.ones((rows, columns), dtype=np.float64),
         "event_portfolio_scales": np.ones(rows, dtype=np.float64),
         "event_cash_scales": np.ones(rows, dtype=np.float64),
+        "event_risk_budgets": (
+            np.full((rows, columns), 1e30, dtype=np.float64)
+            if risk_budgets is None
+            else risk_budgets
+        ),
     }
     ledger_input = LedgerInput(
         dates=inputs.dates,
@@ -218,6 +225,71 @@ def test_delayed_buy_only_uses_lot_cash_truncation() -> None:
     assert delayed.filled_quantities[2, 0] == 100
     assert delayed.filled_quantities[2, 0] % 100 == 0
     assert delayed.filled_quantities[2, 0] < delayed.planned_quantities[2, 0]
+
+
+def test_delayed_redistribution_buy_is_capped_by_frozen_risk_budget() -> None:
+    inputs = _inputs([[10.0], [10.0], [10.0], [20.0], [20.0]])
+    immediate = _immediate(
+        rows=5,
+        columns=1,
+        orders=[
+            (0, 0, ACTION_ENTRY, REASON_ENTRY_BREAKOUT, 100),
+            (
+                2,
+                0,
+                ACTION_REDISTRIBUTION_BUY,
+                REASON_FULL_POSITION_REDISTRIBUTION,
+                200,
+            ),
+        ],
+    )
+    budgets = np.full((5, 1), np.inf, dtype=np.float64)
+    budgets[0, 0] = 200.0
+    budgets[2, 0] = 1400.0
+
+    _, delayed = _run(inputs, immediate, risk_budgets=budgets)
+
+    assert delayed.filled_quantities[3, 0] == 100
+    assert delayed.execution_adjustment_codes[3, 0] == 5
+    assert delayed.state_unit_counts[3, 0] == 1
+    assert delayed.state_common_stop[3, 0] == pytest.approx(8.0)
+
+
+def test_delayed_untradeable_over_budget_sell_blocks_redistribution_buy() -> None:
+    inputs = _inputs(
+        [[10.0, 10.0], [10.0, 10.0], [10.0, 10.0], [10.0, 20.0], [10.0, 20.0]]
+    )
+    inputs.low_limit[3, 0] = 10.0
+    immediate = _immediate(
+        rows=5,
+        columns=2,
+        orders=[
+            (0, 0, ACTION_ENTRY, REASON_ENTRY_BREAKOUT, 100),
+            (0, 1, ACTION_ENTRY, REASON_ENTRY_BREAKOUT, 100),
+            (
+                2,
+                0,
+                ACTION_REDISTRIBUTION_SELL,
+                REASON_FULL_POSITION_REDISTRIBUTION,
+                100,
+            ),
+            (
+                2,
+                1,
+                ACTION_REDISTRIBUTION_BUY,
+                REASON_FULL_POSITION_REDISTRIBUTION,
+                100,
+            ),
+        ],
+    )
+    budgets = np.full((5, 2), 1e30, dtype=np.float64)
+    budgets[0] = [200.0, 200.0]
+    budgets[2] = [0.0, 1400.0]
+
+    _, delayed = _run(inputs, immediate, risk_budgets=budgets)
+
+    assert delayed.filled_quantities[3].tolist() == [0, 0]
+    assert delayed.execution_adjustment_codes[3].tolist() == [3, 5]
 
 
 def test_delayed_sell_is_mechanically_truncated_to_actual_holding() -> None:

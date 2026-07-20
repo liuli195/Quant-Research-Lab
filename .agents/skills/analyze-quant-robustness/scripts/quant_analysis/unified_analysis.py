@@ -25,7 +25,7 @@ from .benchmarks import calculate_benchmark_statistics
 from .cvar import calculate_cvar, rolling_compound_returns
 from .evidence import ScenarioResult, build_evidence_matrix, evidence_digest
 from .robustness import block_bootstrap, summarize_bootstrap
-from .source_registry import RegisteredSource, load_source_registry
+from .package_source import PackageSource, PackageSourceError, open_package_sources
 
 
 BENCHMARK_IDS = (
@@ -71,6 +71,48 @@ def _atomic_json(path: Path, value: object) -> None:
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
     )
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, path)
+    finally:
+        temporary = Path(temporary_name)
+        if temporary.exists():
+            temporary.unlink()
+
+
+def _unavailable_cost_sensitivity(
+    definitions: Sequence[Mapping[str, object]], reason: str
+) -> tuple[list[dict[str, object]], list[ScenarioResult]]:
+    pairs = [
+        _unavailable_result(f"cost-{definition['id']}", "cost_execution", reason)
+        for definition in definitions
+    ]
+    return [row for row, _ in pairs], [result for _, result in pairs]
+
+
+def _unavailable_deletion_sensitivity(
+    universe: Mapping[str, str], reason: str
+) -> tuple[list[dict[str, object]], list[ScenarioResult]]:
+    pairs = [
+        _unavailable_result(
+            f"delete-security-{security.lower().replace('.', '-').replace('_', '-')}",
+            "asset_delete_security",
+            reason,
+        )
+        for security in sorted(universe)
+    ]
+    pairs.extend(
+        _unavailable_result(
+            f"delete-asset-group-{group.lower().replace('.', '-').replace('_', '-')}",
+            "asset_delete_group",
+            reason,
+        )
+        for group in sorted(set(universe.values()))
+    )
+    return [row for row, _ in pairs], [result for _, result in pairs]
     try:
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(payload)
@@ -226,74 +268,45 @@ def _load_common_facts(
     return returns, balances, positions, orders
 
 
-def _registered_attribution_events(registered: RegisteredSource) -> pd.DataFrame:
-    capability = registered.capabilities["attribution"]
+def _package_attribution_events(package: PackageSource) -> pd.DataFrame:
+    capability = package.capabilities["attribution"]
     if capability.get("status") != "available":
         return pd.DataFrame()
-    relative = Path(str(capability["path"]))
-    path = (registered.registration.root / relative).resolve()
-    if (
-        relative.is_absolute()
-        or ".." in relative.parts
-        or not path.is_relative_to(registered.registration.root)
-        or not path.is_file()
-        or _sha256(path) != capability["sha256"]
-    ):
-        raise UnifiedAnalysisError("registered attribution evidence changed")
-    time_field = str(capability["time_field"])
-    event_field = str(capability["event_field"])
-    reason_field = capability.get("reason_field")
-    security_field = capability.get("security_field")
-    columns = [
-        time_field,
-        event_field,
-        *([str(reason_field)] if isinstance(reason_field, str) else []),
-        *([str(security_field)] if isinstance(security_field, str) else []),
-    ]
+    path = (package.root / str(capability["path"])).resolve()
+    if not path.is_relative_to(package.root) or _sha256(path) != capability["sha256"]:
+        raise UnifiedAnalysisError("result package attribution evidence changed")
+    detail_fields = [str(field) for field in capability.get("detail_fields", [])]
+    columns = ["time", "event_id", "event_type", *detail_fields]
     frame = pq.read_table(path, columns=list(dict.fromkeys(columns))).to_pandas()
-    event_time = pd.to_datetime(frame[time_field], errors="coerce", format="mixed")
+    event_time = pd.to_datetime(frame["time"], errors="coerce", format="mixed")
     if event_time.isna().any():
-        raise UnifiedAnalysisError("registered attribution evidence has invalid event times")
-    events = pd.DataFrame(
-        {
-            "time": frame[time_field],
-            "event_time": event_time,
-            "date": event_time.dt.normalize(),
-            "event_type": frame[event_field].fillna("").astype(str),
-            "reason_code": (
-                frame[str(reason_field)].fillna("").astype(str)
-                if isinstance(reason_field, str)
-                else ""
-            ),
-            "security": (
-                frame[str(security_field)].fillna("").astype(str)
-                if isinstance(security_field, str)
-                else ""
-            ),
-        }
-    )
+        raise UnifiedAnalysisError("result package attribution evidence has invalid event times")
+    events = frame.copy()
+    events["event_time"] = event_time
+    events["date"] = event_time.dt.normalize()
+    events["event_type"] = events["event_type"].fillna("").astype(str)
+    for field in ("reason_code", "security"):
+        if field not in events:
+            events[field] = ""
+        else:
+            events[field] = events[field].fillna("").astype(str)
     if events["event_type"].eq("").any():
-        raise UnifiedAnalysisError("registered attribution evidence has invalid event identities")
+        raise UnifiedAnalysisError("result package attribution evidence has invalid event identities")
     return events
 
 
-def load_registered_scenario(
-    registered: RegisteredSource, *, analysis_params: Mapping[str, object]
-) -> ScenarioInput:
-    registration = registered.registration
-    returns, balances, positions, orders = _load_common_facts(
-        registration.root, snapshot_id=registration.snapshot_id
-    )
-    attribution_status = str(registered.capabilities["attribution"]["status"])
+def load_package_scenario(package: PackageSource) -> ScenarioInput:
+    returns, balances, positions, orders = _load_common_facts(package.root)
+    attribution_status = str(package.capabilities["attribution"]["status"])
     return ScenarioInput(
-        scenario_id=registration.scenario_id,
+        scenario_id=package.scenario_id,
         returns=returns,
         balances=balances,
         positions=positions,
         orders=orders,
-        events=_registered_attribution_events(registered),
-        params=dict(analysis_params),
-        capabilities=registered.capabilities,
+        events=_package_attribution_events(package),
+        params=dict(package.params),
+        capabilities=package.capabilities,
         attribution_status=attribution_status,
     )
 
@@ -1033,38 +1046,6 @@ def _unavailable_result(
     )
 
 
-def _unavailable_cost_sensitivity(
-    definitions: Sequence[Mapping[str, object]], reason: str
-) -> tuple[list[dict[str, object]], list[ScenarioResult]]:
-    pairs = [
-        _unavailable_result(f"cost-{definition['id']}", "cost_execution", reason)
-        for definition in definitions
-    ]
-    return [row for row, _ in pairs], [result for _, result in pairs]
-
-
-def _unavailable_deletion_sensitivity(
-    universe: Mapping[str, str], reason: str
-) -> tuple[list[dict[str, object]], list[ScenarioResult]]:
-    pairs = [
-        _unavailable_result(
-            f"delete-security-{security.lower().replace('.', '-').replace('_', '-')}",
-            "asset_delete_security",
-            reason,
-        )
-        for security in sorted(universe)
-    ]
-    pairs.extend(
-        _unavailable_result(
-            f"delete-asset-group-{group.lower().replace('.', '-').replace('_', '-')}",
-            "asset_delete_group",
-            reason,
-        )
-        for group in sorted(set(universe.values()))
-    )
-    return [row for row, _ in pairs], [result for _, result in pairs]
-
-
 def _validated_benchmark(manifest_path: Path) -> tuple[BenchmarkSet, Path]:
     path = Path(manifest_path).resolve()
     if path.name != "manifest.json":
@@ -1076,55 +1057,62 @@ def _validated_benchmark(manifest_path: Path) -> tuple[BenchmarkSet, Path]:
     return benchmark_set, benchmark_set.root / "benchmark-returns.parquet"
 
 
-def _standard_source_document(registry: object) -> dict[str, object]:
-    sources = getattr(registry, "sources")
+def _standard_package_document(
+    packages: Sequence[PackageSource],
+) -> dict[str, object]:
     return {
-        "registry_sha256": getattr(registry, "sha256"),
         "script_version": _SCRIPT_VERSION,
-        "sources": [
+        "packages": [
             {
-                "scenario_id": item.registration.scenario_id,
-                "source_type": item.registration.source_type,
-                "manifest_sha256": item.registration.manifest_sha256,
-                "snapshot_id": item.registration.snapshot_id,
-                "capabilities": dict(item.capabilities),
+                "scenario_id": package.scenario_id,
+                "content_sha256": package.content_sha256,
+                "manifest_sha256": package.manifest_sha256,
+                "capabilities": dict(package.capabilities),
             }
-            for item in sources
+            for package in packages
         ],
     }
 
 
 def _analysis_input_identity(
-    registry: object,
+    packages: Sequence[PackageSource],
     expanded: Mapping[str, object],
     benchmark_set: BenchmarkSet,
 ) -> dict[str, object]:
     data = benchmark_set.manifest["data"]
     assert isinstance(data, Mapping)
     return {
-        "registry_sha256": getattr(registry, "sha256"),
         "analysis_plan_sha256": expanded["analysis_plan_sha256"],
         "baseline_config_sha256": expanded["baseline_config_sha256"],
         "benchmark_set_id": benchmark_set.benchmark_set_id,
         "benchmark_manifest_sha256": _sha256(benchmark_set.root / "manifest.json"),
         "benchmark_data_sha256": data["sha256"],
-        "source_manifests": [
+        "result_packages": [
             {
-                "scenario_id": item.registration.scenario_id,
-                "sha256": item.registration.manifest_sha256,
-                "attribution": dict(item.capabilities["attribution"]),
+                "scenario_id": package.scenario_id,
+                "content_sha256": package.content_sha256,
+                "manifest_sha256": package.manifest_sha256,
+                "attribution": dict(package.capabilities["attribution"]),
             }
-            for item in getattr(registry, "sources")
+            for package in packages
         ],
     }
 
 
-def run_standard_analysis(repo_root: Path, source_registry_path: Path) -> dict[str, object]:
+def run_standard_analysis(
+    repo_root: Path,
+    package_paths: Sequence[Path],
+    analysis_plan_path: Path,
+    benchmark_manifest_path: Path,
+) -> dict[str, object]:
     root = Path(repo_root).resolve()
-    registry = load_source_registry(root, source_registry_path)
-    expanded = expand_analysis_plan(root, registry.analysis_plan)
-    benchmark_set, benchmark_data = _validated_benchmark(registry.benchmark_manifest)
-    input_identity = _analysis_input_identity(registry, expanded, benchmark_set)
+    try:
+        packages = open_package_sources(package_paths)
+    except PackageSourceError as exc:
+        raise UnifiedAnalysisError(str(exc)) from exc
+    expanded = expand_analysis_plan(root, analysis_plan_path)
+    benchmark_set, benchmark_data = _validated_benchmark(benchmark_manifest_path)
+    input_identity = _analysis_input_identity(packages, expanded, benchmark_set)
     analysis_id = evidence_digest(
         {
             "formula_version": _FORMULA_VERSION,
@@ -1135,27 +1123,31 @@ def run_standard_analysis(repo_root: Path, source_registry_path: Path) -> dict[s
         str(item["scenario_id"]): item
         for item in expanded["scenarios"]
     }
-    registered_ids = [item.registration.scenario_id for item in registry.sources]
-    if any(identifier not in configurations for identifier in registered_ids):
-        raise UnifiedAnalysisError("registered scenario is absent from the analysis plan")
-    if registry.baseline_scenario_id not in registered_ids:
-        raise UnifiedAnalysisError("registered sources do not contain the baseline")
+    package_ids = [package.scenario_id for package in packages]
+    if any(package.strategy_id != expanded["strategy_id"] for package in packages):
+        raise UnifiedAnalysisError("result package strategy differs from the analysis plan")
+    if any(identifier not in configurations for identifier in package_ids):
+        raise UnifiedAnalysisError("result package scenario is absent from the analysis plan")
+    if "baseline" not in package_ids:
+        raise UnifiedAnalysisError("result packages do not contain the baseline")
+    for package in packages:
+        expected = configurations[package.scenario_id]["params"]
+        if dict(package.params) != expected:
+            raise UnifiedAnalysisError(
+                f"result package parameters differ from analysis plan: {package.scenario_id}"
+            )
     scenarios = {
-        item.registration.scenario_id: load_registered_scenario(
-            item,
-            analysis_params=configurations[item.registration.scenario_id]["params"],
-        )
-        for item in registry.sources
+        package.scenario_id: load_package_scenario(package) for package in packages
     }
     analysis_root = root / ".local" / "standard-strategy-analysis" / analysis_id
-    source_document = _standard_source_document(registry)
-    source_document["benchmark"] = {
+    package_document = _standard_package_document(packages)
+    package_document["benchmark"] = {
         "benchmark_set_id": benchmark_set.benchmark_set_id,
         "manifest_sha256": input_identity["benchmark_manifest_sha256"],
         "data_sha256": input_identity["benchmark_data_sha256"],
     }
 
-    baseline = scenarios[registry.baseline_scenario_id]
+    baseline = scenarios["baseline"]
     universe = expanded["universe"]
     thresholds = expanded["thresholds"]
     baseline_positions = _position_facts(baseline, universe)
@@ -1175,8 +1167,8 @@ def run_standard_analysis(repo_root: Path, source_registry_path: Path) -> dict[s
     ]
 
     challenge_rows: list[dict[str, object]] = []
-    for scenario_id in registered_ids:
-        if scenario_id == registry.baseline_scenario_id:
+    for scenario_id in package_ids:
+        if scenario_id == "baseline":
             continue
         scenario = scenarios[scenario_id]
         positions = _position_facts(scenario, universe)
@@ -1263,7 +1255,7 @@ def run_standard_analysis(repo_root: Path, source_registry_path: Path) -> dict[s
     )
     if len(scenarios) == 1:
         cross_scenario, cross_evidence = _unavailable_result(
-            "cross-scenario", "cross_scenario", "single_registered_source"
+            "cross-scenario", "cross_scenario", "single_result_package"
         )
     else:
         failed = sum(row["status"] == "fail" for row in challenge_rows)
@@ -1271,8 +1263,8 @@ def run_standard_analysis(repo_root: Path, source_registry_path: Path) -> dict[s
             "scenario_id": "cross-scenario",
             "dimension": "cross_scenario",
             "status": "pass" if failed == 0 else "fail",
-            "reasons": [] if failed == 0 else ["registered_scenario_failure"],
-            "metrics": {"registered_scenarios": len(scenarios), "failed_scenarios": failed},
+            "reasons": [] if failed == 0 else ["scenario_failure"],
+            "metrics": {"package_count": len(scenarios), "failed_scenarios": failed},
         }
         cross_evidence = ScenarioResult(
             scenario_id="cross-scenario",
@@ -1298,20 +1290,18 @@ def run_standard_analysis(repo_root: Path, source_registry_path: Path) -> dict[s
     failures = [row for row in evidence_rows if row["status"] == "fail"]
     insufficient = [row for row in evidence_rows if row["status"] == "evidence_insufficient"]
     try:
-        final_registry = load_source_registry(root, source_registry_path)
-        final_expanded = expand_analysis_plan(root, final_registry.analysis_plan)
-        final_benchmark, _ = _validated_benchmark(
-            final_registry.benchmark_manifest
-        )
+        final_packages = open_package_sources(package_paths)
+        final_expanded = expand_analysis_plan(root, analysis_plan_path)
+        final_benchmark, _ = _validated_benchmark(benchmark_manifest_path)
         final_identity = _analysis_input_identity(
-            final_registry, final_expanded, final_benchmark
+            final_packages, final_expanded, final_benchmark
         )
-    except ValueError as exc:
+    except (PackageSourceError, ValueError) as exc:
         raise UnifiedAnalysisError("analysis inputs changed during analysis") from exc
     if final_identity != input_identity:
         raise UnifiedAnalysisError("analysis inputs changed during analysis")
 
-    _immutable_json(analysis_root / "source-results.json", source_document)
+    _immutable_json(analysis_root / "package-results.json", package_document)
     evidence_path = build_evidence_matrix(
         evidence, analysis_root / "evidence-matrix.parquet"
     )
@@ -1324,9 +1314,9 @@ def run_standard_analysis(repo_root: Path, source_registry_path: Path) -> dict[s
         },
         "analysis_id": analysis_id,
         "strategy_id": expanded["strategy_id"],
-        "authority": "read_only_archived_sources",
+        "authority": "read_only_standard_result_packages",
         "source_mutation": "forbidden",
-        "sources": {"registered_count": len(scenarios), **source_document},
+        "sources": {"package_count": len(scenarios), **package_document},
         "analysis_configuration": {
             "analysis_plan": {
                 "path": expanded["analysis_plan"],

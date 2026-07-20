@@ -17,6 +17,7 @@ from ._delayed import (
     ADJUST_HOLDING_TRUNCATED,
     ADJUST_HORIZON_EXPIRED,
     ADJUST_NONE,
+    ADJUST_RISK_TRUNCATED,
     ADJUST_UNTRADABLE,
     _filled_matrix,
 )
@@ -99,6 +100,7 @@ _ADJUSTMENT_NAMES = {
     ADJUST_HOLDING_TRUNCATED: "holding_truncated",
     ADJUST_UNTRADABLE: "untradable",
     ADJUST_HORIZON_EXPIRED: "horizon_expired",
+    ADJUST_RISK_TRUNCATED: "risk_truncated",
 }
 
 _ATTRIBUTION_SCHEMA = pa.schema(
@@ -377,6 +379,21 @@ def _build_attribution_table(
         shape,
         "frozen_signal_n",
     )
+    risk_budgets = _matrix(
+        trace["event_risk_budgets"],
+        shape,
+        "event_risk_budgets",
+    ).astype(np.float64)
+    planned_losses = _matrix(
+        trace["event_planned_losses"],
+        shape,
+        "event_planned_losses",
+    ).astype(np.float64)
+    risk_cap_applied = _matrix(
+        trace["event_risk_cap_applied"],
+        shape,
+        "event_risk_cap_applied",
+    ).astype(np.bool_)
     execution_delay_days = context.delay_days
     if np.any(requested < 0) or np.any(planned < 0) or np.any(filled < 0):
         raise ResultContractError("simulation quantities must be non-negative")
@@ -600,6 +617,12 @@ def _build_attribution_table(
             risk_after = _planned_risk(
                 after, float(average_cost[column]), stop_after
             )
+            group = inputs.asset_group_ids[column]
+            group_mask = inputs.asset_group_ids == group
+            group_risk_budget = float(np.nansum(risk_budgets[row, group_mask]))
+            group_planned_loss = float(np.nansum(planned_losses[row, group_mask]))
+            portfolio_risk_budget = float(np.nansum(risk_budgets[row]))
+            portfolio_planned_loss = float(np.nansum(planned_losses[row]))
             if action != "none" or source_reason != "none" or state_changed:
                 event_type = (
                     "decision"
@@ -660,6 +683,13 @@ def _build_attribution_table(
                             cash_scale=float(event_cash_scales[row]),
                             effective_risk_units=effective_risk_units,
                             portfolio_unit_cap=portfolio_unit_cap,
+                            risk_budget_amount=risk_budgets[row, column],
+                            projected_planned_loss=planned_losses[row, column],
+                            group_risk_budget_amount=group_risk_budget,
+                            group_projected_planned_loss=group_planned_loss,
+                            portfolio_risk_budget_amount=portfolio_risk_budget,
+                            portfolio_projected_planned_loss=portfolio_planned_loss,
+                            risk_cap_applied=risk_cap_applied[row, column],
                             redistribution_state_changed=(
                                 logical_state_changed
                                 if action

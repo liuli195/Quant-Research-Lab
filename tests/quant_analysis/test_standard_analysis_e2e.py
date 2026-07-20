@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from tests.quant_analysis.test_unified_analysis import _standard_registry
+from tests.quant_analysis.test_unified_analysis import _standard_package_inputs
 
 
 def _tree_sha(root: Path) -> str:
@@ -17,16 +17,11 @@ def _tree_sha(root: Path) -> str:
     return digest.hexdigest()
 
 
-def test_standard_analysis_skill_runs_only_the_read_only_registered_flow(
+def test_standard_analysis_skill_runs_only_the_read_only_package_flow(
     repo_root: Path, tmp_path: Path
 ) -> None:
-    root, registry = _standard_registry(repo_root, tmp_path, single_source=False)
-    sources = {
-        "local": root / "sources/local",
-        "backtest": root / "sources/backtest",
-        "simulation": root / "sources/simulation",
-    }
-    before = {name: _tree_sha(path) for name, path in sources.items()}
+    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    before = _tree_sha(packages[0])
     skill = (
         repo_root / ".agents/skills/analyze-quant-robustness/SKILL.md"
     ).read_text(encoding="utf-8")
@@ -59,8 +54,12 @@ def test_standard_analysis_skill_runs_only_the_read_only_registered_flow(
         "run",
         "--repository",
         str(root),
-        "--source-registry",
-        registry.relative_to(root).as_posix(),
+        "--package",
+        str(packages[0]),
+        "--analysis-plan",
+        str(plan),
+        "--benchmark-manifest",
+        str(benchmark),
     ]
 
     analysis_process = subprocess.run(
@@ -99,4 +98,4 @@ def test_standard_analysis_skill_runs_only_the_read_only_registered_flow(
     assert (workspace / "deterministic-analysis.json").is_file()
     assert (workspace / "standard-strategy-analysis-report.md").is_file()
     assert (workspace / "recommendation.json").is_file()
-    assert {name: _tree_sha(path) for name, path in sources.items()} == before
+    assert _tree_sha(packages[0]) == before

@@ -174,6 +174,23 @@ def test_attribution_extension_uses_exact_fields_and_covers_each_order() -> None
     assert all(isinstance(json.loads(row["details_json"]), dict) for row in rows)
 
 
+def test_decision_attribution_exposes_three_layer_stop_risk_budget() -> None:
+    _, extension = _execute((10.0, 12.0, 13.0, 14.0), 0)
+    decision = next(
+        row for row in extension.table.to_pylist() if row["event_type"] == "decision"
+    )
+    details = json.loads(decision["details_json"])
+
+    assert details["projected_planned_loss"] <= details["risk_budget_amount"] + 1e-9
+    assert details["group_projected_planned_loss"] <= (
+        details["group_risk_budget_amount"] + 1e-9
+    )
+    assert details["portfolio_projected_planned_loss"] <= (
+        details["portfolio_risk_budget_amount"] + 1e-9
+    )
+    assert isinstance(details["risk_cap_applied"], bool)
+
+
 def test_delayed_attribution_preserves_planned_and_execution_dates() -> None:
     _, extension = _execute((10.0, 12.0, 13.0, 14.0), 1)
     decision = next(

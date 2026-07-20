@@ -29,6 +29,8 @@ from ._kernel import (
     _commission,
     _finite_positive,
     _order_buffer,
+    _planned_loss_nb,
+    _risk_capped_target_nb,
     _sell_price,
 )
 
@@ -38,6 +40,7 @@ ADJUST_CASH_TRUNCATED = 1
 ADJUST_HOLDING_TRUNCATED = 2
 ADJUST_UNTRADABLE = 3
 ADJUST_HORIZON_EXPIRED = 4
+ADJUST_RISK_TRUNCATED = 5
 
 
 DelayedInputs = namedtuple(
@@ -52,6 +55,7 @@ DelayedInputs = namedtuple(
         "plan_requested",
         "plan_targets",
         "plan_signal_n",
+        "plan_risk_budgets",
         "delay_days",
     ),
 )
@@ -62,6 +66,7 @@ DelayedState = namedtuple(
         "common_stop",
         "next_add_index",
         "unit_count",
+        "position_costs",
         "action_codes",
         "reason_codes",
         "requested_quantities",
@@ -72,6 +77,9 @@ DelayedState = namedtuple(
         "planned_row_indices",
         "execution_adjustment_codes",
         "frozen_signal_n",
+        "event_risk_budgets",
+        "event_planned_losses",
+        "event_risk_cap_applied",
     ),
 )
 
@@ -112,6 +120,19 @@ def prepare_delayed_segment_nb(view, inputs, params, state, trace, orders) -> No
     if source_row < 0:
         return
     projected_cash = view.cash
+    for offset in range(view.to_col - view.from_col):
+        column = view.from_col + offset
+        held = int(round(view.positions[offset]))
+        state.event_risk_budgets[row, column] = inputs.plan_risk_budgets[
+            source_row, column
+        ]
+        state.event_planned_losses[row, column] = _planned_loss_nb(
+            held,
+            held,
+            state.position_costs[column],
+            np.nan,
+            state.common_stop[column],
+        )
     for category in range(4):
         for offset in range(view.to_col - view.from_col):
             column = view.from_col + offset
@@ -147,23 +168,78 @@ def prepare_delayed_segment_nb(view, inputs, params, state, trace, orders) -> No
                 price = _sell_price(open_price, params.one_way_slippage)
                 fee = _commission(price, quantity, params.commission_multiplier)
                 projected_cash += price * quantity - fee
+                target_after = held - quantity
+                state.event_planned_losses[row, column] = _planned_loss_nb(
+                    target_after,
+                    held,
+                    state.position_costs[column],
+                    price,
+                    state.common_stop[column],
+                )
                 orders[1][column] = SIDE_SELL
                 orders[5][column] = np.nan
             else:
                 price = _buy_price(open_price, params.one_way_slippage)
+                signal_n = inputs.plan_signal_n[source_row, column]
+                risk_stop = state.common_stop[column]
+                if action == ACTION_ENTRY or action == ACTION_ADDITION:
+                    candidate_stop = price - params.stop_n * signal_n
+                    if action == ACTION_ENTRY or not np.isfinite(risk_stop):
+                        risk_stop = candidate_stop
+                    else:
+                        risk_stop = max(risk_stop, candidate_stop)
+                held = int(round(view.positions[offset]))
+                risk_target = held
+                risk_increase_allowed = True
+                # ponytail: block all delayed buys on unresolved excess; add
+                # group-local recovery only if delayed fill rates become material.
+                for other_offset in range(view.to_col - view.from_col):
+                    other_column = view.from_col + other_offset
+                    other_budget = state.event_risk_budgets[row, other_column]
+                    other_loss = state.event_planned_losses[row, other_column]
+                    if (
+                        np.isfinite(other_budget)
+                        and np.isfinite(other_loss)
+                        and other_loss > other_budget + 1e-9
+                    ):
+                        risk_increase_allowed = False
+                        break
+                if risk_increase_allowed:
+                    risk_target = _risk_capped_target_nb(
+                        held + target,
+                        held,
+                        state.position_costs[column],
+                        price,
+                        risk_stop,
+                        inputs.plan_risk_budgets[source_row, column],
+                        params.lot_size,
+                    )
+                risk_quantity = max(risk_target - held, 0)
                 quantity = _affordable_quantity(
                     projected_cash,
-                    target,
+                    min(target, risk_quantity),
                     params.lot_size,
                     price,
                     params.commission_multiplier,
                 )
-                if quantity < target:
+                if risk_quantity < target:
+                    state.execution_adjustment_codes[row, column] = (
+                        ADJUST_RISK_TRUNCATED
+                    )
+                    state.event_risk_cap_applied[row, column] = True
+                if quantity < risk_quantity:
                     state.execution_adjustment_codes[row, column] = ADJUST_CASH_TRUNCATED
                 if quantity <= 0:
                     continue
                 fee = _commission(price, quantity, params.commission_multiplier)
                 projected_cash -= price * quantity + fee
+                state.event_planned_losses[row, column] = _planned_loss_nb(
+                    held + quantity,
+                    held,
+                    state.position_costs[column],
+                    price,
+                    risk_stop,
+                )
                 orders[1][column] = SIDE_BUY
                 orders[5][column] = float(params.lot_size)
             orders[0][column] = True
@@ -184,11 +260,17 @@ def after_delayed_fill_nb(event, inputs, params, state, trace, orders) -> None:
     if event.status != FILL_ACCEPTED:
         return
     if event.side == SIDE_SELL:
+        position_before = event.position_after + event.size
+        if event.position_after <= 1e-9 or position_before <= 1e-9:
+            state.position_costs[column] = 0.0
+        else:
+            state.position_costs[column] *= event.position_after / position_before
         if action == ACTION_FULL_EXIT and event.position_after <= 1e-9:
             state.common_stop[column] = np.nan
             state.next_add_index[column] = 0
             state.unit_count[column] = 0
         return
+    state.position_costs[column] += event.size * event.price
     if action != ACTION_ENTRY and action != ACTION_ADDITION:
         return
     signal_n = state.frozen_signal_n[row, column]
@@ -228,6 +310,7 @@ def _state(
         common_stop=np.full(columns, np.nan, dtype=np.float64),
         next_add_index=np.zeros(columns, dtype=np.int64),
         unit_count=np.zeros(columns, dtype=np.int64),
+        position_costs=np.zeros(columns, dtype=np.float64),
         action_codes=np.zeros((rows, columns), dtype=np.int16),
         reason_codes=np.zeros((rows, columns), dtype=np.int16),
         requested_quantities=np.zeros((rows, columns), dtype=np.int64),
@@ -238,6 +321,9 @@ def _state(
         planned_row_indices=np.full((rows, columns), -1, dtype=np.int64),
         execution_adjustment_codes=np.zeros((rows, columns), dtype=np.int16),
         frozen_signal_n=np.full((rows, columns), np.nan, dtype=np.float64),
+        event_risk_budgets=np.full((rows, columns), np.nan, dtype=np.float64),
+        event_planned_losses=np.full((rows, columns), np.nan, dtype=np.float64),
+        event_risk_cap_applied=np.zeros((rows, columns), dtype=np.bool_),
     )
 
 
@@ -245,7 +331,7 @@ def _trace(state: DelayedState) -> dict[str, np.ndarray]:
     return {
         name: getattr(state, name)
         for name in DelayedState._fields
-        if name not in {"common_stop", "next_add_index", "unit_count"}
+        if name not in {"common_stop", "next_add_index", "unit_count", "position_costs"}
     }
 
 
@@ -296,6 +382,9 @@ def build_delayed_program(
         np.int64
     )
     plan_signal_n = np.where(valid, inputs.signal_n, np.nan).astype(np.float64)
+    plan_risk_budgets = np.asarray(
+        trace["event_risk_budgets"], dtype=np.float64
+    )
     state = _state(rows, columns)
     delayed_inputs = DelayedInputs(
         inputs.execution_open,
@@ -307,6 +396,7 @@ def build_delayed_program(
         plan_requested,
         plan_targets,
         plan_signal_n,
+        plan_risk_budgets,
         context.delay_days,
     )
     return OrderProgram(

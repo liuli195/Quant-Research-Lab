@@ -197,6 +197,62 @@ def test_group_and_portfolio_unit_scales_follow_confirmed_formula() -> None:
     assert portfolio_scale == pytest.approx(0.75)
 
 
+def test_stop_risk_cap_enforces_asset_group_and_portfolio_budgets() -> None:
+    cap = getattr(
+        callbacks._risk_cap_targets_nb,
+        "py_func",
+        callbacks._risk_cap_targets_nb,
+    )
+    planned_loss = getattr(
+        callbacks._planned_loss_nb,
+        "py_func",
+        callbacks._planned_loss_nb,
+    )
+    targets = np.asarray([400, 400, 400], dtype=np.int64)
+    positions = np.asarray([300.0, 300.0, 300.0])
+    costs = np.asarray([3000.0, 3000.0, 3000.0])
+    prices = np.asarray([20.0, 20.0, 20.0])
+    stops = np.asarray([8.0, 8.0, 8.0])
+    budgets = np.asarray([800.0, 400.0, 400.0])
+    groups = np.asarray([0, 0, 1], dtype=np.int64)
+    locked = np.asarray([-1, -1, -1], dtype=np.int64)
+    allowances = np.empty(3, dtype=np.float64)
+    capped = np.zeros(3, dtype=np.bool_)
+
+    cap(
+        targets,
+        positions,
+        costs,
+        prices,
+        stops,
+        budgets,
+        groups,
+        0,
+        2,
+        locked,
+        100,
+        allowances,
+        capped,
+    )
+
+    losses = np.asarray(
+        [
+            planned_loss(
+                int(targets[index]),
+                int(positions[index]),
+                costs[index],
+                prices[index],
+                stops[index],
+            )
+            for index in range(3)
+        ]
+    )
+    assert np.all(losses <= budgets + 1e-9)
+    assert losses[:2].sum() <= budgets[:2].sum() + 1e-9
+    assert losses.sum() <= budgets.sum() + 1e-9
+    assert capped.all()
+
+
 def test_target_rounding_is_uniform_and_input_order_invariant() -> None:
     bases = np.asarray([[1000, 0, 0, 0], [2000, 0, 0, 0]], dtype=np.int64)
     counts = np.asarray([1, 1], dtype=np.int64)
@@ -254,6 +310,31 @@ def test_late_breakout_displaces_earlier_position_without_changing_its_unit() ->
     assert result.state_common_stop[1, 0] == result.state_common_stop[0, 0]
     assert result.action_codes[2].tolist() == [callbacks.ACTION_NONE] * 2
     assert result.filled_quantities[2].tolist() == [0, 0]
+
+
+def test_redistribution_buy_stays_within_frozen_stop_risk_budget() -> None:
+    inputs = _inputs(
+        opens=[[10.0, 10.0], [20.0, 10.0], [20.0, 10.0]],
+        signal_close=[[11.0, 11.0], [10.0, 5.0], [10.0, np.nan]],
+        entry_high=[[10.0, 10.0], [20.0, 20.0], [20.0, np.nan]],
+        exit_low=[[np.nan, np.nan], [np.nan, 6.0], [np.nan, np.nan]],
+        signal_n=[[0.1, 0.1], [0.1, 0.1], [0.1, 0.1]],
+    )
+    result = _run(inputs, _config(initial_cash=100_005.0))
+
+    initial_quantity = int(result.state_quantities[0, 0])
+    added_quantity = int(result.filled_quantities[1, 0])
+    final_quantity = int(result.state_quantities[1, 0])
+    stop = float(result.state_common_stop[1, 0])
+    planned_loss = (
+        initial_quantity * 10.0 + added_quantity * 20.0 - final_quantity * stop
+    )
+    frozen_budget = 2.0 * 10_000 * 0.1
+
+    assert result.action_codes[1, 0] == callbacks.ACTION_REDISTRIBUTION_BUY
+    assert planned_loss <= frozen_budget + 1e-9
+    assert result.state_unit_counts[1, 0] == 1
+    assert stop == pytest.approx(result.state_common_stop[0, 0])
 
 
 def test_same_group_units_scale_uniformly() -> None:

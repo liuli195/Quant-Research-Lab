@@ -20,14 +20,12 @@ def _standard_analysis() -> dict[str, object]:
         "strategy_id": "strategy-1",
         "source_mutation": "forbidden",
         "sources": {
-            "registered_count": 1,
-            "registry_sha256": "a" * 64,
-            "sources": [
+            "package_count": 1,
+            "packages": [
                 {
                     "scenario_id": "baseline",
-                    "source_type": "joinquant_simulation",
+                    "content_sha256": "a" * 64,
                     "manifest_sha256": "b" * 64,
-                    "snapshot_id": "snapshot-1",
                     "capabilities": {
                         "attribution": {"status": "missing_at_source"},
                         "official_risk": {"status": "available"},
@@ -69,7 +67,7 @@ def _standard_analysis() -> dict[str, object]:
         },
         "cross_scenario": {
             "status": "evidence_insufficient",
-            "reasons": ["single_registered_source"],
+            "reasons": ["single_result_package"],
         },
         "robustness": {
             "periods": [],
@@ -117,7 +115,7 @@ def _standard_analysis() -> dict[str, object]:
     }
 
 
-def test_standard_report_lists_source_identity_capabilities_and_evidence_gaps(
+def test_standard_report_lists_package_identity_capabilities_and_evidence_gaps(
     tmp_path: Path,
 ) -> None:
     repository = tmp_path / "repository"
@@ -135,8 +133,8 @@ def test_standard_report_lists_source_identity_capabilities_and_evidence_gaps(
 
     delivery = write_standard_analysis_delivery(repository, workspace)
 
-    assert "聚宽模拟交易" in report
-    assert "snapshot-1" in report
+    assert "结果包与能力" in report
+    assert "a" * 64 in report
     assert "证据不足" in report
     assert "config/analysis-plan.json" in report
     assert "standard-strategy-analysis/1" in report
