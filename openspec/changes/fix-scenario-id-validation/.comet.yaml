@@ -1,6 +1,6 @@
 workflow: hotfix
 language: zh-CN
-phase: build
+phase: verify
 context_compression: beta
 build_mode: direct
 build_pause: null
@@ -13,9 +13,9 @@ auto_transition: true
 base_ref: 67ffcd249fcfb63ef6ad61366e2ec9b4bfa32ef9
 design_doc: null
 plan: null
-verify_result: fail
-verification_report: null
-branch_status: pending
+verify_result: pending
+verification_report: docs/superpowers/reports/2026-07-21-fix-scenario-id-validation-verify.md
+branch_status: handled
 created_at: 2026-07-20
 verified_at: null
 archived: false
