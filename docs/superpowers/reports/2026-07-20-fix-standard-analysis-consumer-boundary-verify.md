@@ -1,9 +1,9 @@
 # 标准量化分析输入边界 hotfix（紧急修复）验证报告
 
-验证日期：2026-07-20  
-变更：`fix-standard-analysis-consumer-boundary`  
-基线提交：`e090a2423b0a6aaefd616b329f7ac083f71a16d5`  
-实现提交：`c203415`、`de1bd4d`、`a6baf08`、`bd2e338`、`3354220`
+- 验证日期：2026-07-20
+- 变更：`fix-standard-analysis-consumer-boundary`
+- 基线提交：`e090a2423b0a6aaefd616b329f7ac083f71a16d5`
+- 实现提交：`c203415`、`de1bd4d`、`a6baf08`、`bd2e338`、`3354220`
 
 ## 汇总
 
