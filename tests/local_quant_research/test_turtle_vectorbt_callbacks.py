@@ -369,6 +369,25 @@ def test_each_filled_unit_freezes_its_own_n_and_only_raises_common_stop() -> Non
     assert result.state_next_add_index[:, 0].tolist() == [1, 2, 2]
 
 
+def test_trailing_stop_uses_prior_close_and_only_moves_upward() -> None:
+    inputs = _inputs(
+        opens=[[10.0], [10.0], [10.0]],
+        signal_close=[[11.0], [14.0], [11.0]],
+        entry_high=[[10.0], [20.0], [20.0]],
+        signal_n=[[1.0], [1.0], [1.0]],
+    )
+    config = _config()
+    config["signal"].update(
+        {"trailing_stop_n": 2.0, "trailing_activation_n": 1.0}
+    )
+
+    result = _run(inputs, config)
+
+    assert result.state_common_stop[1, 0] == pytest.approx(12.0)
+    assert result.reason_codes[2, 0] == callbacks.REASON_PROTECTIVE_STOP
+    assert result.state_quantities[2, 0] == 0
+
+
 def test_additions_use_fixed_initial_levels_one_per_day_and_stop_at_four() -> None:
     inputs = _inputs(
         opens=[[10.0], [11.0], [11.5], [12.0], [12.5]],

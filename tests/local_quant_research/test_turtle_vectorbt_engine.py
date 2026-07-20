@@ -81,6 +81,8 @@ def test_callback_contract_contains_only_strategy_inputs_and_risk_parameters() -
         "unit_risk_per_n",
         "add_step_n",
         "stop_n",
+        "trailing_stop_n",
+        "trailing_activation_n",
         "max_units",
         "asset_group_unit_cap",
         "portfolio_unit_cap",

@@ -408,6 +408,8 @@ CallbackParams = namedtuple(
         "unit_risk_per_n",
         "add_step_n",
         "stop_n",
+        "trailing_stop_n",
+        "trailing_activation_n",
         "max_units",
         "asset_group_unit_cap",
         "portfolio_unit_cap",
@@ -426,6 +428,7 @@ CallbackState = namedtuple(
         "initial_fill_price",
         "initial_signal_n",
         "common_stop",
+        "highest_signal_close",
         "next_add_index",
         "candidate_signal_n",
         "candidate_base_quantity",
@@ -938,6 +941,7 @@ def _clear_position_state_nb(column: int, state: CallbackState) -> None:
     state.initial_fill_price[column] = np.nan
     state.initial_signal_n[column] = np.nan
     state.common_stop[column] = np.nan
+    state.highest_signal_close[column] = np.nan
     state.next_add_index[column] = 0
     state.position_costs[column] = 0.0
 
@@ -983,6 +987,29 @@ def prepare_segment_nb(view, inputs, params, state, trace, orders) -> None:
         if position <= 0.0 or not _finite_positive(close):
             continue
         reason = REASON_NONE
+        if (
+            params.trailing_stop_n > 0.0
+            and state.unit_count[column] > 0
+            and _finite_positive(state.initial_fill_price[column])
+            and _finite_positive(state.initial_signal_n[column])
+            and _finite_positive(inputs.signal_n[row, column])
+        ):
+            highest_close = state.highest_signal_close[column]
+            if not _finite_positive(highest_close) or close > highest_close:
+                highest_close = close
+                state.highest_signal_close[column] = highest_close
+            activation_price = (
+                state.initial_fill_price[column]
+                + params.trailing_activation_n * state.initial_signal_n[column]
+            )
+            if highest_close >= activation_price:
+                trailing_stop = (
+                    highest_close - params.trailing_stop_n * inputs.signal_n[row, column]
+                )
+                if _finite_positive(trailing_stop):
+                    state.common_stop[column] = max(
+                        state.common_stop[column], trailing_stop
+                    )
         if np.isfinite(state.common_stop[column]) and close <= state.common_stop[column]:
             reason = REASON_PROTECTIVE_STOP
         elif (
@@ -1392,6 +1419,9 @@ def _params(config: Mapping[str, object]) -> tuple[float, CallbackParams]:
     slippage = _number(costs_value, "one_way_slippage", 0.0, positive=False)
     if slippage < 0.0 or slippage >= 1.0:
         raise ValueError("one_way_slippage must be between zero and one")
+    trailing_stop_n = _number(signal, "trailing_stop_n", 0.0, positive=False)
+    if trailing_stop_n < 0.0:
+        raise ValueError("trailing_stop_n must be non-negative")
     if "max_units" not in signal:
         raise ValueError("missing config value: max_units")
     max_units_value = signal["max_units"]
@@ -1406,6 +1436,8 @@ def _params(config: Mapping[str, object]) -> tuple[float, CallbackParams]:
         unit_risk_per_n=_number(risk, "unit_risk_per_n"),
         add_step_n=_number(signal, "add_step_n"),
         stop_n=_number(signal, "stop_n"),
+        trailing_stop_n=trailing_stop_n,
+        trailing_activation_n=_number(signal, "trailing_activation_n", 1.0),
         max_units=max_units_value,
         asset_group_unit_cap=_number(risk, "asset_group_unit_cap"),
         portfolio_unit_cap=_number(risk, "portfolio_unit_cap"),
@@ -1440,6 +1472,7 @@ def _mutable_state(
         initial_fill_price=np.full(columns, np.nan, dtype=np.float64),
         initial_signal_n=np.full(columns, np.nan, dtype=np.float64),
         common_stop=np.full(columns, np.nan, dtype=np.float64),
+        highest_signal_close=np.full(columns, np.nan, dtype=np.float64),
         next_add_index=np.zeros(columns, dtype=np.int64),
         candidate_signal_n=np.full((rows, columns), np.nan, dtype=np.float64),
         candidate_base_quantity=np.zeros((rows, columns), dtype=np.int64),
