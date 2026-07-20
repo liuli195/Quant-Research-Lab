@@ -16,7 +16,6 @@ from quant_analysis import package_source
 from quant_analysis.unified_analysis import (
     ScenarioInput,
     UnifiedAnalysisError,
-    _attribution,
     _deletion_sensitivity,
     _position_facts,
     _position_shocks,
