@@ -5,7 +5,7 @@ import json
 import math
 import os
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -51,7 +51,6 @@ class ScenarioInput:
     orders: pd.DataFrame
     events: pd.DataFrame
     params: Mapping[str, object]
-    capabilities: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
     attribution_status: str = "available"
 
 
@@ -112,16 +111,6 @@ def _unavailable_deletion_sensitivity(
         for group in sorted(set(universe.values()))
     )
     return [row for row, _ in pairs], [result for _, result in pairs]
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_name, path)
-    finally:
-        temporary = Path(temporary_name)
-        if temporary.exists():
-            temporary.unlink()
 
 
 def _sha256(path: Path) -> str:
@@ -320,7 +309,6 @@ def load_package_scenario(package: PackageSource) -> ScenarioInput:
         orders=orders,
         events=_package_attribution_events(package),
         params=dict(package.params),
-        capabilities=package.capabilities,
         attribution_status=attribution_status,
     )
 
@@ -867,7 +855,6 @@ def _bootstrap(
             seed=int(definition["seed"]),
         )
         summary = summarize_bootstrap(paths)
-        del paths
         reasons: list[str] = []
         if summary["probability_drawdown_over_20pct"] > float(thresholds["probability_drawdown_over_20pct_max"]):
             reasons.append("probability_drawdown_over_20pct")
