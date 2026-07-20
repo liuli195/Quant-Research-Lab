@@ -5,7 +5,7 @@ import json
 import math
 import os
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -13,7 +13,6 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
-from scripts.research.analysis_data.views import open_analysis_database
 from scripts.research.market_data.benchmark_sets import (
     BenchmarkSet,
     BenchmarkSetError,
@@ -52,7 +51,6 @@ class ScenarioInput:
     orders: pd.DataFrame
     events: pd.DataFrame
     params: Mapping[str, object]
-    capabilities: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
     attribution_status: str = "available"
 
 
@@ -113,16 +111,6 @@ def _unavailable_deletion_sensitivity(
         for group in sorted(set(universe.values()))
     )
     return [row for row, _ in pairs], [result for _, result in pairs]
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_name, path)
-    finally:
-        temporary = Path(temporary_name)
-        if temporary.exists():
-            temporary.unlink()
 
 
 def _sha256(path: Path) -> str:
@@ -245,22 +233,37 @@ def align_three_way_benchmarks(
 
 
 def _load_common_facts(
-    result_dir: Path, *, snapshot_id: str | None = None
+    result_dir: Path,
 ) -> tuple[pd.Series, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    with open_analysis_database(result_dir, snapshot_id=snapshot_id) as database:
-        returns_frame = database.connection.sql(
-            "select trading_date, daily_returns from strategy_daily_returns "
-            "where comparable order by trading_date"
-        ).fetchdf()
-        balances = database.connection.sql(
-            "select time, total_value, net_value, cash, aval_cash from balances order by time"
-        ).fetchdf()
-        positions = database.connection.sql("select * from positions order by time, security").fetchdf()
-        orders = database.connection.sql("select * from orders order by time, security").fetchdf()
+    data = result_dir / "data"
+    results = pq.read_table(
+        data / "results.parquet", columns=["time", "returns"]
+    ).to_pandas()
+    times = pd.to_datetime(results["time"], errors="coerce", format="mixed")
+    cumulative = pd.to_numeric(results["returns"], errors="coerce")
+    if (
+        times.isna().any()
+        or cumulative.isna().any()
+        or (cumulative <= -1).any()
+        or times.dt.normalize().duplicated().any()
+    ):
+        raise UnifiedAnalysisError("result package returns do not meet the standard contract")
+    previous = cumulative.shift()
+    daily = (1.0 + cumulative) / (1.0 + previous) - 1.0
+    first_zero = previous.isna() & cumulative.abs().le(1e-15)
+    daily.loc[first_zero] = 0.0
+    comparable = previous.notna() | first_zero
     returns = pd.Series(
-        returns_frame["daily_returns"].astype(float).to_numpy(),
-        index=pd.to_datetime(returns_frame["trading_date"]).dt.normalize(),
+        daily.loc[comparable].astype(float).to_numpy(),
+        index=times.loc[comparable].dt.normalize(),
         name="return",
+    )
+    balances = pq.read_table(data / "balances.parquet").to_pandas().sort_values("time")
+    positions = pq.read_table(data / "positions.parquet").to_pandas().sort_values(
+        ["time", "security"]
+    )
+    orders = pq.read_table(data / "orders.parquet").to_pandas().sort_values(
+        ["time", "security"]
     )
     for frame in (balances, positions, orders):
         if "time" in frame:
@@ -306,7 +309,6 @@ def load_package_scenario(package: PackageSource) -> ScenarioInput:
         orders=orders,
         events=_package_attribution_events(package),
         params=dict(package.params),
-        capabilities=package.capabilities,
         attribution_status=attribution_status,
     )
 
@@ -853,7 +855,6 @@ def _bootstrap(
             seed=int(definition["seed"]),
         )
         summary = summarize_bootstrap(paths)
-        del paths
         reasons: list[str] = []
         if summary["probability_drawdown_over_20pct"] > float(thresholds["probability_drawdown_over_20pct_max"]):
             reasons.append("probability_drawdown_over_20pct")
@@ -1126,8 +1127,14 @@ def run_standard_analysis(
     package_ids = [package.scenario_id for package in packages]
     if any(package.strategy_id != expanded["strategy_id"] for package in packages):
         raise UnifiedAnalysisError("result package strategy differs from the analysis plan")
-    if any(identifier not in configurations for identifier in package_ids):
-        raise UnifiedAnalysisError("result package scenario is absent from the analysis plan")
+    planned_ids = set(configurations)
+    provided_ids = set(package_ids)
+    if provided_ids != planned_ids:
+        missing = ", ".join(sorted(planned_ids - provided_ids)) or "none"
+        extra = ", ".join(sorted(provided_ids - planned_ids)) or "none"
+        raise UnifiedAnalysisError(
+            f"result package scenarios differ from the analysis plan: missing={missing}; extra={extra}"
+        )
     if "baseline" not in package_ids:
         raise UnifiedAnalysisError("result packages do not contain the baseline")
     for package in packages:
