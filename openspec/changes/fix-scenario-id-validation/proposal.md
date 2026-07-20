@@ -15,7 +15,7 @@
 
 ### Modified Capabilities
 
-- 无；这是既有配置校验职责的缺陷修复，不改变规格验收要求。
+- `local-quant-research-workflow`：补充与标准量化分析兼容的场景标识必须在策略执行前校验的验收场景。
 
 ## Impact
 
