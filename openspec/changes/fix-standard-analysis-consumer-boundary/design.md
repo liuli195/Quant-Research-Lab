@@ -12,7 +12,7 @@
 
 **Non-Goals:**
 
-- 不修改活动 OpenSpec（开放规格）、不新增 Skill（技能）或命令参数。
+- 不新增 Skill（技能）或命令参数；活动 OpenSpec（开放规格）只补充既有要求的验收场景。
 - 不兼容读取未转换的 JoinQuant（聚宽）归档，也不改动上游研究、归档或云端流程。
 
 ## Decisions

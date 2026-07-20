@@ -17,10 +17,11 @@
 
 ### Modified Capabilities
 
-无。现有 OpenSpec（开放规格）保持不变；本变更只修复实现对既有要求的偏离。
+- `standard-strategy-analysis-workflow`：补充生产者无关读取和计划场景完整覆盖的验收场景。
+- `standard-strategy-analysis-data`：补充可移动分析计划包的验收场景。
 
 ## Impact
 
 - `.agents/skills/analyze-quant-robustness`（标准量化分析 Skill）读取、计划解析与命令说明。
 - 现有标准结果包校验器及量化分析测试。
-- 不新增依赖，不修改 JoinQuant（聚宽）云端流程，不改变现有活动规格。
+- 不新增依赖，不修改 JoinQuant（聚宽）云端流程；规格增量只澄清现有要求的可验收边界。
