@@ -270,6 +270,24 @@ def test_v2_config_rejects_missing_scenario_id_before_strategy_execution(
     assert caught.value.code == "missing_scenario_id"
 
 
+def test_v2_config_rejects_analysis_incompatible_scenario_id_before_strategy_execution(
+    tmp_path: Path,
+) -> None:
+    from scripts.research.local_quant_research import runner
+
+    config_path, document = _build_v2_config(tmp_path)
+    scenario_path = tmp_path / str(document["scenario_config"])
+    _write_json(
+        scenario_path,
+        {"schema_version": 1, "scenario_id": "trailing-stop-2_5n"},
+    )
+
+    with pytest.raises(runner.ConfigurationError) as caught:
+        runner.load_run_config(config_path, repo_root=tmp_path)
+
+    assert caught.value.code == "invalid_scenario_id"
+
+
 def test_parent_generates_one_fixed_private_execute_command(tmp_path: Path) -> None:
     from scripts.research.local_quant_research import runner
 

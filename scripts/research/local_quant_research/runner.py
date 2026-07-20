@@ -14,6 +14,7 @@ from typing import Mapping, Sequence
 
 from scripts.research.market_data.query import open_snapshot
 from scripts.research.market_data.storage import MarketDataError, publish_directory
+from scripts.research.result_contract import is_valid_scenario_id
 
 from .contracts import RunConfig, RunResult, StageRecord
 from .evidence import (
@@ -425,6 +426,11 @@ def load_run_config(path: Path, *, repo_root: Path) -> RunConfig:
         raise ConfigurationError(
             "missing_scenario_id",
             "scenario_id is missing or invalid",
+        )
+    if not is_valid_scenario_id(scenario_id):
+        raise ConfigurationError(
+            "invalid_scenario_id",
+            "scenario_id must use lowercase letters, digits, and hyphens",
         )
     declared = document["declared_inputs"]
     if not isinstance(declared, list) or any(not isinstance(item, str) for item in declared):
