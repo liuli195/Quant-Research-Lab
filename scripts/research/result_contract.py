@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from types import MappingProxyType
 from typing import Mapping
 
@@ -9,8 +10,15 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 
+SCENARIO_ID_PATTERN = r"^[a-z0-9][a-z0-9-]{0,63}$"
+
+
 class EvidenceError(RuntimeError):
     """Raised when immutable result evidence is invalid."""
+
+
+def is_valid_scenario_id(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(SCENARIO_ID_PATTERN, value) is not None
 
 
 def validate_extension_table(table: object) -> None:

@@ -14,6 +14,10 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 - **WHEN** 配置缺少必需字段、包含旧 `command/project_entry` 字段、引用仓库外策略或未声明输入
 - **THEN** 系统停止在策略代码执行前，只允许固定 `_execute` 子进程命令，不拼接配置命令或扩大路径范围
 
+#### Scenario: 拒绝与分析不兼容的场景标识
+- **WHEN** 单场景配置的 `scenario_id`（场景标识）不符合小写字母、数字和连字符组成的 1 至 64 位规则
+- **THEN** 运行器在读取行情或启动策略进程前拒绝配置，不发布本地研究结果包
+
 #### Scenario: 通用层不解释策略语义
 - **WHEN** 使用非海龟策略模块运行同一流程
 - **THEN** Skill、共用脚本和共享行情中心无需海龟资产、参数、信号、风险或报告规则即可完成运行

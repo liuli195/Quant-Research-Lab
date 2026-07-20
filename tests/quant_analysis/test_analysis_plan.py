@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.research import result_contract
 from quant_analysis.analysis_plan import (
     AnalysisPlanError,
     expand_analysis_plan,
@@ -52,6 +53,18 @@ def test_expands_baseline_and_six_challenges_deterministically(repo_root: Path) 
     }
     assert first["scenarios"][0]["params"]["scenario_id"] == "baseline"
     assert len({item["params_sha256"] for item in first["scenarios"]}) == 7
+
+
+def test_scenario_identifier_contract_matches_analysis_schema() -> None:
+    schema_path = (
+        Path(__file__).parents[2]
+        / ".agents/skills/analyze-quant-robustness/scripts/quant_analysis/schemas/analysis-plan.schema.json"
+    )
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    assert getattr(result_contract, "SCENARIO_ID_PATTERN", None) == schema[
+        "properties"
+    ]["scenarios"]["items"]["properties"]["scenario_id"]["pattern"]
 
 
 @pytest.mark.parametrize(
