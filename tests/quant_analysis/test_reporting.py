@@ -147,6 +147,70 @@ def test_standard_report_lists_package_identity_capabilities_and_evidence_gaps(
     assert (workspace / "standard-strategy-analysis-report.md").is_file()
 
 
+def test_standard_report_shows_top_ten_loss_events_exit_evidence_and_reconciliation() -> None:
+    analysis = _standard_analysis()
+    attribution = analysis["attribution"]
+    assert isinstance(attribution, dict)
+    attribution.update(
+        {
+            "status": "available",
+            "method": "source_native_security_daily_pnl",
+            "loss_events": [
+                {
+                    "event_id": f"loss-{index}",
+                    "security": f"ETF-{index}",
+                    "date": "2024-01-03",
+                    "security_daily_pnl": -float(20 - index),
+                    "reason_code": "protective_stop",
+                    "source_reason": "protective_stop",
+                    "is_exit": index == 0,
+                    "evidence": {
+                        "entry": {
+                            "status": "evidence_insufficient",
+                            "reason": "missing_at_source",
+                        },
+                        "common_stop_before": {"status": "available", "value": 9.5},
+                        "previous_trading_day_signal": {
+                            "status": "evidence_insufficient",
+                            "reason": "missing_at_source",
+                        },
+                        "fill_price": {"status": "available", "value": 9.0},
+                        "stop_failure_loss": {
+                            "status": "evidence_insufficient",
+                            "reason": "missing_at_source",
+                        },
+                    },
+                }
+                for index in range(11)
+            ],
+            "loss_reconciliation": [
+                {
+                    "date": "2024-01-03",
+                    "daily_security_pnl_total": 10.0,
+                    "portfolio_daily_pnl": 10.0,
+                    "reconciliation_difference": 0.0,
+                    "tolerance": 0.02,
+                    "status": "reconciled",
+                }
+            ],
+        }
+    )
+
+    report = render_standard_analysis_report(
+        analysis, build_standard_recommendation(analysis)
+    )
+
+    assert "亏损事件（共 11 条，展示前 10 条）" in report
+    assert "ETF-0" in report
+    assert "ETF-9" in report
+    assert "ETF-10" not in report
+    assert "退出" in report
+    assert "证据不足（来源未提供）" in report
+    assert "9.5" in report
+    assert "日级勾稽" in report
+    assert "已勾稽" in report
+
+
 def test_standard_delivery_rejects_workspace_outside_repository(
     tmp_path: Path,
 ) -> None:

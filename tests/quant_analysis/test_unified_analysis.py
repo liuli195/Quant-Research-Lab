@@ -299,6 +299,102 @@ def test_standard_analysis_discovers_attribution_by_fields_not_extension_name(
     assert result["attribution"]["event_counts"] == {"breakout_entry": 1}
 
 
+def test_standard_analysis_preserves_source_loss_events_and_daily_reconciliation(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    extension = ResultExtension(
+        name="audit_events",
+        schema_version="attribution/1",
+        table=pa.table(
+            {
+                "time": ["2024-01-03 16:00:00", "2024-01-03 16:00:00"],
+                "event_id": ["loss-exit", "offsetting-gain"],
+                "event_type": ["valuation", "valuation"],
+                "security": ["TEST.X", "OFFSET.X"],
+                "reason_code": ["protective_stop", "mark_to_market"],
+                "details_json": [
+                    json.dumps(
+                        {
+                            "action": "full_exit",
+                            "position_before": 10,
+                            "position_after": 0,
+                            "source_reason": "protective_stop",
+                            "security_daily_pnl": -5.0,
+                            "common_stop_before": 9.5,
+                            "fill_price": 9.0,
+                            "daily_security_pnl_total": 10.0,
+                            "portfolio_daily_pnl": 10.0,
+                            "reconciliation_difference": 0.0,
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "security_daily_pnl": 15.0,
+                            "source_reason": "mark_to_market",
+                            "daily_security_pnl_total": 10.0,
+                            "portfolio_daily_pnl": 10.0,
+                            "reconciliation_difference": 0.0,
+                        }
+                    ),
+                ],
+            }
+        ),
+        unique_key=("event_id",),
+        evidence={"status": "complete"},
+    )
+    root, packages, plan, benchmark = _standard_package_inputs(
+        repo_root, tmp_path, extensions=(extension,)
+    )
+    scenario = json.loads((root / "config/baseline.json").read_text(encoding="utf-8"))
+    scenario["universe"].append({"security": "OFFSET.X", "asset_group": "etf"})
+    _write_json(root / "config/baseline.json", scenario)
+    # Rebuild the package so its immutable manifest binds the expanded universe.
+    shutil.rmtree(packages[0])
+    packages[0] = _write_result_package(
+        root / "package",
+        strategy_id="minimal",
+        scenario=scenario,
+        extensions=(extension,),
+    )
+
+    result = run_standard_analysis(root, packages, plan, benchmark)
+
+    assert result["attribution"]["loss_events"] == [
+        {
+            "event_id": "loss-exit",
+            "security": "TEST.X",
+            "date": "2024-01-03",
+            "security_daily_pnl": -5.0,
+            "reason_code": "protective_stop",
+            "source_reason": "protective_stop",
+            "is_exit": True,
+            "evidence": {
+                "entry": {"status": "evidence_insufficient", "reason": "missing_at_source"},
+                "common_stop_before": {"status": "available", "value": 9.5},
+                "previous_trading_day_signal": {
+                    "status": "evidence_insufficient",
+                    "reason": "missing_at_source",
+                },
+                "fill_price": {"status": "available", "value": 9.0},
+                "stop_failure_loss": {
+                    "status": "evidence_insufficient",
+                    "reason": "missing_at_source",
+                },
+            },
+        }
+    ]
+    assert result["attribution"]["loss_reconciliation"] == [
+        {
+            "date": "2024-01-03",
+            "daily_security_pnl_total": 10.0,
+            "portfolio_daily_pnl": 10.0,
+            "reconciliation_difference": 0.0,
+            "tolerance": 0.02,
+            "status": "reconciled",
+        }
+    ]
+
+
 def test_standard_analysis_rejects_tampered_benchmark_data(
     repo_root: Path, tmp_path: Path
 ) -> None:
@@ -442,7 +538,7 @@ def test_standard_analysis_keeps_independent_results_and_evidence_gaps(
         7
     )
     assert result["analysis_configuration"]["scenario_params"]
-    assert result["script"]["version"] == "analyze-quant-robustness/1"
+    assert result["script"]["version"] == "analyze-quant-robustness/2"
     assert result["script"]["entry"].endswith("analyze_quant_robustness.py")
     assert (root / ".local/standard-strategy-analysis" / result["analysis_id"] / "deterministic-analysis.json").is_file()
 
