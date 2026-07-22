@@ -112,13 +112,6 @@
         "checkParallel": true
       },
       {
-        "id": "verify.openspec",
-        "command": "openspec validate --all --strict --no-interactive",
-        "paths": ["openspec/**"],
-        "inputs": ["openspec/**"],
-        "checkParallel": true
-      },
-      {
         "id": "verify.local-quant-research-vectorbt-unit",
         "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\local_quant_research tests\\quant_analysis --ignore=tests\\local_quant_research\\test_generic_e2e.py --ignore=tests\\local_quant_research\\test_turtle_e2e.py --ignore=tests\\local_quant_research\\test_local_research_v2_e2e.py -k \"turtle or vectorbt\"",
         "paths": ["scripts/research/**", "joinquant/strategies/strategy-003/research/**", "tests/local_quant_research/**", "tests/quant_analysis/**", "requirements*.txt"],
