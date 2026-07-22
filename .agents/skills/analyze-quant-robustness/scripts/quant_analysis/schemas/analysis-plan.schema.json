@@ -5,7 +5,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "strategy_id", "baseline_config", "scenarios", "analyses", "thresholds"],
   "properties": {
-    "schema_version": {"const": "strategy-analysis-plan/1"},
+    "schema_version": {"const": "strategy-analysis-plan/2"},
     "strategy_id": {"type": "string", "minLength": 1},
     "baseline_config": {"type": "string", "minLength": 1},
     "scenarios": {
@@ -24,7 +24,7 @@
     },
     "analyses": {
       "type": "object",
-      "required": ["fixed_periods", "rolling", "cost_execution", "bootstrap", "historical_stress", "position_shocks", "cvar"],
+      "required": ["fixed_periods", "rolling", "bootstrap", "historical_stress", "position_shocks", "cvar"],
       "additionalProperties": false,
       "properties": {
         "fixed_periods": {
@@ -44,25 +44,11 @@
         "rolling": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["window_years", "step_months"],
+          "required": ["window_years", "step_months", "minimum_positive_cagr_fraction"],
           "properties": {
             "window_years": {"type": "integer", "minimum": 1},
-            "step_months": {"type": "integer", "minimum": 1}
-          }
-        },
-        "cost_execution": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["id", "commission_multiplier", "slippage", "delay_days"],
-            "properties": {
-              "id": {"type": "string", "minLength": 1},
-              "commission_multiplier": {"type": "number", "minimum": 0},
-              "slippage": {"type": "number", "minimum": 0},
-              "delay_days": {"type": "integer", "minimum": 0}
-            }
+            "step_months": {"type": "integer", "minimum": 1},
+            "minimum_positive_cagr_fraction": {"type": "number", "minimum": 0, "maximum": 1}
           }
         },
         "bootstrap": {

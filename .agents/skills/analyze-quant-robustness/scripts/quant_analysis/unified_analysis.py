@@ -81,16 +81,6 @@ def _atomic_json(path: Path, value: object) -> None:
             temporary.unlink()
 
 
-def _unavailable_cost_sensitivity(
-    definitions: Sequence[Mapping[str, object]], reason: str
-) -> tuple[list[dict[str, object]], list[ScenarioResult]]:
-    pairs = [
-        _unavailable_result(f"cost-{definition['id']}", "cost_execution", reason)
-        for definition in definitions
-    ]
-    return [row for row, _ in pairs], [result for _, result in pairs]
-
-
 def _unavailable_deletion_sensitivity(
     universe: Mapping[str, str], reason: str
 ) -> tuple[list[dict[str, object]], list[ScenarioResult]]:
@@ -768,7 +758,7 @@ def _fixed_and_rolling(
     rolling = analyses["rolling"]
     start = baseline.returns.index.min()
     last = baseline.returns.index.max()
-    rolling_count = 0
+    rolling_metrics: list[Mapping[str, object]] = []
     while True:
         stop = start + pd.DateOffset(years=int(rolling["window_years"])) - pd.Timedelta(days=1)
         if stop > last:
@@ -778,16 +768,46 @@ def _fixed_and_rolling(
         row, result = _period_result(scenario_id, "rolling_period", selected, thresholds)
         rows.append(row)
         evidence.append(result)
-        rolling_count += 1
+        rolling_metrics.append(row["metrics"])
         start = start + pd.DateOffset(months=int(rolling["step_months"]))
-    if rolling_count == 0:
+    gate_id = f"rolling-{int(rolling['window_years'])}y-gate"
+    if not rolling_metrics:
         row, result = _unavailable_result(
-            f"rolling-{int(rolling['window_years'])}y",
-            "rolling_period",
-            "insufficient_window_observations",
+            gate_id, "rolling_gate", "insufficient_window_observations"
         )
-        rows.append(row)
-        evidence.append(result)
+    else:
+        positive_fraction = sum(float(item["cagr"]) > 0 for item in rolling_metrics) / len(
+            rolling_metrics
+        )
+        worst_drawdown = min(float(item["max_drawdown"]) for item in rolling_metrics)
+        reasons = []
+        if positive_fraction < float(rolling["minimum_positive_cagr_fraction"]):
+            reasons.append("minimum_positive_cagr_fraction")
+        if abs(worst_drawdown) > float(thresholds["max_drawdown_abs_max"]):
+            reasons.append("max_drawdown_abs_max")
+        status = "pass" if not reasons else "fail"
+        metrics = {
+            "window_count": len(rolling_metrics),
+            "positive_cagr_fraction": positive_fraction,
+            "worst_max_drawdown": worst_drawdown,
+        }
+        row = {
+            "scenario_id": gate_id,
+            "dimension": "rolling_gate",
+            "status": status,
+            "reasons": reasons,
+            "metrics": metrics,
+        }
+        result = ScenarioResult(
+            scenario_id=gate_id,
+            dimension="rolling_gate",
+            status=status,
+            metrics=metrics,
+            input_sha256=evidence_digest(metrics),
+            reasons=tuple(reasons),
+        )
+    rows.append(row)
+    evidence.append(result)
     return rows, evidence
 
 
@@ -1238,9 +1258,9 @@ def run_standard_analysis(
         deletion_rows, deletion_evidence = _unavailable_deletion_sensitivity(
             universe, "attribution_missing_at_source"
         )
-    cost_rows, cost_evidence = _unavailable_cost_sensitivity(
-        analyses["cost_execution"], "market_snapshot_missing_at_source"
-    )
+    cost_rows = [
+        row for row in challenge_rows if row["dimension"] == "cost_execution"
+    ]
     bootstrap_rows, bootstrap_evidence = _bootstrap(baseline.returns, analyses["bootstrap"])
     stress_rows, stress_evidence = _historical_stress(
         baseline.returns, analyses["historical_stress"]
@@ -1253,7 +1273,6 @@ def run_standard_analysis(
         [
             *period_evidence,
             *deletion_evidence,
-            *cost_evidence,
             *bootstrap_evidence,
             *stress_evidence,
             *shock_evidence,
@@ -1296,6 +1315,11 @@ def run_standard_analysis(
     evidence_rows = [item.to_document() for item in evidence]
     failures = [row for row in evidence_rows if row["status"] == "fail"]
     insufficient = [row for row in evidence_rows if row["status"] == "evidence_insufficient"]
+    gate_dimensions = {"baseline_performance", "parameter", "cost_execution", "rolling_gate"}
+    gate_failures = [row for row in failures if row["dimension"] in gate_dimensions]
+    gate_insufficient = [
+        row for row in insufficient if row["dimension"] in gate_dimensions
+    ]
     try:
         final_packages = open_package_sources(package_paths)
         final_expanded = expand_analysis_plan(root, analysis_plan_path)
@@ -1376,12 +1400,12 @@ def run_standard_analysis(
         "pre_vibe_recommendation": {
             "decision": (
                 "recommend_joinquant_confirmation"
-                if baseline_status == "pass" and not failures and not insufficient
+                if baseline_status == "pass" and not gate_failures and not gate_insufficient
                 else "revise_before_joinquant"
             ),
             "baseline_status": baseline_status,
-            "failure_count": len(failures),
-            "evidence_insufficient_count": len(insufficient),
+            "failure_count": len(gate_failures),
+            "evidence_insufficient_count": len(gate_insufficient),
         },
         "next_action": "generate_standard_strategy_analysis_report",
     }

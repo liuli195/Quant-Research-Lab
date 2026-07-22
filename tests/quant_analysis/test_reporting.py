@@ -74,8 +74,10 @@ def _standard_analysis() -> dict[str, object]:
             "asset_deletions": [],
             "cost_execution": [
                 {
-                    "status": "evidence_insufficient",
-                    "reasons": ["market_snapshot_missing_at_source"],
+                    "scenario_id": "double-commission",
+                    "status": "pass",
+                    "reasons": [],
+                    "metrics": {"cagr": 0.08, "max_drawdown": -0.1, "calmar": 0.8},
                 }
             ],
             "bootstrap": [{"status": "pass", "reasons": []}],
@@ -99,11 +101,11 @@ def _standard_analysis() -> dict[str, object]:
                 "input_sha256": "3" * 64,
             },
             {
-                "scenario_id": "cost-base",
+                "scenario_id": "challenge-double-commission",
                 "dimension": "cost_execution",
-                "status": "evidence_insufficient",
-                "reasons": ["market_snapshot_missing_at_source"],
-                "metrics": {},
+                "status": "pass",
+                "reasons": [],
+                "metrics": {"cagr": 0.08, "max_drawdown": -0.1, "calmar": 0.8},
                 "input_sha256": "4" * 64,
             },
         ],
@@ -138,7 +140,7 @@ def test_standard_report_lists_package_identity_capabilities_and_evidence_gaps(
     assert "证据不足" in report
     assert "config/analysis-plan.json" in report
     assert "standard-strategy-analysis/1" in report
-    assert "market_snapshot_missing_at_source" in report
+    assert "market_snapshot_missing_at_source" not in report
     assert "4" * 64 in report
     assert "cagr" in report
     assert delivery["decision"] == "revise_before_joinquant"

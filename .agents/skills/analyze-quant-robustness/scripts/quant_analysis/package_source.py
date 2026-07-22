@@ -141,7 +141,6 @@ def _capabilities(
         "common_facts": {"status": "available"},
         "official_risk": {"status": "missing_at_source"},
         "attribution": _attribution_capability(root, manifest),
-        "cost_execution": {"status": "missing_at_source"},
     }
 
 

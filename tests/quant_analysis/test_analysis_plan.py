@@ -20,7 +20,7 @@ def _load_plan(repo_root: Path) -> dict[str, object]:
     return json.loads((repo_root / PLAN_PATH).read_text(encoding="utf-8"))
 
 
-def test_expands_baseline_and_six_challenges_deterministically(repo_root: Path) -> None:
+def test_expands_baseline_and_challenges_deterministically(repo_root: Path) -> None:
     first = expand_analysis_plan(repo_root, PLAN_PATH)
     second = expand_analysis_plan(repo_root, PLAN_PATH)
 
@@ -50,9 +50,12 @@ def test_expands_baseline_and_six_challenges_deterministically(repo_root: Path) 
         "stop-2-5n": {"signal": {"stop_n": 2.5}},
         "group-unit-cap-5": {"risk": {"asset_group_unit_cap": 5.0}},
         "portfolio-unit-cap-10": {"risk": {"portfolio_unit_cap": 10.0}},
+        "double-commission": {"costs": {"commission_multiplier": 2.0}},
+        "high-slippage": {"costs": {"one_way_slippage": 0.001}},
+        "delay-one-day": {"execution": {"additional_delay_days": 1}},
     }
     assert first["scenarios"][0]["params"]["scenario_id"] == "baseline"
-    assert len({item["params_sha256"] for item in first["scenarios"]}) == 7
+    assert len({item["params_sha256"] for item in first["scenarios"]}) == 10
 
 
 def test_scenario_identifier_contract_matches_analysis_schema() -> None:

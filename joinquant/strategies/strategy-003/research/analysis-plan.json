@@ -1,5 +1,5 @@
 {
-  "schema_version": "strategy-analysis-plan/1",
+  "schema_version": "strategy-analysis-plan/2",
   "strategy_id": "strategy-003",
   "baseline_config": "baseline.json",
   "scenarios": [
@@ -9,7 +9,10 @@
     {"scenario_id": "stop-1-5n", "dimension": "parameter", "overrides": {"signal": {"stop_n": 1.5}}},
     {"scenario_id": "stop-2-5n", "dimension": "parameter", "overrides": {"signal": {"stop_n": 2.5}}},
     {"scenario_id": "group-unit-cap-5", "dimension": "parameter", "overrides": {"risk": {"asset_group_unit_cap": 5.0}}},
-    {"scenario_id": "portfolio-unit-cap-10", "dimension": "parameter", "overrides": {"risk": {"portfolio_unit_cap": 10.0}}}
+    {"scenario_id": "portfolio-unit-cap-10", "dimension": "parameter", "overrides": {"risk": {"portfolio_unit_cap": 10.0}}},
+    {"scenario_id": "double-commission", "dimension": "cost_execution", "overrides": {"costs": {"commission_multiplier": 2.0}}},
+    {"scenario_id": "high-slippage", "dimension": "cost_execution", "overrides": {"costs": {"one_way_slippage": 0.001}}},
+    {"scenario_id": "delay-one-day", "dimension": "cost_execution", "overrides": {"execution": {"additional_delay_days": 1}}}
   ],
   "analyses": {
     "fixed_periods": [
@@ -17,12 +20,7 @@
       {"id": "2019-2022", "start": "2019-01-01", "end": "2022-12-31"},
       {"id": "2023-end", "start": "2023-01-01", "end": "2026-07-13"}
     ],
-    "rolling": {"window_years": 3, "step_months": 3},
-    "cost_execution": [
-      {"id": "double-commission", "commission_multiplier": 2.0, "slippage": 0.0005, "delay_days": 0},
-      {"id": "high-slippage", "commission_multiplier": 1.0, "slippage": 0.001, "delay_days": 0},
-      {"id": "delay-one-day", "commission_multiplier": 1.0, "slippage": 0.0005, "delay_days": 1}
-    ],
+    "rolling": {"window_years": 3, "step_months": 3, "minimum_positive_cagr_fraction": 0.7},
     "bootstrap": {
       "block_sizes": [5, 20, 60],
       "paths": 10000,
