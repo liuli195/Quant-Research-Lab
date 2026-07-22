@@ -6,7 +6,8 @@ import os
 from pathlib import Path
 import subprocess
 
-from tests.quant_analysis.test_unified_analysis import _standard_package_inputs
+from tests.local_quant_research.test_analysis_data_views import _write_result_package
+from tests.quant_analysis.test_unified_analysis import _standard_package_inputs, _write_json
 
 
 def _tree_sha(root: Path) -> str:
@@ -21,7 +22,24 @@ def test_standard_analysis_skill_runs_only_the_read_only_package_flow(
     repo_root: Path, tmp_path: Path
 ) -> None:
     root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
-    before = _tree_sha(packages[0])
+    plan_document = json.loads(plan.read_text(encoding="utf-8"))
+    plan_document["scenarios"].append(
+        {
+            "scenario_id": "double-commission",
+            "dimension": "cost_execution",
+            "overrides": {"costs": {"commission_multiplier": 2.0}},
+        }
+    )
+    _write_json(plan, plan_document)
+    cost_scenario = json.loads((root / "config/baseline.json").read_text(encoding="utf-8"))
+    cost_scenario["scenario_id"] = "double-commission"
+    cost_scenario["costs"] = {"commission_multiplier": 2.0}
+    packages.append(
+        _write_result_package(
+            root / "cost-package", strategy_id="minimal", scenario=cost_scenario
+        )
+    )
+    before = {package: _tree_sha(package) for package in packages}
     skill = (
         repo_root / ".agents/skills/analyze-quant-robustness/SKILL.md"
     ).read_text(encoding="utf-8")
@@ -56,6 +74,8 @@ def test_standard_analysis_skill_runs_only_the_read_only_package_flow(
         str(root),
         "--package",
         str(packages[0]),
+        "--package",
+        str(packages[1]),
         "--analysis-plan",
         str(plan),
         "--benchmark-manifest",
@@ -98,4 +118,7 @@ def test_standard_analysis_skill_runs_only_the_read_only_package_flow(
     assert (workspace / "deterministic-analysis.json").is_file()
     assert (workspace / "standard-strategy-analysis-report.md").is_file()
     assert (workspace / "recommendation.json").is_file()
-    assert _tree_sha(packages[0]) == before
+    report = (workspace / "standard-strategy-analysis-report.md").read_text(encoding="utf-8")
+    assert "double-commission" in report
+    assert "market_snapshot_missing_at_source" not in report
+    assert all(_tree_sha(package) == digest for package, digest in before.items())

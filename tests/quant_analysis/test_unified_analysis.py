@@ -111,7 +111,7 @@ def _standard_package_inputs(
     _write_json(
         config / "analysis-plan.json",
         {
-            "schema_version": "strategy-analysis-plan/1",
+            "schema_version": "strategy-analysis-plan/2",
             "strategy_id": "minimal",
             "baseline_config": "baseline.json",
             "scenarios": [
@@ -121,15 +121,11 @@ def _standard_package_inputs(
                 "fixed_periods": [
                     {"id": "fixture", "start": "2024-01-01", "end": "2024-12-31"}
                 ],
-                "rolling": {"window_years": 1, "step_months": 3},
-                "cost_execution": [
-                    {
-                        "id": "fixture",
-                        "commission_multiplier": 1.0,
-                        "slippage": 0.0,
-                        "delay_days": 0,
-                    }
-                ],
+                "rolling": {
+                    "window_years": 1,
+                    "step_months": 3,
+                    "minimum_positive_cagr_fraction": 0.7,
+                },
                 "bootstrap": {
                     "block_sizes": [1],
                     "paths": 3,
@@ -365,7 +361,11 @@ def test_missing_period_observations_degrade_to_evidence_insufficient(
     plan["analyses"]["fixed_periods"] = [
         {"id": "missing", "start": "1990-01-01", "end": "1990-12-31"}
     ]
-    plan["analyses"]["rolling"] = {"window_years": 5, "step_months": 3}
+    plan["analyses"]["rolling"] = {
+        "window_years": 5,
+        "step_months": 3,
+        "minimum_positive_cagr_fraction": 0.7,
+    }
     plan["analyses"]["historical_stress"] = [
         {
             "id": "missing-stress",
@@ -381,12 +381,45 @@ def test_missing_period_observations_degrade_to_evidence_insufficient(
     period_rows = result["robustness"]["periods"]
     assert {row["dimension"] for row in period_rows} == {
         "fixed_period",
-        "rolling_period",
+        "rolling_gate",
     }
     assert all(row["status"] == "evidence_insufficient" for row in period_rows)
     assert result["robustness"]["historical_stress"][0]["status"] == (
         "evidence_insufficient"
     )
+
+
+def test_cost_execution_scenario_uses_standard_package_metrics(
+    repo_root: Path, tmp_path: Path
+) -> None:
+    root, packages, plan_path, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan["scenarios"].append(
+        {
+            "scenario_id": "double-commission",
+            "dimension": "cost_execution",
+            "overrides": {"costs": {"commission_multiplier": 2.0}},
+        }
+    )
+    _write_json(plan_path, plan)
+    scenario = json.loads((root / "config/baseline.json").read_text(encoding="utf-8"))
+    scenario["scenario_id"] = "double-commission"
+    scenario["costs"] = {"commission_multiplier": 2.0}
+    packages.append(
+        _write_result_package(
+            root / "cost-package",
+            strategy_id="minimal",
+            scenario=scenario,
+        )
+    )
+
+    result = run_standard_analysis(root, packages, plan_path, benchmark)
+
+    cost = result["robustness"]["cost_execution"]
+    assert len(cost) == 1
+    assert cost[0]["scenario_id"] == "double-commission"
+    assert cost[0]["status"] != "evidence_insufficient"
+    assert cost[0]["metrics"]["cagr"] > 0
 
 
 def test_standard_analysis_keeps_independent_results_and_evidence_gaps(
@@ -399,7 +432,7 @@ def test_standard_analysis_keeps_independent_results_and_evidence_gaps(
     statuses = {row["status"] for row in result["evidence_rows"]}
     assert {"pass", "evidence_insufficient"}.issubset(statuses)
     assert result["attribution"]["status"] == "evidence_insufficient"
-    assert result["robustness"]["cost_execution"][0]["status"] == "evidence_insufficient"
+    assert result["robustness"]["cost_execution"] == []
     assert result["sources"]["package_count"] == 1
     assert result["analysis_configuration"]["analysis_plan"]["path"] == (
         "config/analysis-plan.json"
@@ -429,7 +462,11 @@ def test_rolling_window_accepts_exact_calendar_year() -> None:
         scenario,
         {
             "fixed_periods": [],
-            "rolling": {"window_years": 1, "step_months": 3},
+            "rolling": {
+                "window_years": 1,
+                "step_months": 3,
+                "minimum_positive_cagr_fraction": 0.7,
+            },
         },
         {
             "cagr_min_exclusive": -1.0,
@@ -440,6 +477,7 @@ def test_rolling_window_accepts_exact_calendar_year() -> None:
 
     assert rows[0]["scenario_id"] == "rolling-1y-2024-01-01"
     assert rows[0]["status"] != "evidence_insufficient"
+    assert rows[-1]["dimension"] == "rolling_gate"
 
 
 def test_standard_analysis_runs_single_source_return_checks(

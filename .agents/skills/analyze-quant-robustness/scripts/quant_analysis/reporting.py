@@ -79,21 +79,15 @@ def _write_json(path: Path, value: Mapping[str, Any]) -> None:
 
 
 def build_standard_recommendation(analysis: Mapping[str, Any]) -> dict[str, Any]:
-    evidence = _mapping(analysis.get("evidence_matrix"))
-    decision = str(
-        _mapping(analysis.get("pre_vibe_recommendation")).get(
-            "decision", "revise_before_joinquant"
-        )
-    )
+    gate = _mapping(analysis.get("pre_vibe_recommendation"))
+    decision = str(gate.get("decision", "revise_before_joinquant"))
     return {
         "schema_version": "standard-strategy-analysis-recommendation/1",
         "analysis_id": str(analysis.get("analysis_id", "")),
         "strategy_id": str(analysis.get("strategy_id", "")),
         "decision": decision,
-        "failure_count": int(evidence.get("fail", 0)),
-        "evidence_insufficient_count": int(
-            evidence.get("evidence_insufficient", 0)
-        ),
+        "failure_count": int(gate.get("failure_count", 0)),
+        "evidence_insufficient_count": int(gate.get("evidence_insufficient_count", 0)),
         "authority": "read_only_standard_result_packages",
         "next_action": "human_confirmation_required",
     }
