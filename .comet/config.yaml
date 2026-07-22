@@ -1,15 +1,20 @@
-# Comet 项目级配置
-# 规范路径：.comet/config.yaml
-
-# 规划产物语言
-language: zh-CN
-
-# 上下文压缩模式
-# - off: 不启用（默认），交接包使用 standard mode（compact 可追溯摘录）
-# - beta: 启用结构化 spec projection，减少 token 占用
-context_compression: beta
-
-# 自动阶段衔接
-# - true: 阶段守卫推进 phase 后自动调用下一个 skill（默认）
-# - false: 阶段守卫推进 phase 后暂停，由用户手动运行下一 skill
-auto_transition: true
+# Comet 使用的配置格式版本，请勿修改此值。
+schema: comet.project.v1
+# `/comet` 默认进入的工作流；该值也必须出现在 workflows 中。
+default_workflow: native
+# 此项目启用的工作流，可填写 native、classic 或同时启用两者。
+workflows:
+  - native
+# 是否启用只读的环境感知恢复探针，同时作用于 Native 和 Classic；设为 false 可关闭自动工作流恢复。
+# ambient_resume: true | false
+ambient_resume: true
+# Native 工作流配置，不会改变 Classic 的状态或行为。
+native:
+  # Native 产物的存放根目录，包括规格、change 和运行时数据。
+  artifact_root: docs
+  # Native 工作流文档使用的产物语言。
+  # 可选值：en | zh-CN
+  language: zh-CN
+  # Native 每轮询问一个问题，或一次提出当前所有可回答的问题。
+  # 可选值：sequential | batch
+  clarification_mode: sequential

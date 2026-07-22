@@ -2,9 +2,6 @@
 
 本仓库是 Vibe-Trading（AI 量化研究助理）+ vectorbt（本地回测框架） + JoinQuant（聚宽云端平台）+ 本地归档复盘的量化研究工作台。
 
-## 仓库规格
-本仓库采用 openspec 定义唯一标准规格，进行任务前，请从`openspec/specs/`读取并了解规格。
-
 ## 通用规则
 
 ### 环境与工具
@@ -37,3 +34,19 @@
 
 - **输出**：简体中文，简洁直白；英文技术名词后跟中文释义。
 - **引用**：引用本地文件时使用可点击路径。
+
+<comet-ambient-resume>
+<!-- Managed by Comet. Edits inside this block may be replaced by comet init/update. -->
+<!-- Contract: comet.resume_probe.v2 -->
+
+## Comet Ambient Resume
+
+在这个仓库中，开始处理需要改动或调查的任务前，如果可能存在活跃 Comet workflow，把当前用户请求传入只读探针：`comet resume-probe . --stdin --json`。
+
+- 只信任返回的 `workflow`、`skill` 和 `entrySource`；它们只由项目配置或无配置兼容回退决定。不得扫描或切换另一套 workflow。
+- 如果 probe 返回 `auto_resume`，简短说明选中的 active change，并进入 `nextCommand` 指向的永久入口。不要把状态命令当作恢复入口直接推进。
+- 如果 probe 返回 `ask_user`，只问一个简短问题并等待用户回复。
+- 如果 probe 返回 `out_of_scope` 或 `none`，不要进入 Comet workflow。
+- 如果配置或状态无效且没有 `nextCommand`，停止并报告原因；不要猜测另一个 workflow。
+- 不能只因为存在 active change 就把无关任务挂到该 change。Native 的未提交改动由 Native 入口检查，不由探针自动归因。
+</comet-ambient-resume>

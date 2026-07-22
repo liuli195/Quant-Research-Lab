@@ -1,0 +1,8 @@
+{
+  "enableSkillCommands": true,
+  "skills": [
+    "-skills/comet/SKILL.md",
+    "-skills/comet-any/SKILL.md",
+    "-skills/comet-native/SKILL.md"
+  ]
+}
