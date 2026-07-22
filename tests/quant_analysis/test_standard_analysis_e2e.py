@@ -6,6 +6,10 @@ import os
 from pathlib import Path
 import subprocess
 
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+from scripts.research.local_quant_research.contracts import ResultExtension
 from tests.local_quant_research.test_analysis_data_views import _write_result_package
 from tests.quant_analysis.test_unified_analysis import _standard_package_inputs, _write_json
 
@@ -21,7 +25,58 @@ def _tree_sha(root: Path) -> str:
 def test_standard_analysis_skill_runs_only_the_read_only_package_flow(
     repo_root: Path, tmp_path: Path
 ) -> None:
-    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    attribution = ResultExtension(
+        name="audit_events",
+        schema_version="attribution/1",
+        table=pa.table(
+            {
+                "time": ["2024-01-03 16:00:00", "2024-01-03 16:00:00"],
+                "event_id": ["loss-exit", "offsetting-gain"],
+                "event_type": ["valuation", "valuation"],
+                "security": ["TEST.X", "OFFSET.X"],
+                "reason_code": ["protective_stop", "mark_to_market"],
+                "details_json": [
+                    json.dumps(
+                        {
+                            "action": "full_exit",
+                            "position_before": 10,
+                            "position_after": 0,
+                            "source_reason": "protective_stop",
+                            "security_daily_pnl": -5.0,
+                            "common_stop_before": 9.5,
+                            "fill_price": 9.0,
+                            "daily_security_pnl_total": 10.0,
+                            "portfolio_daily_pnl": 10.0,
+                            "reconciliation_difference": 0.0,
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "source_reason": "mark_to_market",
+                            "security_daily_pnl": 15.0,
+                            "daily_security_pnl_total": 10.0,
+                            "portfolio_daily_pnl": 10.0,
+                            "reconciliation_difference": 0.0,
+                        }
+                    ),
+                ],
+            }
+        ),
+        unique_key=("event_id",),
+        evidence={"status": "complete"},
+    )
+    root, packages, plan, benchmark = _standard_package_inputs(
+        repo_root, tmp_path, extensions=(attribution,)
+    )
+    scenario = json.loads((root / "config/baseline.json").read_text(encoding="utf-8"))
+    scenario["universe"].append({"security": "OFFSET.X", "asset_group": "etf"})
+    _write_json(root / "config/baseline.json", scenario)
+    packages[0] = _write_result_package(
+        root / "baseline-package",
+        strategy_id="minimal",
+        scenario=scenario,
+        extensions=(attribution,),
+    )
     plan_document = json.loads(plan.read_text(encoding="utf-8"))
     plan_document["scenarios"].append(
         {
@@ -120,5 +175,11 @@ def test_standard_analysis_skill_runs_only_the_read_only_package_flow(
     assert (workspace / "recommendation.json").is_file()
     report = (workspace / "standard-strategy-analysis-report.md").read_text(encoding="utf-8")
     assert "double-commission" in report
+    assert "TEST.X" in report
+    assert "-5.0" in report
+    assert "protective_stop" in report
+    assert "退出" in report
+    assert "已勾稽" in report
+    assert pq.read_table(packages[0] / "data/positions.parquet").num_rows == 0
     assert "market_snapshot_missing_at_source" not in report
     assert all(_tree_sha(package) == digest for package, digest in before.items())

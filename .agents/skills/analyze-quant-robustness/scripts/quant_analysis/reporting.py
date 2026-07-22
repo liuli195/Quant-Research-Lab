@@ -141,6 +141,52 @@ def render_standard_analysis_report(
         for item in _rows(analysis.get("evidence_rows"))
     ]
     attribution = _mapping(analysis.get("attribution"))
+    loss_events = _rows(attribution.get("loss_events"))
+    shown_losses = loss_events[:10]
+
+    def evidence_text(event: Mapping[str, Any], key: str) -> str:
+        item = _mapping(_mapping(event.get("evidence")).get(key))
+        return (
+            str(item.get("value"))
+            if item.get("status") == "available"
+            else "证据不足（来源未提供）"
+        )
+
+    loss_rows = [
+        [
+            str(event.get("security", "—")),
+            str(event.get("date", "—")),
+            str(event.get("security_daily_pnl", "—")),
+            "退出" if event.get("is_exit") else "持仓估值",
+            str(event.get("source_reason", event.get("reason_code", "—"))),
+        ]
+        for event in shown_losses
+    ]
+    loss_evidence_rows = [
+        [
+            str(event.get("security", "—")),
+            evidence_text(event, "entry"),
+            evidence_text(event, "common_stop_before"),
+            evidence_text(event, "previous_trading_day_signal"),
+            evidence_text(event, "fill_price"),
+            evidence_text(event, "stop_failure_loss"),
+        ]
+        for event in shown_losses
+    ]
+    reconciliation_rows = [
+        [
+            str(row.get("date", "—")),
+            str(row.get("daily_security_pnl_total", "证据不足（来源未提供）")),
+            str(row.get("portfolio_daily_pnl", "证据不足（来源未提供）")),
+            str(row.get("reconciliation_difference", "证据不足（来源未提供）")),
+            "已勾稽"
+            if row.get("status") == "reconciled"
+            else "证据不足（来源未提供）"
+            if row.get("status") == "evidence_insufficient"
+            else "不一致",
+        ]
+        for row in _rows(attribution.get("loss_reconciliation"))
+    ]
     robustness = _mapping(analysis.get("robustness"))
     lines = [
         "# 标准策略分析报告",
@@ -213,6 +259,24 @@ def render_standard_analysis_report(
         f"状态：`{attribution.get('status', '—')}`；"
         f"方法：{attribution.get('method', '—')}；"
         f"原因：{attribution.get('reason', '—')}。",
+        "",
+        f"### 亏损事件（共 {len(loss_events)} 条，展示前 {min(10, len(loss_events))} 条）",
+        "",
+        *_table(["标的", "日期", "单标的盈亏", "事件", "来源原因"], loss_rows),
+        "",
+        "### 执行与止损证据",
+        "",
+        *_table(
+            ["标的", "入场证据", "止损线", "前一交易日信号", "实际成交价", "止损失败损失"],
+            loss_evidence_rows,
+        ),
+        "",
+        "### 日级勾稽",
+        "",
+        *_table(
+            ["日期", "单标的盈亏合计", "组合日盈亏", "差额", "状态"],
+            reconciliation_rows,
+        ),
         "",
         "## 稳健性分析",
         "",

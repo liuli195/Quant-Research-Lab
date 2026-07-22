@@ -32,7 +32,7 @@ BENCHMARK_IDS = (
     "NASDAQ100_CNY_TOTAL_RETURN",
 )
 _FORMULA_VERSION = "standard-strategy-analysis/1"
-_SCRIPT_VERSION = "analyze-quant-robustness/1"
+_SCRIPT_VERSION = "analyze-quant-robustness/2"
 _SCRIPT_ENTRY = (
     ".agents/skills/analyze-quant-robustness/scripts/analyze_quant_robustness.py"
 )
@@ -314,13 +314,22 @@ def _immutable_json(path: Path, value: object) -> None:
 
 def _valuation_facts(scenario: ScenarioInput) -> pd.DataFrame:
     columns = [
+        "event_id",
         "date",
         "security",
         "reason_code",
         "source_reason",
         "security_daily_pnl",
+        "action",
+        "position_before",
+        "position_after",
+        "common_stop_before",
         "common_stop_after",
+        "fill_price",
         "stop_failure_loss",
+        "daily_security_pnl_total",
+        "portfolio_daily_pnl",
+        "reconciliation_difference",
     ]
     if scenario.events.empty:
         return pd.DataFrame(columns=columns)
@@ -352,6 +361,7 @@ def _valuation_facts(scenario: ScenarioInput) -> pd.DataFrame:
             raise UnifiedAnalysisError("valuation security_daily_pnl is invalid")
         records.append(
             {
+                "event_id": str(event["event_id"]),
                 "date": pd.Timestamp(event["date"]).normalize(),
                 "security": str(event["security"]),
                 "reason_code": str(event["reason_code"]),
@@ -359,11 +369,27 @@ def _valuation_facts(scenario: ScenarioInput) -> pd.DataFrame:
                     details.get("source_reason", event["reason_code"])
                 ),
                 "security_daily_pnl": security_pnl,
+                "action": details.get("action"),
+                "position_before": _safe_number(details.get("position_before")),
+                "position_after": _safe_number(details.get("position_after")),
+                "common_stop_before": _safe_number(
+                    details.get("common_stop_before")
+                ),
                 "common_stop_after": _safe_number(
                     details.get("common_stop_after")
                 ),
+                "fill_price": _safe_number(details.get("fill_price")),
                 "stop_failure_loss": _safe_number(
                     details.get("stop_failure_loss")
+                ),
+                "daily_security_pnl_total": _safe_number(
+                    details.get("daily_security_pnl_total")
+                ),
+                "portfolio_daily_pnl": _safe_number(
+                    details.get("portfolio_daily_pnl")
+                ),
+                "reconciliation_difference": _safe_number(
+                    details.get("reconciliation_difference")
                 ),
             }
         )
@@ -458,6 +484,86 @@ def _security_pnl_facts(
     )
     facts["attribution_reason"] = facts["source_reason"]
     return facts
+
+
+def _loss_attribution(facts: pd.DataFrame) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    def evidence(value: object) -> dict[str, object]:
+        return (
+            {"status": "available", "value": value}
+            if value is not None and not pd.isna(value)
+            else {"status": "evidence_insufficient", "reason": "missing_at_source"}
+        )
+
+    losses: list[dict[str, object]] = []
+    for row in facts.loc[facts["security_daily_pnl"] < 0].sort_values(
+        ["security_daily_pnl", "date", "security"]
+    ).to_dict("records"):
+        position_before = row["position_before"]
+        position_after = row["position_after"]
+        losses.append(
+            {
+                "event_id": row["event_id"],
+                "security": row["security"],
+                "date": pd.Timestamp(row["date"]).date().isoformat(),
+                "security_daily_pnl": float(row["security_daily_pnl"]),
+                "reason_code": row["reason_code"],
+                "source_reason": row["source_reason"],
+                "is_exit": row["action"] == "full_exit"
+                or (
+                    position_before is not None
+                    and not pd.isna(position_before)
+                    and float(position_before) > 0
+                    and position_after is not None
+                    and not pd.isna(position_after)
+                    and float(position_after) == 0
+                ),
+                "evidence": {
+                    "entry": {
+                        "status": "evidence_insufficient",
+                        "reason": "missing_at_source",
+                    },
+                    "common_stop_before": evidence(row["common_stop_before"]),
+                    "previous_trading_day_signal": {
+                        "status": "evidence_insufficient",
+                        "reason": "missing_at_source",
+                    },
+                    "fill_price": evidence(row["fill_price"]),
+                    "stop_failure_loss": {
+                        "status": "evidence_insufficient",
+                        "reason": "missing_at_source",
+                    },
+                },
+            }
+        )
+
+    reconciliation: list[dict[str, object]] = []
+    for date, rows in facts.loc[
+        facts["date"].isin(facts.loc[facts["security_daily_pnl"] < 0, "date"])
+    ].groupby("date", sort=True):
+        source = rows.iloc[0]
+        total = source["daily_security_pnl_total"]
+        portfolio = source["portfolio_daily_pnl"]
+        difference = source["reconciliation_difference"]
+        if any(value is None or pd.isna(value) for value in (total, portfolio, difference)):
+            reconciliation.append(
+                {
+                    "date": pd.Timestamp(date).date().isoformat(),
+                    "status": "evidence_insufficient",
+                    "reason": "missing_at_source",
+                }
+            )
+            continue
+        reconciliation.append(
+            {
+                "date": pd.Timestamp(date).date().isoformat(),
+                "daily_security_pnl_total": float(total),
+                "portfolio_daily_pnl": float(portfolio),
+                "reconciliation_difference": float(difference),
+                "tolerance": 0.02,
+                "status": "reconciled" if abs(float(difference)) <= 0.02 else "mismatch",
+            }
+        )
+    return losses, reconciliation
 
 
 def _risk_metrics(scenario: ScenarioInput, positions: pd.DataFrame) -> dict[str, object]:
@@ -1225,6 +1331,9 @@ def run_standard_analysis(
 
     security_pnl = _security_pnl_facts(baseline, universe)
     attribution = _attribution(baseline, security_pnl)
+    loss_events, loss_reconciliation = _loss_attribution(security_pnl)
+    attribution["loss_events"] = loss_events
+    attribution["loss_reconciliation"] = loss_reconciliation
     attribution_row, attribution_evidence = (
         _unavailable_result(
             "baseline-attribution", "deep_attribution", str(attribution.get("reason", "missing_at_source"))
