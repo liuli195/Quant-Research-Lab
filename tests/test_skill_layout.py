@@ -250,7 +250,7 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
 
     assert config["verify"]["maxParallel"] == 10
     assert config["verify"]["fullBudgetSeconds"] == 60
-    assert len(checks) == 18
+    assert len(checks) == 17
     assert [
         check["id"] for check in config["verify"]["checks"][:10]
     ] == [
