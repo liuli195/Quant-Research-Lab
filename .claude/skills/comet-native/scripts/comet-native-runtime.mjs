@@ -6915,14 +6915,14 @@ var require_parser = __commonJS({
             case "scalar":
             case "single-quoted-scalar":
             case "double-quoted-scalar": {
-              const fs33 = this.flowScalar(this.type);
+              const fs34 = this.flowScalar(this.type);
               if (atNextItem || it.value) {
-                map.items.push({ start, key: fs33, sep: [] });
+                map.items.push({ start, key: fs34, sep: [] });
                 this.onKeyLine = true;
               } else if (it.sep) {
-                this.stack.push(fs33);
+                this.stack.push(fs34);
               } else {
-                Object.assign(it, { key: fs33, sep: [] });
+                Object.assign(it, { key: fs34, sep: [] });
                 this.onKeyLine = true;
               }
               return;
@@ -7050,13 +7050,13 @@ var require_parser = __commonJS({
             case "scalar":
             case "single-quoted-scalar":
             case "double-quoted-scalar": {
-              const fs33 = this.flowScalar(this.type);
+              const fs34 = this.flowScalar(this.type);
               if (!it || it.value)
-                fc.items.push({ start: [], key: fs33, sep: [] });
+                fc.items.push({ start: [], key: fs34, sep: [] });
               else if (it.sep)
-                this.stack.push(fs33);
+                this.stack.push(fs34);
               else
-                Object.assign(it, { key: fs33, sep: [] });
+                Object.assign(it, { key: fs34, sep: [] });
               return;
             }
             case "flow-map-end":
@@ -7370,9 +7370,127 @@ import { pathToFileURL } from "url";
 // domains/comet-native/native-cli.ts
 import path47 from "path";
 
+// platform/fs/race-safe-read.ts
+import { constants as fsConstants, promises as fs } from "fs";
+
+// platform/fs/file-identity.ts
+function hasPlatformIdentity(value) {
+  return value !== 0 && value !== 0n && value !== "0";
+}
+function hasComparableFileObject(left, right) {
+  return hasPlatformIdentity(left.dev) && hasPlatformIdentity(right.dev) && hasPlatformIdentity(left.ino) && hasPlatformIdentity(right.ino);
+}
+function sameFileObject(left, right) {
+  const comparableDevice = hasPlatformIdentity(left.dev) && hasPlatformIdentity(right.dev);
+  if (comparableDevice && left.dev !== right.dev) return false;
+  const comparableInode = hasPlatformIdentity(left.ino) && hasPlatformIdentity(right.ino);
+  if (comparableInode && left.ino !== right.ino) return false;
+  if (comparableDevice && comparableInode) return true;
+  return left.birthtime === right.birthtime;
+}
+
+// platform/fs/race-safe-read.ts
+var RaceSafeReadError = class extends Error {
+  reason;
+  constructor(reason, message, options) {
+    super(message, options);
+    this.name = "RaceSafeReadError";
+    this.reason = reason;
+  }
+};
+function birthtimeOf(stat) {
+  return "birthtimeNs" in stat && typeof stat.birthtimeNs === "bigint" ? stat.birthtimeNs : stat.birthtimeMs;
+}
+function ctimeOf(stat) {
+  return "ctimeNs" in stat && typeof stat.ctimeNs === "bigint" ? stat.ctimeNs : stat.ctimeMs;
+}
+function identityOf(stat) {
+  return { dev: stat.dev, ino: stat.ino, birthtime: birthtimeOf(stat) };
+}
+function sameStatIdentity(left, right) {
+  const leftObject = identityOf(left);
+  const rightObject = identityOf(right);
+  if (hasComparableFileObject(leftObject, rightObject)) {
+    return sameFileObject(leftObject, rightObject);
+  }
+  return sameFileObject(leftObject, rightObject) && birthtimeOf(left) === birthtimeOf(right) && ctimeOf(left) === ctimeOf(right) && left.size === right.size;
+}
+async function readFileRaceSafe(file, maxBytes, options = {}) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
+    throw new Error("race-safe read byte limit must be a positive integer");
+  }
+  const label = options.label ?? "file";
+  const bigint = options.bigint === true;
+  const before = await fs.lstat(file, { bigint });
+  if (!before.isFile() || before.isSymbolicLink()) {
+    throw new RaceSafeReadError("not-regular-file", `${label} must be a regular file`);
+  }
+  if (BigInt(before.size) > BigInt(maxBytes)) {
+    throw new RaceSafeReadError("too-large", `${label} exceeds ${maxBytes} bytes`);
+  }
+  const beforeRealPath = await fs.realpath(file);
+  await options.verify?.("pre-open", { realPath: beforeRealPath, identity: identityOf(before) });
+  const flags = process.platform === "win32" ? fsConstants.O_RDONLY : fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK;
+  let handle;
+  try {
+    handle = await fs.open(file, flags);
+  } catch (error) {
+    if (error.code === "ELOOP") {
+      throw new RaceSafeReadError("not-regular-file", `${label} must be a regular file`, {
+        cause: error
+      });
+    }
+    throw error;
+  }
+  try {
+    const [opened, pathAfterOpen, realPathAfterOpen] = await Promise.all([
+      handle.stat({ bigint }),
+      fs.lstat(file, { bigint }),
+      fs.realpath(file)
+    ]);
+    if (!opened.isFile() || !pathAfterOpen.isFile() || pathAfterOpen.isSymbolicLink() || realPathAfterOpen !== beforeRealPath || !sameStatIdentity(before, opened) || !sameStatIdentity(before, pathAfterOpen)) {
+      throw new RaceSafeReadError("changed", `${label} changed while opening`);
+    }
+    await options.verify?.("post-open", {
+      realPath: realPathAfterOpen,
+      identity: identityOf(opened)
+    });
+    await options.hooks?.afterOpen?.();
+    const chunks = [];
+    let total = 0;
+    const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes + 1));
+    for (; ; ) {
+      const remaining = maxBytes + 1 - total;
+      const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, remaining), null);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+      if (total > maxBytes) {
+        throw new RaceSafeReadError("too-large", `${label} exceeds ${maxBytes} bytes`);
+      }
+      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+    }
+    await options.hooks?.beforeFinalCheck?.();
+    const [afterHandle, afterPath, afterRealPath] = await Promise.all([
+      handle.stat({ bigint }),
+      fs.lstat(file, { bigint }),
+      fs.realpath(file)
+    ]);
+    if (!afterPath.isFile() || afterPath.isSymbolicLink() || afterRealPath !== beforeRealPath || !sameStatIdentity(before, afterHandle) || !sameStatIdentity(before, afterPath)) {
+      throw new RaceSafeReadError("changed", `${label} changed while reading`);
+    }
+    await options.verify?.("post-read", {
+      realPath: afterRealPath,
+      identity: identityOf(afterHandle)
+    });
+    return { bytes: Buffer.concat(chunks, total), stat: afterHandle, realPath: afterRealPath };
+  } finally {
+    await handle.close();
+  }
+}
+
 // domains/comet-native/native-archive.ts
 import { randomUUID as randomUUID6 } from "crypto";
-import { promises as fs22 } from "fs";
+import { promises as fs23 } from "fs";
 import path34 from "path";
 import { isDeepStrictEqual as isDeepStrictEqual2 } from "util";
 
@@ -7510,17 +7628,17 @@ function recordOutcomeWithResolver(pkg, state, outcome, resolver, context) {
 }
 
 // domains/comet-native/native-artifacts.ts
-import { promises as fs13 } from "fs";
+import { promises as fs14 } from "fs";
 import path17 from "path";
 
 // domains/comet-native/native-change.ts
 var import_yaml3 = __toESM(require_dist(), 1);
-import { promises as fs12 } from "fs";
+import { promises as fs13 } from "fs";
 import path16 from "path";
 
 // domains/comet-native/native-bounded-file.ts
 import { createHash as createHash2 } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { promises as fs2 } from "node:fs";
 import path2 from "node:path";
 import { TextDecoder } from "node:util";
 
@@ -7586,22 +7704,6 @@ function nativeSensitiveArtifactReason(paths, relativeRef) {
   return null;
 }
 
-// domains/comet-native/native-file-identity.ts
-function hasPlatformIdentity(value) {
-  return value !== 0 && value !== 0n && value !== "0";
-}
-function hasComparableNativeFileObject(left, right) {
-  return hasPlatformIdentity(left.dev) && hasPlatformIdentity(right.dev) && hasPlatformIdentity(left.ino) && hasPlatformIdentity(right.ino);
-}
-function sameNativeFileObject(left, right) {
-  const comparableDevice = hasPlatformIdentity(left.dev) && hasPlatformIdentity(right.dev);
-  if (comparableDevice && left.dev !== right.dev) return false;
-  const comparableInode = hasPlatformIdentity(left.ino) && hasPlatformIdentity(right.ino);
-  if (comparableInode && left.ino !== right.ino) return false;
-  if (comparableDevice && comparableInode) return true;
-  return left.birthtime === right.birthtime;
-}
-
 // domains/comet-native/native-bounded-file.ts
 var DEFAULT_NATIVE_ARTIFACT_MAX_BYTES = 1024 * 1024;
 function isInside(parent, target) {
@@ -7632,7 +7734,7 @@ function positiveLimit(value) {
   return value;
 }
 function sameDirectoryIdentity(identity, stat) {
-  return sameNativeFileObject(
+  return sameFileObject(
     { ...identity, birthtime: identity.birthtimeMs },
     {
       ...stat,
@@ -7643,19 +7745,19 @@ function sameDirectoryIdentity(identity, stat) {
 function sameFileIdentity(left, right) {
   const leftObject = { ...left, birthtime: left.birthtimeMs };
   const rightObject = { ...right, birthtime: right.birthtimeMs };
-  if (hasComparableNativeFileObject(leftObject, rightObject)) {
-    return sameNativeFileObject(leftObject, rightObject);
+  if (hasComparableFileObject(leftObject, rightObject)) {
+    return sameFileObject(leftObject, rightObject);
   }
-  return sameNativeFileObject(leftObject, rightObject) && left.birthtimeMs === right.birthtimeMs && left.ctimeMs === right.ctimeMs && left.size === right.size;
+  return sameFileObject(leftObject, rightObject) && left.birthtimeMs === right.birthtimeMs && left.ctimeMs === right.ctimeMs && left.size === right.size;
 }
 async function directoryIdentity(directory) {
-  const stat = await fs.lstat(directory);
+  const stat = await fs2.lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error(`Native artifact parent must be a real directory: ${directory}`);
   }
   return {
     path: directory,
-    realPath: await fs.realpath(directory),
+    realPath: await fs2.realpath(directory),
     dev: stat.dev,
     ino: stat.ino,
     birthtimeMs: stat.birthtimeMs
@@ -7681,8 +7783,8 @@ async function captureDirectoryChain(root, directory) {
 }
 async function verifyDirectoryChain(chain) {
   for (const identity of chain) {
-    const stat = await fs.lstat(identity.path);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || !sameDirectoryIdentity(identity, stat) || await fs.realpath(identity.path) !== identity.realPath) {
+    const stat = await fs2.lstat(identity.path);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || !sameDirectoryIdentity(identity, stat) || await fs2.realpath(identity.path) !== identity.realPath) {
       throw new Error(`Native artifact parent changed while reading: ${identity.path}`);
     }
   }
@@ -7693,21 +7795,21 @@ async function readNativeBoundedTextFile(options) {
   const file = path2.resolve(options.root, ...ref.split("/"));
   const chain = await captureDirectoryChain(options.root, path2.dirname(file));
   await options.hooks?.afterParentChainCaptured?.();
-  const before = await fs.lstat(file);
+  const before = await fs2.lstat(file);
   if (!before.isFile() || before.isSymbolicLink()) {
     throw new Error(`Native artifact must be a regular file: ${ref}`);
   }
   if (before.size > maxBytes) throw new Error(`Native artifact exceeds ${maxBytes} bytes: ${ref}`);
-  const realPath = await fs.realpath(file);
+  const realPath = await fs2.realpath(file);
   if (!isInside(chain[0].realPath, realPath)) {
     throw new Error(`Native artifact resolves outside its root: ${ref}`);
   }
-  const handle = await fs.open(file, "r");
+  const handle = await fs2.open(file, "r");
   try {
     const [opened, afterOpenPath, afterOpenRealPath] = await Promise.all([
       handle.stat(),
-      fs.lstat(file),
-      fs.realpath(file)
+      fs2.lstat(file),
+      fs2.realpath(file)
     ]);
     await verifyDirectoryChain(chain);
     if (!opened.isFile() || !afterOpenPath.isFile() || afterOpenPath.isSymbolicLink() || afterOpenRealPath !== realPath || !sameFileIdentity(before, opened) || !sameFileIdentity(opened, afterOpenPath)) {
@@ -7728,8 +7830,8 @@ async function readNativeBoundedTextFile(options) {
     await options.hooks?.beforeFinalCheck?.();
     const [afterHandle, afterPath, afterRealPath] = await Promise.all([
       handle.stat(),
-      fs.lstat(file),
-      fs.realpath(file)
+      fs2.lstat(file),
+      fs2.realpath(file)
     ]);
     await verifyDirectoryChain(chain);
     if (!afterPath.isFile() || afterPath.isSymbolicLink() || afterRealPath !== realPath || !sameFileIdentity(opened, afterHandle) || !sameFileIdentity(opened, afterPath)) {
@@ -7755,14 +7857,14 @@ async function readNativeBoundedTextFile(options) {
 
 // domains/comet-native/native-atomic-file.ts
 import { randomUUID } from "crypto";
-import { promises as fs2 } from "fs";
+import { promises as fs3 } from "fs";
 import path3 from "path";
 function isInside2(parent, target) {
   const relative = path3.relative(parent, target);
   return relative === "" || !path3.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path3.sep}`);
 }
 function sameDirectoryIdentity2(identity, stat) {
-  return sameNativeFileObject(
+  return sameFileObject(
     { ...identity, birthtime: identity.birthtimeMs },
     {
       ...stat,
@@ -7773,19 +7875,19 @@ function sameDirectoryIdentity2(identity, stat) {
 function sameFileIdentity2(left, right) {
   const leftObject = { ...left, birthtime: left.birthtimeMs };
   const rightObject = { ...right, birthtime: right.birthtimeMs };
-  if (hasComparableNativeFileObject(leftObject, rightObject)) {
-    return sameNativeFileObject(leftObject, rightObject);
+  if (hasComparableFileObject(leftObject, rightObject)) {
+    return sameFileObject(leftObject, rightObject);
   }
-  return sameNativeFileObject(leftObject, rightObject) && left.birthtimeMs === right.birthtimeMs && left.ctimeMs === right.ctimeMs && left.size === right.size;
+  return sameFileObject(leftObject, rightObject) && left.birthtimeMs === right.birthtimeMs && left.ctimeMs === right.ctimeMs && left.size === right.size;
 }
 async function captureDirectoryIdentity(directory) {
-  const stat = await fs2.lstat(directory);
+  const stat = await fs3.lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error(`Native atomic write parent must be a real directory: ${directory}`);
   }
   return {
     path: directory,
-    realPath: await fs2.realpath(directory),
+    realPath: await fs3.realpath(directory),
     dev: stat.dev,
     ino: stat.ino,
     birthtimeMs: stat.birthtimeMs
@@ -7793,8 +7895,8 @@ async function captureDirectoryIdentity(directory) {
 }
 async function verifyDirectoryChain2(chain) {
   for (const identity of chain) {
-    const stat = await fs2.lstat(identity.path);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || !sameDirectoryIdentity2(identity, stat) || await fs2.realpath(identity.path) !== identity.realPath) {
+    const stat = await fs3.lstat(identity.path);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || !sameDirectoryIdentity2(identity, stat) || await fs3.realpath(identity.path) !== identity.realPath) {
       throw new Error(`Native atomic write parent changed before commit: ${identity.path}`);
     }
   }
@@ -7812,7 +7914,7 @@ async function prepareContainedDirectoryChain(root, directory) {
     await verifyDirectoryChain2(chain);
     cursor = path3.join(cursor, segment);
     try {
-      await fs2.mkdir(cursor);
+      await fs3.mkdir(cursor);
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
     }
@@ -7828,7 +7930,7 @@ async function prepareContainedDirectoryChain(root, directory) {
 async function syncDirectory(directory) {
   let handle;
   try {
-    handle = await fs2.open(directory, "r");
+    handle = await fs3.open(directory, "r");
     await handle.sync();
   } catch (error) {
     const code = error.code;
@@ -7842,18 +7944,18 @@ async function syncDirectory(directory) {
 async function atomicWrite(file, content, options = {}) {
   const directory = path3.dirname(file);
   const directoryChain = options.containedRoot ? await prepareContainedDirectoryChain(options.containedRoot, directory) : null;
-  if (!directoryChain) await fs2.mkdir(directory, { recursive: true });
+  if (!directoryChain) await fs3.mkdir(directory, { recursive: true });
   const temporary = path3.join(directory, `.${path3.basename(file)}.${randomUUID()}.tmp`);
   let handle;
   let temporaryIdentity;
   try {
     await options.beforeTemporaryOpen?.();
-    handle = await fs2.open(temporary, "wx");
+    handle = await fs3.open(temporary, "wx");
     temporaryIdentity = await handle.stat();
     if (directoryChain) {
       const [temporaryPathStat, temporaryRealPath] = await Promise.all([
-        fs2.lstat(temporary),
-        fs2.realpath(temporary)
+        fs3.lstat(temporary),
+        fs3.realpath(temporary)
       ]);
       await verifyDirectoryChain2(directoryChain);
       if (!temporaryPathStat.isFile() || temporaryPathStat.isSymbolicLink() || !sameFileIdentity2(temporaryIdentity, temporaryPathStat) || !isInside2(directoryChain[0].realPath, temporaryRealPath)) {
@@ -7871,26 +7973,26 @@ async function atomicWrite(file, content, options = {}) {
     await options.beforeCommit?.();
     if (directoryChain) {
       await verifyDirectoryChain2(directoryChain);
-      const temporaryStat = await fs2.lstat(temporary);
+      const temporaryStat = await fs3.lstat(temporary);
       if (!temporaryStat.isFile() || temporaryStat.isSymbolicLink() || !temporaryIdentity || !sameFileIdentity2(temporaryStat, temporaryIdentity)) {
         throw new Error("Native atomic write temporary file changed before commit");
       }
     }
     if (options.exclusive) {
-      await fs2.link(temporary, file);
-      await fs2.unlink(temporary);
+      await fs3.link(temporary, file);
+      await fs3.unlink(temporary);
     } else {
-      await fs2.rename(temporary, file);
+      await fs3.rename(temporary, file);
     }
     await syncDirectory(directory);
   } catch (error) {
     await handle?.close();
     if (!directoryChain) {
-      await fs2.rm(temporary, { force: true });
+      await fs3.rm(temporary, { force: true });
     } else {
       try {
         await verifyDirectoryChain2(directoryChain);
-        await fs2.rm(temporary, { force: true });
+        await fs3.rm(temporary, { force: true });
       } catch {
       }
     }
@@ -7909,7 +8011,7 @@ async function atomicWriteJson(file, value, options = {}) {
 
 // domains/comet-native/native-config.ts
 var import_yaml2 = __toESM(require_dist(), 1);
-import { promises as fs5 } from "fs";
+import { promises as fs6 } from "fs";
 import path6 from "path";
 
 // domains/workflow-contract/project-config.ts
@@ -7924,6 +8026,12 @@ var COMMENTS = {
     "native.artifact_root": "# Root directory where Native stores Comet specs, changes, and runtime data.",
     "native.language": "# Artifact language used by Native workflow documents.\n# language: en | zh-CN",
     "native.clarification_mode": "# Controls whether Native asks one clarification at a time or every currently answerable question in a round.\n# clarification_mode: sequential | batch",
+    "native.snapshot": "# Controls the auditable project scope and bounded work used by Native content snapshots.",
+    "native.snapshot.include": "# Selects the project-relative paths included in Native snapshots. Patterns use / and support *, **, and ?.",
+    "native.snapshot.exclude": "# Removes paths from the included scope. Exclusions are bound into each new change baseline.",
+    "native.snapshot.max_files": "# Bounds the number of files captured by one snapshot. Increase it for large monorepos.",
+    "native.snapshot.max_total_bytes": "# Bounds the total file content hashed by one snapshot. Content is streamed and does not depend on Git hashes.",
+    "native.snapshot.max_duration_ms": "# Bounds snapshot capture time in milliseconds. Increase it together with the byte budget on slower or larger repositories.",
     classic: "# Classic workflow settings. They do not change Native state or behavior.",
     "classic.language": "# Artifact language used by Classic workflow documents.\n# language: en | zh-CN",
     "classic.context_compression": "# Controls beta context compression for new Classic changes.\n# context_compression: off | beta",
@@ -7939,6 +8047,12 @@ var COMMENTS = {
     "native.artifact_root": "# Native 产物的存放根目录，包括规格、change 和运行时数据。",
     "native.language": "# Native 工作流文档使用的产物语言。\n# 可选值：en | zh-CN",
     "native.clarification_mode": "# Native 每轮询问一个问题，或一次提出当前所有可回答的问题。\n# 可选值：sequential | batch",
+    "native.snapshot": "# Native 内容快照使用的可审计项目范围与有界工作预算。",
+    "native.snapshot.include": "# Native 快照纳入的项目相对路径；模式使用 /，支持 *、** 和 ?。",
+    "native.snapshot.exclude": "# 从纳入范围中排除路径；新 change 会把排除策略绑定到 baseline。",
+    "native.snapshot.max_files": "# 单次快照最多捕获的文件数；大型 monorepo 可按需提高。",
+    "native.snapshot.max_total_bytes": "# 单次快照最多哈希的文件内容总字节数；内容采用流式读取，不依赖 Git hash。",
+    "native.snapshot.max_duration_ms": "# 单次快照的最长执行时间（毫秒）；较慢或更大的仓库应与字节预算一并提高。",
     classic: "# Classic 工作流配置，不会改变 Native 的状态或行为。",
     "classic.language": "# Classic 工作流文档使用的产物语言。\n# 可选值：en | zh-CN",
     "classic.context_compression": "# 新建 Classic change 是否启用 beta 上下文压缩。\n# 可选值：off | beta",
@@ -7949,7 +8063,7 @@ var COMMENTS = {
 function projectConfigComment(key, language) {
   return COMMENTS[language][key];
 }
-function commentKey(line, block) {
+function commentKey(line, block, nativeNested) {
   const match = /^(\s*)([a-z_]+):/u.exec(line);
   if (!match) return null;
   const indent = match[1].length;
@@ -7959,13 +8073,18 @@ function commentKey(line, block) {
     const blockKey = `${block}.${key}`;
     if (blockKey in COMMENTS.en) return blockKey;
   }
+  if (indent === 4 && block === "native" && nativeNested === "snapshot") {
+    const nestedKey = `native.snapshot.${key}`;
+    if (nestedKey in COMMENTS.en) return nestedKey;
+  }
   return null;
 }
 function renderStructuredProjectConfig(value, language) {
   const output = [];
   let block = null;
+  let nativeNested = null;
   for (const line of (0, import_yaml.stringify)(value).trimEnd().split("\n")) {
-    const key = commentKey(line, block);
+    const key = commentKey(line, block, nativeNested);
     if (key) {
       const indent = line.match(/^\s*/u)?.[0] ?? "";
       for (const comment of projectConfigComment(key, language).split("\n")) {
@@ -7977,6 +8096,9 @@ function renderStructuredProjectConfig(value, language) {
       if (line.startsWith("native:")) block = "native";
       else if (line.startsWith("classic:")) block = "classic";
       else block = null;
+      nativeNested = null;
+    } else if (/^ {2}[a-z_]+:/u.test(line) && block === "native") {
+      nativeNested = line.startsWith("  snapshot:") ? "snapshot" : null;
     }
   }
   output.push("");
@@ -7985,7 +8107,7 @@ function renderStructuredProjectConfig(value, language) {
 
 // domains/comet-native/native-protected-file.ts
 import { createHash as createHash3 } from "node:crypto";
-import { constants as fsConstants, promises as fs3 } from "node:fs";
+import { constants as fsConstants2, promises as fs4 } from "node:fs";
 import path4 from "node:path";
 import { TextDecoder as TextDecoder2 } from "node:util";
 function isInside3(parent, target) {
@@ -7999,7 +8121,7 @@ function positiveLimit2(value) {
   return value;
 }
 function sameDirectoryIdentity3(expected, actual) {
-  return sameNativeFileObject(
+  return sameFileObject(
     { ...expected, birthtime: expected.birthtimeMs },
     {
       ...actual,
@@ -8018,7 +8140,7 @@ function asFileIdentity(stat) {
   };
 }
 function sameFileIdentity3(expected, actual) {
-  return sameNativeFileObject(
+  return sameFileObject(
     { ...expected, birthtime: expected.birthtimeMs },
     {
       ...actual,
@@ -8027,13 +8149,13 @@ function sameFileIdentity3(expected, actual) {
   ) && expected.birthtimeMs === actual.birthtimeMs && expected.ctimeMs === actual.ctimeMs && expected.mtimeMs === actual.mtimeMs && expected.size === actual.size;
 }
 async function captureDirectoryIdentity2(directory, label) {
-  const stat = await fs3.lstat(directory);
+  const stat = await fs4.lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error(`${label} parent must be a real directory: ${directory}`);
   }
   return {
     path: directory,
-    realPath: await fs3.realpath(directory),
+    realPath: await fs4.realpath(directory),
     dev: stat.dev,
     ino: stat.ino,
     birthtimeMs: stat.birthtimeMs
@@ -8061,8 +8183,8 @@ async function captureDirectoryChain2(root, directory, label) {
 }
 async function verifyDirectoryChain3(chain, label) {
   for (const identity of chain) {
-    const stat = await fs3.lstat(identity.path);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || !sameDirectoryIdentity3(identity, stat) || await fs3.realpath(identity.path) !== identity.realPath) {
+    const stat = await fs4.lstat(identity.path);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || !sameDirectoryIdentity3(identity, stat) || await fs4.realpath(identity.path) !== identity.realPath) {
       throw new Error(`${label} parent changed during I/O: ${identity.path}`);
     }
   }
@@ -8092,27 +8214,27 @@ async function readNativeProtectedFile(options) {
   );
   await options.hooks?.afterParentChainCaptured?.();
   await verifyDirectoryChain3(chain, options.label);
-  const before = await fs3.lstat(file);
+  const before = await fs4.lstat(file);
   if (!before.isFile() || before.isSymbolicLink()) {
     throw new Error(`${options.label} must be a regular file`);
   }
   if (before.size > maxBytes) throw new Error(`${options.label} exceeds ${maxBytes} bytes`);
   const beforeIdentity = asFileIdentity(before);
-  const beforeRealPath = await fs3.realpath(file);
+  const beforeRealPath = await fs4.realpath(file);
   if (!isInside3(chain[0].realPath, beforeRealPath)) {
     throw new Error(`${options.label} resolves outside its managed root`);
   }
   if (forbidden.some((identity) => isInside3(identity.realPath, beforeRealPath))) {
     throw new Error(`${options.label} resolves inside an excluded root`);
   }
-  const flags = process.platform === "win32" ? fsConstants.O_RDONLY : fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK;
-  const handle = await fs3.open(file, flags);
+  const flags = process.platform === "win32" ? fsConstants2.O_RDONLY : fsConstants2.O_RDONLY | fsConstants2.O_NOFOLLOW | fsConstants2.O_NONBLOCK;
+  const handle = await fs4.open(file, flags);
   try {
     const opened = await handle.stat();
     await options.hooks?.afterOpen?.();
     const [pathAfterOpen, realPathAfterOpen] = await Promise.all([
-      fs3.lstat(file),
-      fs3.realpath(file)
+      fs4.lstat(file),
+      fs4.realpath(file)
     ]);
     await verifyDirectoryChain3(chain, options.label);
     await verifyDirectoryChain3(forbidden, options.label);
@@ -8124,8 +8246,8 @@ async function readNativeProtectedFile(options) {
     await options.hooks?.beforeFinalCheck?.();
     const [afterHandle, afterPath, afterRealPath] = await Promise.all([
       handle.stat(),
-      fs3.lstat(file),
-      fs3.realpath(file)
+      fs4.lstat(file),
+      fs4.realpath(file)
     ]);
     await verifyDirectoryChain3(chain, options.label);
     await verifyDirectoryChain3(forbidden, options.label);
@@ -8155,11 +8277,11 @@ async function readNativeProtectedDirectory(options) {
   const chain = await captureDirectoryChain2(options.root, options.directory, options.label);
   let entries;
   if (options.maxEntries === void 0) {
-    entries = await fs3.readdir(options.directory, { withFileTypes: true });
+    entries = await fs4.readdir(options.directory, { withFileTypes: true });
   } else {
     const maxEntries = positiveLimit2(options.maxEntries);
     entries = [];
-    const directory = await fs3.opendir(options.directory);
+    const directory = await fs4.opendir(options.directory);
     try {
       for await (const entry2 of directory) {
         entries.push(entry2);
@@ -8200,25 +8322,25 @@ async function quarantineNativeProtectedDirectoryInternal(options) {
   }
   await options.beforeQuarantine?.();
   await verifyDirectoryChain3(parentChain, options.label);
-  const current = await fs3.lstat(directory);
-  if (!current.isDirectory() || current.isSymbolicLink() || !sameDirectoryIdentity3(identity, current) || await fs3.realpath(directory) !== identity.realPath) {
+  const current = await fs4.lstat(directory);
+  if (!current.isDirectory() || current.isSymbolicLink() || !sameDirectoryIdentity3(identity, current) || await fs4.realpath(directory) !== identity.realPath) {
     throw new Error(`${options.label} changed before quarantine`);
   }
   try {
-    await fs3.lstat(quarantine);
+    await fs4.lstat(quarantine);
     throw new Error(`${options.label} quarantine path is occupied`);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
-  await fs3.rename(directory, quarantine);
+  await fs4.rename(directory, quarantine);
   await verifyDirectoryChain3(parentChain, options.label);
-  const quarantined = await fs3.lstat(quarantine);
+  const quarantined = await fs4.lstat(quarantine);
   if (!quarantined.isDirectory() || quarantined.isSymbolicLink() || !sameDirectoryIdentity3(identity, quarantined)) {
     throw new Error(`${options.label} changed while quarantining`);
   }
   await options.afterQuarantine?.(quarantine);
   try {
-    await fs3.lstat(directory);
+    await fs4.lstat(directory);
     throw new Error(`${options.label} path was recreated while quarantining`);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
@@ -8231,12 +8353,12 @@ async function quarantineNativeProtectedDirectory(options) {
 async function removeNativeProtectedFile(options) {
   const file = path4.resolve(options.file);
   const parentChain = await captureDirectoryChain2(options.root, path4.dirname(file), options.label);
-  const before = await fs3.lstat(file);
+  const before = await fs4.lstat(file);
   if (!before.isFile() || before.isSymbolicLink()) {
     throw new Error(`${options.label} must be a regular file`);
   }
   const identity = asFileIdentity(before);
-  const realPath = await fs3.realpath(file);
+  const realPath = await fs4.realpath(file);
   if (!isInside3(parentChain[0].realPath, realPath)) {
     throw new Error(`${options.label} resolves outside its managed root`);
   }
@@ -8249,17 +8371,17 @@ async function removeNativeProtectedFile(options) {
   if (snapshot2.hash !== options.expectedHash || snapshot2.size !== options.expectedSize) {
     throw new Error(`${options.label} changed before removal`);
   }
-  const [afterRead, afterReadRealPath] = await Promise.all([fs3.lstat(file), fs3.realpath(file)]);
+  const [afterRead, afterReadRealPath] = await Promise.all([fs4.lstat(file), fs4.realpath(file)]);
   if (!afterRead.isFile() || afterRead.isSymbolicLink() || !sameFileIdentity3(identity, afterRead) || afterReadRealPath !== realPath) {
     throw new Error(`${options.label} changed while verifying removal`);
   }
   await options.beforeRemove?.();
   await verifyDirectoryChain3(parentChain, options.label);
-  const [current, currentRealPath] = await Promise.all([fs3.lstat(file), fs3.realpath(file)]);
+  const [current, currentRealPath] = await Promise.all([fs4.lstat(file), fs4.realpath(file)]);
   if (!current.isFile() || current.isSymbolicLink() || !sameFileIdentity3(identity, current) || currentRealPath !== realPath) {
     throw new Error(`${options.label} changed before removal`);
   }
-  await fs3.rm(file);
+  await fs4.rm(file);
   await verifyDirectoryChain3(parentChain, options.label);
 }
 async function removeNativeProtectedEmptyDirectory(options) {
@@ -8275,11 +8397,11 @@ async function removeNativeProtectedEmptyDirectory(options) {
   }
   await options.beforeRemove?.();
   await verifyDirectoryChain3(parentChain, options.label);
-  const current = await fs3.lstat(directory);
-  if (!current.isDirectory() || current.isSymbolicLink() || !sameDirectoryIdentity3(identity, current) || await fs3.realpath(directory) !== identity.realPath) {
+  const current = await fs4.lstat(directory);
+  if (!current.isDirectory() || current.isSymbolicLink() || !sameDirectoryIdentity3(identity, current) || await fs4.realpath(directory) !== identity.realPath) {
     throw new Error(`${options.label} changed before removal`);
   }
-  await fs3.rmdir(directory);
+  await fs4.rmdir(directory);
   await verifyDirectoryChain3(parentChain, options.label);
 }
 async function ensureNativeProtectedDirectory(options) {
@@ -8294,7 +8416,7 @@ async function ensureNativeProtectedDirectory(options) {
     await verifyDirectoryChain3(chain, options.label);
     cursor = path4.join(cursor, segment);
     try {
-      await fs3.mkdir(cursor);
+      await fs4.mkdir(cursor);
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
     }
@@ -8325,7 +8447,7 @@ async function moveNativeProtectedDirectory(options) {
     throw new Error(`${options.label} source resolves outside its managed root`);
   }
   try {
-    await fs3.lstat(target);
+    await fs4.lstat(target);
     throw new Error(`${options.label} target already exists`);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
@@ -8335,21 +8457,21 @@ async function moveNativeProtectedDirectory(options) {
     verifyDirectoryChain3(sourceParentChain, options.label),
     verifyDirectoryChain3(targetParentChain, options.label)
   ]);
-  const current = await fs3.lstat(source);
-  if (!current.isDirectory() || current.isSymbolicLink() || !sameDirectoryIdentity3(sourceIdentity, current) || await fs3.realpath(source) !== sourceIdentity.realPath) {
+  const current = await fs4.lstat(source);
+  if (!current.isDirectory() || current.isSymbolicLink() || !sameDirectoryIdentity3(sourceIdentity, current) || await fs4.realpath(source) !== sourceIdentity.realPath) {
     throw new Error(`${options.label} source changed before move`);
   }
-  await fs3.rename(source, target);
+  await fs4.rename(source, target);
   await Promise.all([
     verifyDirectoryChain3(sourceParentChain, options.label),
     verifyDirectoryChain3(targetParentChain, options.label)
   ]);
-  const moved = await fs3.lstat(target);
-  if (!moved.isDirectory() || moved.isSymbolicLink() || !sameDirectoryIdentity3(sourceIdentity, moved) || !isInside3(sourceParentChain[0].realPath, await fs3.realpath(target))) {
+  const moved = await fs4.lstat(target);
+  if (!moved.isDirectory() || moved.isSymbolicLink() || !sameDirectoryIdentity3(sourceIdentity, moved) || !isInside3(sourceParentChain[0].realPath, await fs4.realpath(target))) {
     throw new Error(`${options.label} source identity changed while moving`);
   }
   try {
-    await fs3.lstat(source);
+    await fs4.lstat(source);
     throw new Error(`${options.label} source was recreated while moving`);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
@@ -8375,7 +8497,7 @@ async function copyNativeProtectedFile(options) {
       if (options.expectedTargetHash === void 0) return;
       if (options.expectedTargetHash === null) {
         try {
-          await fs3.lstat(options.target);
+          await fs4.lstat(options.target);
         } catch (error) {
           if (error.code === "ENOENT") return;
           throw error;
@@ -8406,13 +8528,13 @@ async function copyNativeProtectedFile(options) {
 }
 
 // domains/comet-native/native-paths.ts
-import { promises as fs4 } from "fs";
+import { promises as fs5 } from "fs";
 import path5 from "path";
 import os from "os";
 var PROJECT_CONFIG_FILE = ".comet/config.yaml";
 async function isFileOrDirectory(target) {
   try {
-    await fs4.lstat(target);
+    await fs5.lstat(target);
     return true;
   } catch (error) {
     if (error.code === "ENOENT") return false;
@@ -8421,7 +8543,7 @@ async function isFileOrDirectory(target) {
 }
 async function declaresNativeProjectConfig(target) {
   try {
-    const source = await fs4.readFile(target, "utf8");
+    const source = await fs5.readFile(target, "utf8");
     return /^schema:\s*comet\.project\.v1\s*$/mu.test(source);
   } catch (error) {
     if (error.code === "ENOENT") return false;
@@ -8441,12 +8563,12 @@ async function physicalPath(target) {
     missing.push(path5.basename(cursor));
     cursor = parent;
   }
-  const existing = await fs4.realpath(cursor);
+  const existing = await fs5.realpath(cursor);
   return path5.resolve(existing, ...missing.reverse());
 }
 async function isSymbolicLink(target) {
   try {
-    return (await fs4.lstat(target)).isSymbolicLink();
+    return (await fs5.lstat(target)).isSymbolicLink();
   } catch (error) {
     if (error.code === "ENOENT") return false;
     throw error;
@@ -8455,7 +8577,7 @@ async function isSymbolicLink(target) {
 async function discoverNativeProject(startPath) {
   let cursor = path5.resolve(startPath);
   try {
-    if (!(await fs4.stat(cursor)).isDirectory()) cursor = path5.dirname(cursor);
+    if (!(await fs5.stat(cursor)).isDirectory()) cursor = path5.dirname(cursor);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
@@ -8494,7 +8616,7 @@ function normalizeArtifactRootRef(value) {
 async function resolveArtifactRoot(projectRoot, value) {
   const normalized = normalizeArtifactRootRef(value);
   const lexical = path5.resolve(projectRoot, ...normalized.split("/"));
-  const physicalProject = await fs4.realpath(projectRoot);
+  const physicalProject = await fs5.realpath(projectRoot);
   const physicalTarget = await physicalPath(lexical);
   if (!inside(physicalProject, physicalTarget)) {
     throw new Error("native.artifact_root resolves outside the project root");
@@ -8540,7 +8662,7 @@ async function ensureNativeDirectories(paths) {
   await Promise.all(
     directories.map(async (directory) => {
       await resolveContainedNativePath(paths.nativeRoot, directory);
-      await fs4.mkdir(directory, { recursive: true });
+      await fs5.mkdir(directory, { recursive: true });
     })
   );
 }
@@ -8571,11 +8693,100 @@ var NATIVE_KEYS = /* @__PURE__ */ new Set([
   "artifact_root",
   "language",
   "clarification_mode",
+  "snapshot",
   "pending_root_move"
+]);
+var SNAPSHOT_KEYS = /* @__PURE__ */ new Set([
+  "include",
+  "exclude",
+  "max_files",
+  "max_total_bytes",
+  "max_duration_ms"
 ]);
 var PENDING_KEYS = /* @__PURE__ */ new Set(["id", "from_artifact_root", "to_artifact_root", "stage", "cleanup"]);
 var NATIVE_PROJECT_CONFIG_MAX_BYTES = 64 * 1024;
 var CLEANUP_KEYS = /* @__PURE__ */ new Set(["kind", "state", "manifest_hash"]);
+var MAX_NATIVE_SNAPSHOT_PATTERN_LENGTH = 1024;
+var MAX_NATIVE_SNAPSHOT_PATTERN_WILDCARDS = 64;
+var DEFAULT_NATIVE_SNAPSHOT_CONFIG = {
+  include: ["**/*"],
+  exclude: [],
+  max_files: 1e4,
+  max_total_bytes: 256 * 1024 * 1024,
+  max_duration_ms: 6e4
+};
+function normalizeNativeSnapshotPattern(value, label) {
+  if (typeof value !== "string" || value.length === 0 || value.includes("\\") || value.includes("\0") || value.startsWith("/") || value.split("/").includes("..")) {
+    throw new Error(`${label} contains an unsafe pattern`);
+  }
+  if (value.length > MAX_NATIVE_SNAPSHOT_PATTERN_LENGTH) {
+    throw new Error(`${label} exceeds ${MAX_NATIVE_SNAPSHOT_PATTERN_LENGTH} characters`);
+  }
+  let wildcardTokens = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === "?") {
+      wildcardTokens += 1;
+    } else if (value[index] === "*") {
+      wildcardTokens += 1;
+      if (value[index + 1] === "*") index += 1;
+    }
+  }
+  if (wildcardTokens > MAX_NATIVE_SNAPSHOT_PATTERN_WILDCARDS) {
+    throw new Error(
+      `${label} contains more than ${MAX_NATIVE_SNAPSHOT_PATTERN_WILDCARDS} wildcard tokens`
+    );
+  }
+  return value;
+}
+function snapshotPatterns(value, label, fallback) {
+  if (value === void 0) return [...fallback];
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} contains an unsafe pattern`);
+  }
+  return [...new Set(value.map((pattern) => normalizeNativeSnapshotPattern(pattern, label)))].sort(
+    (left, right) => left.localeCompare(right, "en")
+  );
+}
+function positiveSnapshotInteger(value, fallback, label) {
+  const resolved = value ?? fallback;
+  if (!Number.isSafeInteger(resolved) || resolved < 1) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  return resolved;
+}
+function parseSnapshot(value) {
+  if (value === void 0)
+    return { ...DEFAULT_NATIVE_SNAPSHOT_CONFIG, include: ["**/*"], exclude: [] };
+  const snapshot2 = record(value, "native.snapshot");
+  rejectUnknown(snapshot2, SNAPSHOT_KEYS, "native.snapshot");
+  return {
+    include: snapshotPatterns(
+      snapshot2.include,
+      "native.snapshot.include",
+      DEFAULT_NATIVE_SNAPSHOT_CONFIG.include
+    ),
+    exclude: snapshotPatterns(
+      snapshot2.exclude,
+      "native.snapshot.exclude",
+      DEFAULT_NATIVE_SNAPSHOT_CONFIG.exclude
+    ),
+    max_files: positiveSnapshotInteger(
+      snapshot2.max_files,
+      DEFAULT_NATIVE_SNAPSHOT_CONFIG.max_files,
+      "native.snapshot.max_files"
+    ),
+    max_total_bytes: positiveSnapshotInteger(
+      snapshot2.max_total_bytes,
+      DEFAULT_NATIVE_SNAPSHOT_CONFIG.max_total_bytes,
+      "native.snapshot.max_total_bytes"
+    ),
+    max_duration_ms: positiveSnapshotInteger(
+      snapshot2.max_duration_ms,
+      DEFAULT_NATIVE_SNAPSHOT_CONFIG.max_duration_ms,
+      "native.snapshot.max_duration_ms"
+    )
+  };
+}
 function record(value, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be a mapping`);
@@ -8661,6 +8872,7 @@ function parseConfig(value) {
     throw new Error("native.clarification_mode must be sequential or batch");
   }
   const pending = parsePending(native.pending_root_move);
+  const snapshot2 = parseSnapshot(native.snapshot);
   return {
     schema: "comet.project.v1",
     default_workflow: root.default_workflow,
@@ -8670,6 +8882,7 @@ function parseConfig(value) {
       artifact_root: normalizeArtifactRootRef(native.artifact_root),
       language,
       clarification_mode: clarificationMode,
+      snapshot: snapshot2,
       ...pending ? { pending_root_move: pending } : {}
     }
   };
@@ -8682,7 +8895,8 @@ function defaultProjectConfig(artifactRoot = "docs", language = "en") {
     native: {
       artifact_root: normalizeArtifactRootRef(artifactRoot),
       language,
-      clarification_mode: "sequential"
+      clarification_mode: "sequential",
+      snapshot: { ...DEFAULT_NATIVE_SNAPSHOT_CONFIG, include: ["**/*"], exclude: [] }
     }
   };
 }
@@ -8690,7 +8904,7 @@ async function readProjectConfig(projectRoot) {
   const canonical = path6.join(projectRoot, ...PROJECT_CONFIG_FILE.split("/"));
   const file = canonical;
   try {
-    await fs5.lstat(file);
+    await fs6.lstat(file);
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -8751,6 +8965,7 @@ async function writeProjectConfig(projectRoot, config) {
       artifact_root: config.native.artifact_root,
       language: config.native.language,
       clarification_mode: config.native.clarification_mode,
+      snapshot: config.native.snapshot,
       ...config.native.pending_root_move ? {
         pending_root_move: {
           id: config.native.pending_root_move.id,
@@ -8778,6 +8993,7 @@ async function writeProjectConfig(projectRoot, config) {
       artifact_root: validated.native.artifact_root,
       language: validated.native.language,
       clarification_mode: validated.native.clarification_mode,
+      snapshot: validated.native.snapshot,
       ...validated.native.pending_root_move ? {
         pending_root_move: {
           id: validated.native.pending_root_move.id,
@@ -8796,7 +9012,7 @@ async function writeProjectConfig(projectRoot, config) {
     }
   };
   const canonical = path6.join(projectRoot, ...PROJECT_CONFIG_FILE.split("/"));
-  await fs5.mkdir(path6.dirname(canonical), { recursive: true });
+  await fs6.mkdir(path6.dirname(canonical), { recursive: true });
   await atomicWriteText(
     canonical,
     renderStructuredProjectConfig(document, validated.native.language === "zh-CN" ? "zh-CN" : "en")
@@ -8825,13 +9041,13 @@ async function resolveNativeProject(options) {
 }
 
 // domains/comet-native/native-mutation-lock.ts
-import { promises as fs8 } from "fs";
+import { promises as fs9 } from "fs";
 import path9 from "path";
 
 // domains/comet-native/native-lock.ts
 import { AsyncLocalStorage } from "async_hooks";
 import { randomUUID as randomUUID2 } from "crypto";
-import { promises as fs6 } from "fs";
+import { promises as fs7 } from "fs";
 import os2 from "os";
 import path7 from "path";
 var NATIVE_LOCK_MAX_BYTES = 16 * 1024;
@@ -8866,10 +9082,10 @@ function nativeLockFileIdentity(stat) {
 function sameNativeLockObject(left, right) {
   const leftObject = { dev: left.device, ino: left.inode, birthtime: left.birthtimeNs };
   const rightObject = { dev: right.device, ino: right.inode, birthtime: right.birthtimeNs };
-  if (hasComparableNativeFileObject(leftObject, rightObject)) {
-    return sameNativeFileObject(leftObject, rightObject);
+  if (hasComparableFileObject(leftObject, rightObject)) {
+    return sameFileObject(leftObject, rightObject);
   }
-  return sameNativeFileObject(leftObject, rightObject) && left.size === right.size;
+  return sameFileObject(leftObject, rightObject) && left.size === right.size;
 }
 function sameNativeLockVersion(left, right) {
   return sameNativeLockObject(left, right) && left.size === right.size && left.birthtimeNs === right.birthtimeNs && left.ctimeNs === right.ctimeNs && left.mtimeNs === right.mtimeNs;
@@ -8882,41 +9098,35 @@ function sameNativeLockDiagnosis(left, right) {
   return left.owner.id === right.owner.id && sameNativeLockVersion(left.identity, right.identity);
 }
 async function readNativeLockSnapshot(file) {
-  let handle;
+  let bytes;
+  let stat;
   try {
-    handle = await fs6.open(file, "r");
+    const result2 = await readFileRaceSafe(file, NATIVE_LOCK_MAX_BYTES, {
+      bigint: true,
+      label: "Native lock"
+    });
+    bytes = result2.bytes;
+    stat = result2.stat;
   } catch (error) {
     if (error.code === "ENOENT") return null;
+    if (error instanceof RaceSafeReadError) {
+      if (error.reason === "too-large") {
+        throw new Error(`Native lock metadata exceeds ${NATIVE_LOCK_MAX_BYTES} bytes: ${file}`, {
+          cause: error
+        });
+      }
+      if (error.reason === "not-regular-file") {
+        throw new Error(`Native lock must be a regular file: ${file}`, { cause: error });
+      }
+      throw new Error(`Native lock changed while reading: ${file}`, { cause: error });
+    }
     throw error;
   }
-  try {
-    const stat = await handle.stat({ bigint: true });
-    if (!stat.isFile() || stat.isSymbolicLink()) {
-      throw new Error(`Native lock must be a regular file: ${file}`);
-    }
-    if (stat.size > BigInt(NATIVE_LOCK_MAX_BYTES)) {
-      throw new Error(`Native lock metadata exceeds ${NATIVE_LOCK_MAX_BYTES} bytes: ${file}`);
-    }
-    const source = await handle.readFile({ encoding: "utf8" });
-    const pathStat = await fs6.lstat(file, { bigint: true });
-    if (pathStat.isSymbolicLink() || !pathStat.isFile()) {
-      throw new Error(`Native lock must be a regular file: ${file}`);
-    }
-    const identity = nativeLockFileIdentity(stat);
-    if (!sameNativeLockObject(identity, nativeLockFileIdentity(pathStat))) {
-      throw new Error(`Native lock changed while reading: ${file}`);
-    }
-    return {
-      file,
-      owner: parseNativeLockOwner(JSON.parse(source), file),
-      identity
-    };
-  } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  } finally {
-    await handle.close();
-  }
+  return {
+    file,
+    owner: parseNativeLockOwner(JSON.parse(bytes.toString("utf8")), file),
+    identity: nativeLockFileIdentity(stat)
+  };
 }
 async function readNativeLock(file) {
   return (await readNativeLockSnapshot(file))?.owner ?? null;
@@ -8935,13 +9145,13 @@ function diagnosisFromSnapshot(snapshot2) {
 }
 async function restoreQuarantinedNativeLock(quarantine, file) {
   try {
-    await fs6.lstat(file);
+    await fs7.lstat(file);
     return;
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
   try {
-    await fs6.rename(quarantine, file);
+    await fs7.rename(quarantine, file);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
@@ -8955,13 +9165,13 @@ async function removeBoundNativeLock(expected, quarantineDir) {
   if (!sameNativeLockVersion(current.identity, expected.identity)) {
     throw new Error(`Native lock identity changed: ${expected.file}`);
   }
-  await fs6.mkdir(quarantineDir, { recursive: true });
+  await fs7.mkdir(quarantineDir, { recursive: true });
   const quarantine = path7.join(
     quarantineDir,
     `${path7.basename(expected.file)}.${expected.owner.id}.${randomUUID2()}.removed`
   );
   try {
-    await fs6.rename(expected.file, quarantine);
+    await fs7.rename(expected.file, quarantine);
   } catch (error) {
     if (error.code === "ENOENT") return "missing";
     throw error;
@@ -8971,7 +9181,7 @@ async function removeBoundNativeLock(expected, quarantineDir) {
     await restoreQuarantinedNativeLock(quarantine, expected.file);
     throw new Error(`Native lock changed before quarantine: ${expected.file}`);
   }
-  await fs6.rm(quarantine, { force: true });
+  await fs7.rm(quarantine, { force: true });
   return "removed";
 }
 function newNativeLockOwner(operation) {
@@ -8986,7 +9196,7 @@ function newNativeLockOwner(operation) {
 async function writeNativeLockFile(file, owner) {
   let handle;
   try {
-    handle = await fs6.open(file, "wx");
+    handle = await fs7.open(file, "wx");
   } catch (error) {
     if (error.code === "EEXIST") {
       const existing = await readNativeLock(file);
@@ -9007,32 +9217,32 @@ async function writeNativeLockFile(file, owner) {
 }
 async function publishNativeCoordinatorClaim(paths, operation) {
   const locksDir = await resolveContainedNativePath(paths.nativeRoot, paths.locksDir);
-  await fs6.mkdir(locksDir, { recursive: true });
+  await fs7.mkdir(locksDir, { recursive: true });
   const coordinatorDir = await resolveContainedNativePath(
     paths.nativeRoot,
     path7.join(locksDir, NATIVE_LOCK_COORDINATOR_DIR)
   );
-  await fs6.mkdir(coordinatorDir, { recursive: true });
+  await fs7.mkdir(coordinatorDir, { recursive: true });
   const owner = newNativeLockOwner(operation);
   const temporary = path7.join(coordinatorDir, `.${owner.id}.tmp`);
   const file = path7.join(coordinatorDir, `${owner.id}.claim`);
   try {
     const identity = await writeNativeLockFile(temporary, owner);
-    await fs6.rename(temporary, file);
+    await fs7.rename(temporary, file);
     const published = await readNativeLockSnapshot(file);
     if (!published || !sameNativeLockObject(identity, published.identity)) {
       throw new Error(`Native lock coordinator claim changed while publishing: ${file}`);
     }
     return { file, nativeRoot: paths.nativeRoot, locksDir, owner, identity: published.identity };
   } finally {
-    await fs6.rm(temporary, { force: true });
+    await fs7.rm(temporary, { force: true });
   }
 }
 async function hasNativeCoordinatorPredecessor(claim) {
   const coordinatorDir = path7.dirname(claim.file);
   let predecessor = false;
   const claimName = path7.basename(claim.file);
-  for (const entry2 of await fs6.readdir(coordinatorDir, { withFileTypes: true })) {
+  for (const entry2 of await fs7.readdir(coordinatorDir, { withFileTypes: true })) {
     if (!entry2.isFile() || entry2.isSymbolicLink() || !entry2.name.endsWith(".claim")) continue;
     const file = path7.join(coordinatorDir, entry2.name);
     if (path7.resolve(file) === path7.resolve(claim.file)) continue;
@@ -9118,7 +9328,7 @@ async function withNativeLockRecovery(pathEntries, operation, work) {
 async function acquireNativeLock(paths, name, operation) {
   return withNativeLockCoordinator(paths, `acquire ${name}`, async () => {
     const locksDir = await resolveContainedNativePath(paths.nativeRoot, paths.locksDir);
-    await fs6.mkdir(locksDir, { recursive: true });
+    await fs7.mkdir(locksDir, { recursive: true });
     const file = await resolveContainedNativePath(
       paths.nativeRoot,
       path7.join(locksDir, lockName(name))
@@ -9180,7 +9390,7 @@ async function takeOverNativeStaleLock(paths, file, expected) {
 }
 
 // domains/comet-native/native-transaction.ts
-import { promises as fs7 } from "fs";
+import { promises as fs8 } from "fs";
 import path8 from "path";
 import { TextDecoder as TextDecoder3 } from "util";
 var JOURNAL_KEYS = /* @__PURE__ */ new Set([
@@ -9642,7 +9852,7 @@ async function resolveRef(paths, ref) {
 }
 async function exists(file) {
   try {
-    await fs7.access(file);
+    await fs8.access(file);
     return true;
   } catch (error) {
     if (error.code === "ENOENT") return false;
@@ -9652,7 +9862,7 @@ async function exists(file) {
 async function readEventLogSnapshot(paths, id, options = {}) {
   const tx = await resolveNativeTransactionPaths(paths, id);
   try {
-    await fs7.lstat(tx.events);
+    await fs8.lstat(tx.events);
   } catch (error) {
     if (error.code === "ENOENT") {
       return {
@@ -9732,7 +9942,7 @@ async function appendNativeTransactionEvent(paths, id, type, operationId) {
     ...operationId ? { operationId } : {}
   };
   parseEvent(event, event.sequence);
-  await fs7.mkdir(tx.directory, { recursive: true });
+  await fs8.mkdir(tx.directory, { recursive: true });
   await atomicWriteText(tx.events, canonicalEventLogSource([...snapshot2.events, event]), {
     containedRoot: paths.nativeRoot,
     beforeCommit: () => assertEventLogSnapshotUnchanged(paths, id, snapshot2)
@@ -9745,8 +9955,8 @@ async function createNativeTransaction(paths, journal) {
   }
   journal = parseJournal(journal);
   const tx = await resolveNativeTransactionPaths(paths, journal.id);
-  await fs7.mkdir(tx.staged, { recursive: true });
-  await fs7.mkdir(tx.backups, { recursive: true });
+  await fs8.mkdir(tx.staged, { recursive: true });
+  await fs8.mkdir(tx.backups, { recursive: true });
   await atomicWriteJson(tx.journal, journal);
   await appendNativeTransactionEvent(paths, journal.id, "prepared");
 }
@@ -9970,7 +10180,7 @@ function nativeRootRef(paths, target) {
 async function hasUnfinishedTransaction(paths, allowedTransactionId) {
   let entries;
   try {
-    entries = await fs8.readdir(paths.transactionsDir, { withFileTypes: true });
+    entries = await fs9.readdir(paths.transactionsDir, { withFileTypes: true });
   } catch (error) {
     if (error.code === "ENOENT") return false;
     throw error;
@@ -10046,7 +10256,7 @@ async function compareAndSwapNativeRevision(options) {
 // domains/comet-native/native-snapshot.ts
 import { createHash as createHash5 } from "crypto";
 import { spawn } from "node:child_process";
-import { promises as fs9 } from "fs";
+import { promises as fs10 } from "fs";
 import path10 from "path";
 
 // domains/comet-native/native-hash.ts
@@ -10081,9 +10291,17 @@ var MANIFEST_KEYS = /* @__PURE__ */ new Set([
   "entries",
   "omitted",
   "omittedCount",
-  "omissionOverflow"
+  "omissionOverflow",
+  "policy"
 ]);
-var LIMIT_KEYS = /* @__PURE__ */ new Set(["maxFiles", "maxFileBytes", "maxTotalBytes", "maxManifestBytes"]);
+var LIMIT_KEYS = /* @__PURE__ */ new Set([
+  "maxFiles",
+  "maxFileBytes",
+  "maxTotalBytes",
+  "maxManifestBytes",
+  "maxDurationMs"
+]);
+var POLICY_KEYS = /* @__PURE__ */ new Set(["schema", "include", "exclude", "hash"]);
 var CAPTURE_KEYS = /* @__PURE__ */ new Set(["provider", "gitSelection", "physicalSelection", "projection"]);
 var GIT_PROJECTION_KEYS = /* @__PURE__ */ new Set(["provider", "selection"]);
 var GIT_SELECTION_KEYS = /* @__PURE__ */ new Set([
@@ -10507,7 +10725,7 @@ async function hasGitMetadataBoundary(projectRoot) {
   let cursor = path10.resolve(projectRoot);
   while (true) {
     try {
-      await fs9.lstat(path10.join(cursor, ".git"));
+      await fs10.lstat(path10.join(cursor, ".git"));
       return true;
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
@@ -10736,7 +10954,7 @@ async function nativePhysicalSnapshotSelection(options) {
     if (!hasExecutionBudget()) return;
     let handle;
     try {
-      handle = await fs9.opendir(directory);
+      handle = await fs10.opendir(directory);
     } catch (error) {
       if (!hasExecutionBudget()) return;
       if (!isUnreadableError(error) && !isChangedDuringReadError(error)) throw error;
@@ -10786,7 +11004,7 @@ async function nativePhysicalSnapshotSelection(options) {
         if (!hasExecutionBudget()) break;
         let stat;
         try {
-          stat = await fs9.lstat(target);
+          stat = await fs10.lstat(target);
         } catch (error) {
           if (!hasExecutionBudget()) break;
           if (!isUnreadableError(error) && !isChangedDuringReadError(error)) throw error;
@@ -10809,7 +11027,7 @@ async function nativePhysicalSnapshotSelection(options) {
           if (!hasExecutionBudget()) break;
           let realDirectory;
           try {
-            realDirectory = await fs9.realpath(target);
+            realDirectory = await fs10.realpath(target);
           } catch (error) {
             if (!hasExecutionBudget()) break;
             if (!isUnreadableError(error) && !isChangedDuringReadError(error)) throw error;
@@ -11000,6 +11218,133 @@ function isChangedDuringReadError(error) {
 function serializedManifestBytes(manifest) {
   return Buffer.byteLength(JSON.stringify(manifest, null, 2) + "\n");
 }
+function snapshotPolicyHash(include, exclude) {
+  return sha256Text(
+    `comet.native.snapshot-policy.v1
+${JSON.stringify({ include, exclude, hash: "sha256" })}`
+  );
+}
+function epsilonClosure(tokens, positions, checkpoint) {
+  const closure = new Set(positions);
+  const pending = [...positions];
+  while (pending.length > 0) {
+    if (checkpoint && !checkpoint()) return null;
+    const position = pending.pop();
+    const token = tokens[position];
+    if (token && (token.kind === "star" || token.kind === "globstar" || token.kind === "globstar-slash") && !closure.has(position + 1)) {
+      closure.add(position + 1);
+      pending.push(position + 1);
+    }
+  }
+  return closure;
+}
+function cooperativePatternCheckpoint(hasBudget) {
+  let operationsUntilCheck = 0;
+  return () => {
+    if (operationsUntilCheck > 0) {
+      operationsUntilCheck -= 1;
+      return true;
+    }
+    if (!hasBudget()) return false;
+    operationsUntilCheck = 63;
+    return true;
+  };
+}
+function compileNativeSnapshotPattern(pattern) {
+  const normalized = normalizeNativeSnapshotPattern(pattern, "Native snapshot pattern");
+  const tokens = [];
+  for (let index = 0; index < normalized.length; index += 1) {
+    const character = normalized[index];
+    if (character === "*" && normalized[index + 1] === "*") {
+      index += 1;
+      if (normalized[index + 1] === "/") {
+        index += 1;
+        tokens.push({ kind: "globstar-slash" });
+      } else {
+        tokens.push({ kind: "globstar" });
+      }
+    } else if (character === "*") {
+      tokens.push({ kind: "star" });
+    } else if (character === "?") {
+      tokens.push({ kind: "question" });
+    } else {
+      tokens.push({ kind: "literal", value: character });
+    }
+  }
+  return (relative, hasBudget) => {
+    const checkpoint = hasBudget ? cooperativePatternCheckpoint(hasBudget) : void 0;
+    if (checkpoint && !checkpoint()) return false;
+    let positions = epsilonClosure(tokens, /* @__PURE__ */ new Set([0]), checkpoint);
+    if (positions === null) return false;
+    for (const character of relative) {
+      if (checkpoint && !checkpoint()) return false;
+      const next = /* @__PURE__ */ new Set();
+      for (const position of positions) {
+        if (checkpoint && !checkpoint()) return false;
+        const token = tokens[position];
+        if (!token) continue;
+        if (token.kind === "literal" && token.value === character) {
+          next.add(position + 1);
+        } else if (token.kind === "question" && character !== "/") {
+          next.add(position + 1);
+        } else if (token.kind === "star" && character !== "/") {
+          next.add(position);
+        } else if (token.kind === "globstar") {
+          next.add(position);
+        } else if (token.kind === "globstar-slash") {
+          next.add(position);
+          if (character === "/") next.add(position + 1);
+        }
+      }
+      positions = epsilonClosure(tokens, next, checkpoint);
+      if (positions === null) return false;
+      if (positions.size === 0) return false;
+    }
+    return epsilonClosure(tokens, positions, checkpoint)?.has(tokens.length) ?? false;
+  };
+}
+function resolveSnapshotPolicy(value) {
+  if (value === void 0) return void 0;
+  const include = [
+    ...new Set(value.include.map((item) => normalizeNativeSnapshotPattern(item, "include")))
+  ].sort((left, right) => left.localeCompare(right, "en"));
+  const exclude = [
+    ...new Set(value.exclude.map((item) => normalizeNativeSnapshotPattern(item, "exclude")))
+  ].sort((left, right) => left.localeCompare(right, "en"));
+  if (include.length === 0) throw new Error("Native snapshot policy include must not be empty");
+  const hash6 = snapshotPolicyHash(include, exclude);
+  if ("hash" in value && value.hash !== hash6) {
+    throw new Error("Native snapshot policy hash is invalid");
+  }
+  return {
+    manifest: {
+      schema: "comet.native.snapshot-policy.v1",
+      include,
+      exclude,
+      hash: hash6
+    },
+    includeMatchers: include.map(compileNativeSnapshotPattern),
+    excludeMatchers: exclude.map(compileNativeSnapshotPattern)
+  };
+}
+function snapshotPolicyIncludes(policy, relative, execution) {
+  if (!policy) return true;
+  const hasBudget = () => nativeSnapshotExecutionHasBudget(execution);
+  let included = false;
+  for (const matcher of policy.includeMatchers) {
+    if (!hasBudget()) return false;
+    if (matcher(relative, hasBudget)) {
+      included = true;
+      break;
+    }
+  }
+  if (!included) return false;
+  for (const matcher of policy.excludeMatchers) {
+    if (!hasBudget()) return false;
+    if (matcher(relative, hasBudget)) return false;
+  }
+  return true;
+}
 function foldSnapshotOverflowHash(previous, kind, value) {
   const payload = JSON.stringify(value);
   return sha256Text(
@@ -11023,16 +11368,16 @@ function takeLastCompactableOmission(omissions) {
 function sameFileIdentity4(left, right) {
   const leftObject = { ...left, birthtime: left.birthtimeMs };
   const rightObject = { ...right, birthtime: right.birthtimeMs };
-  if (hasComparableNativeFileObject(leftObject, rightObject)) {
-    return sameNativeFileObject(leftObject, rightObject);
+  if (hasComparableFileObject(leftObject, rightObject)) {
+    return sameFileObject(leftObject, rightObject);
   }
-  return sameNativeFileObject(leftObject, rightObject) && left.birthtimeMs === right.birthtimeMs && left.ctimeMs === right.ctimeMs && left.size === right.size;
+  return sameFileObject(leftObject, rightObject) && left.birthtimeMs === right.birthtimeMs && left.ctimeMs === right.ctimeMs && left.size === right.size;
 }
 async function sha256FileBounded(file, maxBytes, expected, execution) {
   if (!nativeSnapshotExecutionHasBudget(execution)) return { status: "budget-exhausted" };
   let handle;
   try {
-    handle = await fs9.open(file, "r");
+    handle = await fs10.open(file, "r");
   } catch (error) {
     if (!nativeSnapshotExecutionHasBudget(execution)) return { status: "budget-exhausted" };
     throw error;
@@ -11367,8 +11712,28 @@ function parseNativeContentSnapshotManifest(value) {
     maxManifestBytes: positiveInteger(
       limitValue.maxManifestBytes,
       "Native snapshot maxManifestBytes"
-    )
+    ),
+    ...limitValue.maxDurationMs === void 0 ? {} : {
+      maxDurationMs: positiveInteger(limitValue.maxDurationMs, "Native snapshot maxDurationMs")
+    }
   };
+  let policy;
+  if (manifest.policy !== void 0) {
+    const policyValue = record3(manifest.policy, "Native snapshot policy");
+    rejectUnknown3(policyValue, POLICY_KEYS, "Native snapshot policy");
+    if (policyValue.schema !== "comet.native.snapshot-policy.v1") {
+      throw new Error("Native snapshot policy schema is invalid");
+    }
+    if (!Array.isArray(policyValue.include) || !Array.isArray(policyValue.exclude)) {
+      throw new Error("Native snapshot policy patterns must be arrays");
+    }
+    policy = resolveSnapshotPolicy({
+      include: policyValue.include,
+      exclude: policyValue.exclude,
+      hash: policyValue.hash,
+      schema: "comet.native.snapshot-policy.v1"
+    }).manifest;
+  }
   if (!Array.isArray(manifest.entries) || !Array.isArray(manifest.omitted)) {
     throw new Error("Native content snapshot entries and omissions must be arrays");
   }
@@ -11451,6 +11816,7 @@ function parseNativeContentSnapshotManifest(value) {
     createdAt: manifest.createdAt,
     complete: manifest.complete,
     limits,
+    ...policy ? { policy } : {},
     entries,
     omitted,
     omittedCount,
@@ -11591,13 +11957,18 @@ function nativeBaselineManifestFile(paths, name) {
   return path10.join(changeDir, "runtime", "baseline-manifest.json");
 }
 async function createNativeContentSnapshot(paths, options = {}) {
-  const execution = createNativeSnapshotExecution(options);
   const limits = {
     maxFiles: options.limits?.maxFiles ?? DEFAULT_NATIVE_SNAPSHOT_LIMITS.maxFiles,
     maxFileBytes: options.limits?.maxFileBytes ?? DEFAULT_NATIVE_SNAPSHOT_LIMITS.maxFileBytes,
     maxTotalBytes: options.limits?.maxTotalBytes ?? DEFAULT_NATIVE_SNAPSHOT_LIMITS.maxTotalBytes,
-    maxManifestBytes: options.limits?.maxManifestBytes ?? DEFAULT_NATIVE_SNAPSHOT_LIMITS.maxManifestBytes
+    maxManifestBytes: options.limits?.maxManifestBytes ?? DEFAULT_NATIVE_SNAPSHOT_LIMITS.maxManifestBytes,
+    ...options.limits?.maxDurationMs === void 0 ? {} : { maxDurationMs: options.limits.maxDurationMs }
   };
+  const policy = resolveSnapshotPolicy(options.policy);
+  const execution = createNativeSnapshotExecution({
+    ...options,
+    deadlineMs: options.deadlineMs ?? limits.maxDurationMs
+  });
   const gitSelectionLimits = resolveNativeGitSelectionLimits(options.gitSelectionLimits);
   const physicalSelectionLimits = resolveNativePhysicalSelectionLimits(
     options.physicalSelectionLimits
@@ -11606,9 +11977,9 @@ async function createNativeContentSnapshot(paths, options = {}) {
     throw new Error("Native snapshot limits must be positive");
   }
   const projectRoot = path10.resolve(paths.projectRoot);
-  const physicalProjectRoot = await fs9.realpath(projectRoot);
+  const physicalProjectRoot = await fs10.realpath(projectRoot);
   const nativeRoot = path10.resolve(paths.nativeRoot);
-  const physicalNativeRoot = await fs9.realpath(nativeRoot);
+  const physicalNativeRoot = await fs10.realpath(nativeRoot);
   const configFile = path10.resolve(paths.configFile);
   const selectionFile = path10.join(projectRoot, ".comet", "current-change.json");
   const denylist = normalizedDenylist(projectRoot, options.denylist ?? []);
@@ -11680,7 +12051,7 @@ async function createNativeContentSnapshot(paths, options = {}) {
     if (!nativeSnapshotExecutionHasBudget(execution)) return;
     let realTarget;
     try {
-      realTarget = await fs9.realpath(target);
+      realTarget = await fs10.realpath(target);
     } catch (error) {
       if (!nativeSnapshotExecutionHasBudget(execution)) return;
       if (!isUnreadableError(error) && !isChangedDuringReadError(error)) throw error;
@@ -11721,9 +12092,9 @@ async function createNativeContentSnapshot(paths, options = {}) {
         return;
       }
       if (!nativeSnapshotExecutionHasBudget(execution)) return;
-      afterRealTarget = await fs9.realpath(target);
+      afterRealTarget = await fs10.realpath(target);
       if (!nativeSnapshotExecutionHasBudget(execution)) return;
-      after = await fs9.lstat(target);
+      after = await fs10.lstat(target);
     } catch (error) {
       if (!nativeSnapshotExecutionHasBudget(execution)) return;
       if (!isUnreadableError(error) && !isChangedDuringReadError(error)) throw error;
@@ -11757,11 +12128,11 @@ async function createNativeContentSnapshot(paths, options = {}) {
     let secondTarget;
     let after;
     try {
-      firstTarget = await fs9.readlink(target, { encoding: "buffer" });
+      firstTarget = await fs10.readlink(target, { encoding: "buffer" });
       if (!nativeSnapshotExecutionHasBudget(execution)) return;
-      after = await fs9.lstat(target);
+      after = await fs10.lstat(target);
       if (!nativeSnapshotExecutionHasBudget(execution)) return;
-      secondTarget = await fs9.readlink(target, { encoding: "buffer" });
+      secondTarget = await fs10.readlink(target, { encoding: "buffer" });
     } catch (error) {
       if (!nativeSnapshotExecutionHasBudget(execution)) return;
       if (!isUnreadableError(error) && !isChangedDuringReadError(error)) throw error;
@@ -11805,9 +12176,9 @@ async function createNativeContentSnapshot(paths, options = {}) {
         let realTarget2;
         let stat2;
         try {
-          realTarget2 = await fs9.realpath(validation2.target);
+          realTarget2 = await fs10.realpath(validation2.target);
           if (!nativeSnapshotExecutionHasBudget(execution)) return;
-          stat2 = await fs9.lstat(validation2.target);
+          stat2 = await fs10.lstat(validation2.target);
         } catch (error) {
           if (!nativeSnapshotExecutionHasBudget(execution)) return;
           if (!isUnreadableError(error) && !isChangedDuringReadError(error)) throw error;
@@ -11834,9 +12205,9 @@ async function createNativeContentSnapshot(paths, options = {}) {
         let stat2;
         let rawTarget;
         try {
-          stat2 = await fs9.lstat(validation2.target);
+          stat2 = await fs10.lstat(validation2.target);
           if (!nativeSnapshotExecutionHasBudget(execution)) return;
-          rawTarget = await fs9.readlink(validation2.target, { encoding: "buffer" });
+          rawTarget = await fs10.readlink(validation2.target, { encoding: "buffer" });
         } catch (error) {
           if (!nativeSnapshotExecutionHasBudget(execution)) return;
           if (!isUnreadableError(error) && !isChangedDuringReadError(error)) throw error;
@@ -11862,9 +12233,9 @@ async function createNativeContentSnapshot(paths, options = {}) {
       let realTarget;
       let stat;
       try {
-        realTarget = await fs9.realpath(validation2.target);
+        realTarget = await fs10.realpath(validation2.target);
         if (!nativeSnapshotExecutionHasBudget(execution)) return;
-        stat = await fs9.lstat(validation2.target);
+        stat = await fs10.lstat(validation2.target);
       } catch {
         if (!nativeSnapshotExecutionHasBudget(execution)) return;
         invalidateCapturedEntry(relative, {
@@ -11920,7 +12291,7 @@ async function createNativeContentSnapshot(paths, options = {}) {
     for (const [relative, target] of capturedTrackedAbsences) {
       if (!nativeSnapshotExecutionHasBudget(execution)) return;
       try {
-        const stat = await fs9.lstat(target);
+        const stat = await fs10.lstat(target);
         if (!nativeSnapshotExecutionHasBudget(execution)) return;
         omit({
           path: relative,
@@ -11956,10 +12327,12 @@ async function createNativeContentSnapshot(paths, options = {}) {
     for (const record8 of before.records) {
       if (record8.type !== "file" && record8.type !== "symlink") continue;
       if (remainingNativeSnapshotTime(execution) < 1) break;
+      if (!snapshotPolicyIncludes(policy, record8.path, execution)) continue;
+      if (remainingNativeSnapshotTime(execution) < 1) break;
       const target = path10.resolve(projectRoot, ...record8.path.split("/"));
       let stat;
       try {
-        stat = await fs9.lstat(target);
+        stat = await fs10.lstat(target);
       } catch (error) {
         if (!nativeSnapshotExecutionHasBudget(execution)) break;
         if (!isUnreadableError(error) && !isChangedDuringReadError(error)) throw error;
@@ -12012,6 +12385,9 @@ async function createNativeContentSnapshot(paths, options = {}) {
     await options.gitSelectionHooks?.afterInitialSelection?.();
     for (const relative of selectionPaths(gitSelection)) {
       if (!isSnapshotProjectRef(paths, relative)) continue;
+      if (remainingNativeSnapshotTime(execution) < 1) break;
+      if (!snapshotPolicyIncludes(policy, relative, execution)) continue;
+      if (remainingNativeSnapshotTime(execution) < 1) break;
       const target = path10.resolve(projectRoot, ...relative.split("/"));
       if (target === configFile || target === selectionFile || denylist.some((denied) => sameOrInside(denied, target))) {
         continue;
@@ -12024,7 +12400,7 @@ async function createNativeContentSnapshot(paths, options = {}) {
         let realGitlink;
         let gitlinkStat;
         try {
-          [realGitlink, gitlinkStat] = await Promise.all([fs9.realpath(target), fs9.lstat(target)]);
+          [realGitlink, gitlinkStat] = await Promise.all([fs10.realpath(target), fs10.lstat(target)]);
         } catch {
           omit({
             path: relative,
@@ -12082,7 +12458,7 @@ async function createNativeContentSnapshot(paths, options = {}) {
       }
       let before;
       try {
-        before = await fs9.lstat(target);
+        before = await fs10.lstat(target);
       } catch (error) {
         if (isChangedDuringReadError(error) && gitSelection.tracked.has(relative)) {
           capturedTrackedAbsences.set(relative, target);
@@ -12136,6 +12512,7 @@ async function createNativeContentSnapshot(paths, options = {}) {
     createdAt: (options.now ?? /* @__PURE__ */ new Date()).toISOString(),
     complete: omittedCount === 0,
     limits,
+    ...policy ? { policy: policy.manifest } : {},
     entries,
     omitted,
     omittedCount,
@@ -12171,6 +12548,21 @@ async function createNativeContentSnapshot(paths, options = {}) {
     manifest = buildManifest();
   }
   return manifest;
+}
+async function createNativeCurrentContentSnapshot(paths, baseline, options = {}) {
+  const config = await readProjectConfig(paths.projectRoot);
+  const settings = config?.native.snapshot ?? DEFAULT_NATIVE_SNAPSHOT_CONFIG;
+  return createNativeContentSnapshot(paths, {
+    ...options,
+    policy: baseline.policy,
+    limits: {
+      maxFiles: settings.max_files,
+      maxFileBytes: settings.max_total_bytes,
+      maxTotalBytes: settings.max_total_bytes,
+      maxDurationMs: settings.max_duration_ms
+    },
+    deadlineMs: settings.max_duration_ms
+  });
 }
 async function writeNativeBaselineManifest(paths, name, manifest) {
   const file = nativeBaselineManifestFile(paths, name);
@@ -12220,7 +12612,7 @@ function assertRunStorageLayout(storage) {
 
 // domains/comet-native/native-run-store.ts
 import { createHash as createHash6 } from "node:crypto";
-import { constants as fsConstants2, promises as fs10 } from "node:fs";
+import { constants as fsConstants3, promises as fs11 } from "node:fs";
 import path13 from "node:path";
 import { TextDecoder as TextDecoder4 } from "node:util";
 
@@ -12409,7 +12801,7 @@ function asIdentity(stat) {
   };
 }
 function sameFileIdentity5(expected, actual) {
-  return sameNativeFileObject(
+  return sameFileObject(
     { ...expected, birthtime: expected.birthtimeMs },
     {
       ...actual,
@@ -12418,7 +12810,7 @@ function sameFileIdentity5(expected, actual) {
   ) && expected.birthtimeMs === actual.birthtimeMs && expected.ctimeMs === actual.ctimeMs && expected.mtimeMs === actual.mtimeMs && expected.size === actual.size;
 }
 function sameDirectoryIdentity4(expected, actual) {
-  return sameNativeFileObject(
+  return sameFileObject(
     { ...expected, birthtime: expected.birthtimeMs },
     {
       ...actual,
@@ -12437,13 +12829,13 @@ function runFile(changeDir, kind, relativePath) {
   return target;
 }
 async function directoryIdentity2(directory) {
-  const stat = await fs10.lstat(directory);
+  const stat = await fs11.lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error(`Native Run parent must be a real directory: ${directory}`);
   }
   return {
     path: directory,
-    realPath: await fs10.realpath(directory),
+    realPath: await fs11.realpath(directory),
     dev: stat.dev,
     ino: stat.ino,
     birthtimeMs: stat.birthtimeMs
@@ -12475,8 +12867,8 @@ async function captureDirectoryChain3(root, directory) {
 }
 async function verifyDirectoryChain4(chain) {
   for (const identity of chain) {
-    const stat = await fs10.lstat(identity.path);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || !sameDirectoryIdentity4(identity, stat) || await fs10.realpath(identity.path) !== identity.realPath) {
+    const stat = await fs11.lstat(identity.path);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || !sameDirectoryIdentity4(identity, stat) || await fs11.realpath(identity.path) !== identity.realPath) {
       throw new Error(`Native Run parent changed during I/O: ${identity.path}`);
     }
   }
@@ -12501,7 +12893,7 @@ async function readProtectedText(changeDir, file, maxBytes, label, hooks) {
   await hooks?.afterParentChainCaptured?.();
   let before;
   try {
-    before = await fs10.lstat(file);
+    before = await fs11.lstat(file);
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -12511,22 +12903,22 @@ async function readProtectedText(changeDir, file, maxBytes, label, hooks) {
   }
   if (before.size > maxBytes) throw new Error(`${label} exceeds ${maxBytes} bytes`);
   const beforeIdentity = asIdentity(before);
-  const beforeRealPath = await fs10.realpath(file);
+  const beforeRealPath = await fs11.realpath(file);
   if (!isInside4(chain[0].realPath, beforeRealPath)) {
     throw new Error(`${label} resolves outside its change`);
   }
-  const flags = process.platform === "win32" ? fsConstants2.O_RDONLY : fsConstants2.O_RDONLY | fsConstants2.O_NOFOLLOW | fsConstants2.O_NONBLOCK;
+  const flags = process.platform === "win32" ? fsConstants3.O_RDONLY : fsConstants3.O_RDONLY | fsConstants3.O_NOFOLLOW | fsConstants3.O_NONBLOCK;
   let handle;
   try {
-    handle = await fs10.open(file, flags);
+    handle = await fs11.open(file, flags);
   } catch (error) {
     throw new Error(`${label} changed while opening`, { cause: error });
   }
   try {
     const [opened, pathAfterOpen, realPathAfterOpen] = await Promise.all([
       handle.stat(),
-      fs10.lstat(file),
-      fs10.realpath(file)
+      fs11.lstat(file),
+      fs11.realpath(file)
     ]);
     await verifyDirectoryChain4(chain);
     if (!opened.isFile() || !pathAfterOpen.isFile() || pathAfterOpen.isSymbolicLink() || realPathAfterOpen !== beforeRealPath || !sameFileIdentity5(beforeIdentity, opened) || !sameFileIdentity5(beforeIdentity, pathAfterOpen)) {
@@ -12537,8 +12929,8 @@ async function readProtectedText(changeDir, file, maxBytes, label, hooks) {
     await hooks?.beforeFinalCheck?.();
     const [afterHandle, afterPath, afterRealPath] = await Promise.all([
       handle.stat(),
-      fs10.lstat(file),
-      fs10.realpath(file)
+      fs11.lstat(file),
+      fs11.realpath(file)
     ]);
     await verifyDirectoryChain4(chain);
     if (!afterPath.isFile() || afterPath.isSymbolicLink() || afterRealPath !== beforeRealPath || !sameFileIdentity5(beforeIdentity, afterHandle) || !sameFileIdentity5(beforeIdentity, afterPath)) {
@@ -12563,13 +12955,13 @@ async function captureTarget(changeDir, file, label) {
   if (!chain) return { exists: false };
   let stat;
   try {
-    stat = await fs10.lstat(file);
+    stat = await fs11.lstat(file);
   } catch (error) {
     if (error.code === "ENOENT") return { exists: false };
     throw error;
   }
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`${label} must be a regular file`);
-  const realPath = await fs10.realpath(file);
+  const realPath = await fs11.realpath(file);
   if (!isInside4(chain[0].realPath, realPath))
     throw new Error(`${label} resolves outside its change`);
   await verifyDirectoryChain4(chain);
@@ -12583,12 +12975,12 @@ async function verifyTarget(changeDir, file, expected, label) {
   }
   let stat;
   try {
-    stat = await fs10.lstat(file);
+    stat = await fs11.lstat(file);
   } catch (error) {
     if (error.code === "ENOENT" && !expected.exists) return;
     throw new Error(`${label} changed before commit`, { cause: error });
   }
-  if (!expected.exists || !stat.isFile() || stat.isSymbolicLink() || !sameFileIdentity5(expected.identity, stat) || await fs10.realpath(file) !== expected.realPath) {
+  if (!expected.exists || !stat.isFile() || stat.isSymbolicLink() || !sameFileIdentity5(expected.identity, stat) || await fs11.realpath(file) !== expected.realPath) {
     throw new Error(`${label} changed before commit`);
   }
   await verifyDirectoryChain4(chain);
@@ -12897,7 +13289,7 @@ async function repairNativeTrajectoryTail(paths, name, hooks) {
 
 // domains/comet-native/native-workspace.ts
 import { createHash as createHash8 } from "node:crypto";
-import { promises as fs11 } from "node:fs";
+import { promises as fs12 } from "node:fs";
 import path15 from "node:path";
 var HASH_PATTERN2 = /^[a-f0-9]{64}$/u;
 var MAX_WORKSPACE_IDENTITY_BYTES = 16 * 1024;
@@ -12936,8 +13328,8 @@ function identityHash(tag, value) {
 ${value}`).digest("hex");
 }
 async function physicalDirectoryIdentity(tag, value) {
-  const realPath = await fs11.realpath(value);
-  const stat = await fs11.lstat(realPath);
+  const realPath = await fs12.realpath(value);
+  const stat = await fs12.lstat(realPath);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error("Native workspace identity requires a real directory");
   }
@@ -12948,8 +13340,8 @@ ${stat.ino}
 ${stat.birthtimeMs}`);
 }
 async function directoryPathIdentity(tag, value) {
-  const realPath = await fs11.realpath(value);
-  const stat = await fs11.lstat(realPath);
+  const realPath = await fs12.realpath(value);
+  const stat = await fs12.lstat(realPath);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error("Native workspace identity requires a real directory");
   }
@@ -13216,15 +13608,17 @@ var NativeChangeRevisionConflictError = class extends Error {
   code = "native-change-revision-conflict";
 };
 var NativeBaselineIncompleteError = class extends Error {
-  constructor(change, omittedCount, omittedByReason, samplePaths, sampleTruncated) {
+  constructor(change, omittedCount, omittedByReason, samplePaths, sampleTruncated, effectiveLimits = null, policyHash = null) {
     super(
-      `Native change ${change} baseline is incomplete (${omittedCount} omitted entr${omittedCount === 1 ? "y" : "ies"})`
+      `Native change ${change} baseline is incomplete (${omittedCount} omitted entr${omittedCount === 1 ? "y" : "ies"}). Adjust native.snapshot scope or resource budgets in .comet/config.yaml, then retry.`
     );
     this.change = change;
     this.omittedCount = omittedCount;
     this.omittedByReason = omittedByReason;
     this.samplePaths = samplePaths;
     this.sampleTruncated = sampleTruncated;
+    this.effectiveLimits = effectiveLimits;
+    this.policyHash = policyHash;
     this.name = "NativeBaselineIncompleteError";
   }
   change;
@@ -13232,6 +13626,8 @@ var NativeBaselineIncompleteError = class extends Error {
   omittedByReason;
   samplePaths;
   sampleTruncated;
+  effectiveLimits;
+  policyHash;
   code = "native-baseline-incomplete";
 };
 var NATIVE_BRIEF_TEMPLATE = [
@@ -13588,7 +13984,7 @@ async function hasPendingNativeSchemaMigration(paths, name) {
   const file = path16.join(nativeChangeDir(paths, name), "runtime", "schema-migration.json");
   await resolveContainedNativePath(paths.nativeRoot, file);
   try {
-    await fs12.lstat(file);
+    await fs13.lstat(file);
     return true;
   } catch (error) {
     if (error.code === "ENOENT") return false;
@@ -13599,7 +13995,7 @@ async function hasPendingNativeCheckpointRecovery(paths, name) {
   const file = path16.join(nativeChangeDir(paths, name), "runtime", "checkpoint-journal.json");
   await resolveContainedNativePath(paths.nativeRoot, file);
   try {
-    await fs12.lstat(file);
+    await fs13.lstat(file);
     return true;
   } catch (error) {
     if (error.code === "ENOENT") return false;
@@ -13620,13 +14016,13 @@ async function createNativeChangeLocked(options) {
   let createdChangeDir = false;
   try {
     try {
-      await fs12.mkdir(changeDir, { recursive: false });
+      await fs13.mkdir(changeDir, { recursive: false });
       createdChangeDir = true;
     } catch (error) {
       if (error.code === "ENOENT") {
-        await fs12.mkdir(options.paths.changesDir, { recursive: true });
+        await fs13.mkdir(options.paths.changesDir, { recursive: true });
         try {
-          await fs12.mkdir(changeDir, { recursive: false });
+          await fs13.mkdir(changeDir, { recursive: false });
           createdChangeDir = true;
         } catch (retryError) {
           if (retryError.code === "EEXIST") {
@@ -13663,13 +14059,23 @@ async function createNativeChangeLocked(options) {
       run_id: null
     };
     await Promise.all([
-      fs12.mkdir(path16.join(changeDir, "specs"), { recursive: true }),
-      fs12.mkdir(path16.join(changeDir, "runtime", "checkpoints"), { recursive: true }),
+      fs13.mkdir(path16.join(changeDir, "specs"), { recursive: true }),
+      fs13.mkdir(path16.join(changeDir, "runtime", "checkpoints"), { recursive: true }),
       atomicWriteText(path16.join(changeDir, "brief.md"), NATIVE_BRIEF_TEMPLATE)
     ]);
+    const projectConfig = await readProjectConfig(options.paths.projectRoot);
+    const snapshot2 = projectConfig?.native.snapshot ?? DEFAULT_NATIVE_SNAPSHOT_CONFIG;
     const baseline = await createNativeContentSnapshot(options.paths, {
       now: options.now,
-      origin: "change-created"
+      origin: "change-created",
+      policy: snapshot2,
+      limits: {
+        maxFiles: snapshot2.max_files,
+        maxFileBytes: snapshot2.max_total_bytes,
+        maxTotalBytes: snapshot2.max_total_bytes,
+        maxDurationMs: snapshot2.max_duration_ms
+      },
+      deadlineMs: snapshot2.max_duration_ms
     });
     if (!baseline.complete) {
       const health = inspectNativeContentSnapshotHealth(baseline);
@@ -13684,7 +14090,9 @@ async function createNativeChangeLocked(options) {
         baseline.omittedCount,
         omittedByReason,
         health.samplePaths,
-        health.sampleTruncated
+        health.sampleTruncated,
+        baseline.limits,
+        baseline.policy?.hash ?? null
       );
     }
     await writeNativeBaselineManifest(options.paths, state.name, baseline);
@@ -13697,7 +14105,7 @@ async function createNativeChangeLocked(options) {
     });
     return state;
   } catch (error) {
-    if (createdChangeDir) await fs12.rm(changeDir, { recursive: true, force: true });
+    if (createdChangeDir) await fs13.rm(changeDir, { recursive: true, force: true });
     throw error;
   }
 }
@@ -13747,7 +14155,7 @@ async function createNativeChangeFile(paths, state) {
   const file = path16.join(nativeChangeDir(paths, state.name), NATIVE_CHANGE_STATE_FILE);
   await resolveContainedNativePath(paths.nativeRoot, file);
   try {
-    await fs12.access(file);
+    await fs13.access(file);
     throw new Error(`Native change state already exists: ${state.name}`);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
@@ -13845,12 +14253,12 @@ async function readContainedFile(root, relativeRef) {
   const target = path17.resolve(root, ...relativeRef.split(/[\\/]/u));
   if (!isInsidePath(root, target))
     throw new Error(`Artifact escapes Native change: ${relativeRef}`);
-  const realRoot = await fs13.realpath(root);
-  const realTarget = await fs13.realpath(target);
+  const realRoot = await fs14.realpath(root);
+  const realTarget = await fs14.realpath(target);
   if (!isInsidePath(realRoot, realTarget)) {
     throw new Error(`Artifact symlink escapes Native change: ${relativeRef}`);
   }
-  if (!(await fs13.stat(realTarget)).isFile())
+  if (!(await fs14.stat(realTarget)).isFile())
     throw new Error(`Artifact is not a file: ${relativeRef}`);
   return realTarget;
 }
@@ -13992,7 +14400,7 @@ async function resolveNativeArtifactFile(changeDir, relativeRef) {
 }
 
 // domains/comet-native/native-archive-inspection.ts
-import { promises as fs17 } from "node:fs";
+import { promises as fs18 } from "node:fs";
 import path29 from "node:path";
 
 // domains/comet-native/native-archive-preflight.ts
@@ -14582,7 +14990,7 @@ function buildNativeConflictRadar(input) {
 
 // domains/comet-native/native-evidence-storage.ts
 import { createHash as createHash12 } from "node:crypto";
-import { promises as fs14 } from "node:fs";
+import { promises as fs15 } from "node:fs";
 import path22 from "node:path";
 
 // domains/comet-native/native-verification-scope.ts
@@ -14771,8 +15179,10 @@ function snapshotProjection(manifest) {
       maxFiles: parsed.limits.maxFiles,
       maxFileBytes: parsed.limits.maxFileBytes,
       maxTotalBytes: parsed.limits.maxTotalBytes,
-      maxManifestBytes: parsed.limits.maxManifestBytes
+      maxManifestBytes: parsed.limits.maxManifestBytes,
+      ...parsed.limits.maxDurationMs === void 0 ? {} : { maxDurationMs: parsed.limits.maxDurationMs }
     },
+    ...parsed.policy ? { policy: parsed.policy } : {},
     entries,
     omitted,
     omittedCount: parsed.omittedCount,
@@ -15250,7 +15660,7 @@ function parseNativeSnapshotProjection(value, expectedHash) {
   exactScopeKeys(
     root,
     ["schema", "origin", "complete", "limits", "entries", "omitted", "omittedCount"],
-    ["capture", "omissionOverflow"],
+    ["capture", "omissionOverflow", "policy"],
     "Native snapshot projection"
   );
   if (root.schema !== NATIVE_SNAPSHOT_PROJECTION_SCHEMA) {
@@ -15263,6 +15673,7 @@ function parseNativeSnapshotProjection(value, expectedHash) {
     createdAt: "1970-01-01T00:00:00.000Z",
     complete: root.complete,
     limits: root.limits,
+    ...root.policy === void 0 ? {} : { policy: root.policy },
     entries: root.entries,
     omitted: root.omitted,
     omittedCount: root.omittedCount,
@@ -16086,7 +16497,7 @@ function isInside5(parent, target) {
   return relative === "" || !path22.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path22.sep}`);
 }
 function sameDirectoryIdentity5(identity, stat) {
-  return sameNativeFileObject(
+  return sameFileObject(
     { ...identity, birthtime: identity.birthtimeMs },
     {
       ...stat,
@@ -16097,19 +16508,19 @@ function sameDirectoryIdentity5(identity, stat) {
 function sameFileIdentity6(left, right) {
   const leftObject = { ...left, birthtime: left.birthtimeMs };
   const rightObject = { ...right, birthtime: right.birthtimeMs };
-  if (hasComparableNativeFileObject(leftObject, rightObject)) {
-    return sameNativeFileObject(leftObject, rightObject);
+  if (hasComparableFileObject(leftObject, rightObject)) {
+    return sameFileObject(leftObject, rightObject);
   }
-  return sameNativeFileObject(leftObject, rightObject) && left.birthtimeMs === right.birthtimeMs && left.ctimeMs === right.ctimeMs && left.size === right.size;
+  return sameFileObject(leftObject, rightObject) && left.birthtimeMs === right.birthtimeMs && left.ctimeMs === right.ctimeMs && left.size === right.size;
 }
 async function captureDirectoryIdentity3(directory) {
-  const stat = await fs14.lstat(directory);
+  const stat = await fs15.lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error(`Native evidence parent must be a real directory: ${directory}`);
   }
   return {
     path: directory,
-    realPath: await fs14.realpath(directory),
+    realPath: await fs15.realpath(directory),
     dev: stat.dev,
     ino: stat.ino,
     birthtimeMs: stat.birthtimeMs
@@ -16135,8 +16546,8 @@ async function captureDirectoryChain4(root, directory) {
 }
 async function verifyDirectoryChain5(chain) {
   for (const identity of chain) {
-    const stat = await fs14.lstat(identity.path);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || !sameDirectoryIdentity5(identity, stat) || await fs14.realpath(identity.path) !== identity.realPath) {
+    const stat = await fs15.lstat(identity.path);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || !sameDirectoryIdentity5(identity, stat) || await fs15.realpath(identity.path) !== identity.realPath) {
       throw new Error(`Native evidence parent changed while reading: ${identity.path}`);
     }
   }
@@ -16144,20 +16555,20 @@ async function verifyDirectoryChain5(chain) {
 async function readBoundedEvidenceJson(file, changeRoot, hooks = {}) {
   const chain = await captureDirectoryChain4(changeRoot, path22.dirname(file));
   await hooks.afterParentChainCaptured?.();
-  const lexical = await fs14.lstat(file);
+  const lexical = await fs15.lstat(file);
   if (!lexical.isFile() || lexical.isSymbolicLink()) {
     throw new Error("Native evidence document must be a regular file");
   }
-  const realPath = await fs14.realpath(file);
+  const realPath = await fs15.realpath(file);
   if (!isInside5(chain[0].realPath, realPath)) {
     throw new Error("Native evidence document resolves outside its change");
   }
-  const handle = await fs14.open(file, "r");
+  const handle = await fs15.open(file, "r");
   try {
     const [opened, pathAfterOpen, realPathAfterOpen] = await Promise.all([
       handle.stat(),
-      fs14.lstat(file),
-      fs14.realpath(file)
+      fs15.lstat(file),
+      fs15.realpath(file)
     ]);
     await verifyDirectoryChain5(chain);
     if (!opened.isFile() || !pathAfterOpen.isFile() || pathAfterOpen.isSymbolicLink() || realPathAfterOpen !== realPath || !sameFileIdentity6(opened, lexical) || !sameFileIdentity6(opened, pathAfterOpen)) {
@@ -16187,8 +16598,8 @@ async function readBoundedEvidenceJson(file, changeRoot, hooks = {}) {
     await hooks.beforeFinalCheck?.();
     const [afterHandle, afterPath, afterRealPath] = await Promise.all([
       handle.stat(),
-      fs14.lstat(file),
-      fs14.realpath(file)
+      fs15.lstat(file),
+      fs15.realpath(file)
     ]);
     await verifyDirectoryChain5(chain);
     if (!afterPath.isFile() || afterPath.isSymbolicLink() || afterRealPath !== realPath || !sameFileIdentity6(opened, afterHandle) || !sameFileIdentity6(opened, afterPath)) {
@@ -16280,7 +16691,7 @@ function assertEvidenceDocumentBudget(value) {
 function serializedEvidenceBytes2(value) {
   return Buffer.byteLength(JSON.stringify(value, null, 2) + "\n", "utf8");
 }
-function parseSnapshot(value, expectedHash) {
+function parseSnapshot2(value, expectedHash) {
   return parseNativeSnapshotProjection(value, expectedHash);
 }
 function parseScope(value, expectedHash) {
@@ -16356,10 +16767,10 @@ async function readNativeImplementationScopeBundle(paths, name, ref, hooks) {
   const currentHash = parseEvidenceRef(scope.currentProjectionRef, "snapshots");
   const [baseline, current] = await Promise.all([
     readEvidenceDocument({ paths, name, kind: "snapshots", hash: baselineHash }).then(
-      (value) => parseSnapshot(value, baselineHash)
+      (value) => parseSnapshot2(value, baselineHash)
     ),
     readEvidenceDocument({ paths, name, kind: "snapshots", hash: currentHash }).then(
-      (value) => parseSnapshot(value, currentHash)
+      (value) => parseSnapshot2(value, currentHash)
     )
   ]);
   return rebuildNativeImplementationScopeBundle({ baseline, current, scope });
@@ -16484,7 +16895,7 @@ async function inspectNativeChangeConflicts(paths, name) {
 
 // domains/comet-native/native-transition-journal.ts
 import { randomUUID as randomUUID3 } from "crypto";
-import { promises as fs15 } from "fs";
+import { promises as fs16 } from "fs";
 import path23 from "path";
 import { isDeepStrictEqual } from "util";
 
@@ -17942,7 +18353,7 @@ async function continueNativeTransitionLocked(paths, name, hooks) {
       `Native transition journal changed while continuing ${journal.change}; it was not removed`
     );
   }
-  await fs15.rm(nativeTransitionJournalFile(paths, name), { force: true });
+  await fs16.rm(nativeTransitionJournalFile(paths, name), { force: true });
   return journal.nextState;
 }
 async function continueNativeTransition(paths, name, hooks) {
@@ -18406,9 +18817,16 @@ function canonicalEvidencePayload(entries) {
   const validated = validateEvidenceEntries([...entries]).map((entry2) => ({ ...entry2, evidence_refs: [...entry2.evidence_refs].sort() })).sort((left, right) => left.acceptance_id.localeCompare(right.acceptance_id));
   return JSON.stringify(validated, null, 2);
 }
+function serializeNativeVerificationMachineBlock(entries) {
+  return [
+    NATIVE_ACCEPTANCE_EVIDENCE_START_MARKER,
+    canonicalEvidencePayload(entries),
+    NATIVE_ACCEPTANCE_EVIDENCE_END_MARKER
+  ].join("\n");
+}
 
 // domains/comet-native/native-check-receipt-storage.ts
-import { constants as fsConstants3, promises as fs16 } from "node:fs";
+import { constants as fsConstants4, promises as fs17 } from "node:fs";
 import path26 from "node:path";
 
 // domains/comet-native/native-check-receipt-model.ts
@@ -18757,7 +19175,7 @@ var HASH_PATTERN11 = /^[a-f0-9]{64}$/u;
 var RECEIPT_REF_PATTERN = /^runtime\/evidence\/check-receipts\/([a-f0-9]{64})\.json$/u;
 var MAX_NATIVE_CHECK_RECEIPT_BYTES = 512 * 1024;
 function sameDirectoryIdentity6(identity, stat) {
-  return sameNativeFileObject(
+  return sameFileObject(
     { ...identity, birthtime: identity.birthtimeMs },
     {
       ...stat,
@@ -18768,10 +19186,10 @@ function sameDirectoryIdentity6(identity, stat) {
 function sameFileIdentity7(left, right) {
   const leftObject = { ...left, birthtime: left.birthtimeMs };
   const rightObject = { ...right, birthtime: right.birthtimeMs };
-  if (hasComparableNativeFileObject(leftObject, rightObject)) {
-    return sameNativeFileObject(leftObject, rightObject);
+  if (hasComparableFileObject(leftObject, rightObject)) {
+    return sameFileObject(leftObject, rightObject);
   }
-  return sameNativeFileObject(leftObject, rightObject) && left.birthtimeMs === right.birthtimeMs && left.ctimeMs === right.ctimeMs && left.size === right.size;
+  return sameFileObject(leftObject, rightObject) && left.birthtimeMs === right.birthtimeMs && left.ctimeMs === right.ctimeMs && left.size === right.size;
 }
 async function captureDirectoryChain5(root, directory) {
   const lexicalRoot = path26.resolve(root);
@@ -18786,11 +19204,11 @@ async function captureDirectoryChain5(root, directory) {
     ...path26.relative(lexicalRoot, lexicalDirectory).split(path26.sep).filter(Boolean)
   ]) {
     if (segment) cursor = path26.join(cursor, segment);
-    const stat = await fs16.lstat(cursor);
+    const stat = await fs17.lstat(cursor);
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
       throw new Error(`Native check receipt parent must be a real directory: ${cursor}`);
     }
-    const realPath = await fs16.realpath(cursor);
+    const realPath = await fs17.realpath(cursor);
     if (chain.length > 0 && !isInsidePath(chain[0].realPath, realPath)) {
       throw new Error("Native check receipt parent resolves outside the Native root");
     }
@@ -18806,8 +19224,8 @@ async function captureDirectoryChain5(root, directory) {
 }
 async function verifyDirectoryChain6(chain) {
   for (const identity of chain) {
-    const stat = await fs16.lstat(identity.path);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || !sameDirectoryIdentity6(identity, stat) || await fs16.realpath(identity.path) !== identity.realPath) {
+    const stat = await fs17.lstat(identity.path);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || !sameDirectoryIdentity6(identity, stat) || await fs17.realpath(identity.path) !== identity.realPath) {
       throw new Error(`Native check receipt parent changed while reading: ${identity.path}`);
     }
   }
@@ -18826,7 +19244,7 @@ function receiptFile(paths, name, hash6) {
 }
 async function readBoundedReceipt(file, changeRoot, nativeRoot) {
   const chain = await captureDirectoryChain5(nativeRoot, path26.dirname(file));
-  const before = await fs16.lstat(file);
+  const before = await fs17.lstat(file);
   if (!before.isFile() || before.isSymbolicLink()) {
     throw new Error("Native check receipt must be a regular file");
   }
@@ -18834,14 +19252,14 @@ async function readBoundedReceipt(file, changeRoot, nativeRoot) {
     throw new Error(`Native check receipt exceeds ${MAX_NATIVE_CHECK_RECEIPT_BYTES} bytes`);
   }
   const [realChangeRoot, beforeRealPath] = await Promise.all([
-    fs16.realpath(changeRoot),
-    fs16.realpath(file)
+    fs17.realpath(changeRoot),
+    fs17.realpath(file)
   ]);
   if (!isInsidePath(realChangeRoot, beforeRealPath)) {
     throw new Error("Native check receipt resolves outside its change");
   }
-  const openFlags = process.platform === "win32" ? "r" : fsConstants3.O_RDONLY | fsConstants3.O_NOFOLLOW | fsConstants3.O_NONBLOCK;
-  const handle = await fs16.open(file, openFlags).catch((error) => {
+  const openFlags = process.platform === "win32" ? "r" : fsConstants4.O_RDONLY | fsConstants4.O_NOFOLLOW | fsConstants4.O_NONBLOCK;
+  const handle = await fs17.open(file, openFlags).catch((error) => {
     if (error.code === "ELOOP" || error.code === "ENXIO") {
       throw new Error("Native check receipt became unsafe while opening");
     }
@@ -18850,8 +19268,8 @@ async function readBoundedReceipt(file, changeRoot, nativeRoot) {
   try {
     const [opened, pathAfterOpen, realPathAfterOpen] = await Promise.all([
       handle.stat(),
-      fs16.lstat(file),
-      fs16.realpath(file)
+      fs17.lstat(file),
+      fs17.realpath(file)
     ]);
     await verifyDirectoryChain6(chain);
     if (!opened.isFile() || !pathAfterOpen.isFile() || pathAfterOpen.isSymbolicLink() || realPathAfterOpen !== beforeRealPath || !sameFileIdentity7(before, opened) || !sameFileIdentity7(opened, pathAfterOpen)) {
@@ -18872,8 +19290,8 @@ async function readBoundedReceipt(file, changeRoot, nativeRoot) {
     }
     const [afterHandle, afterPath, afterRealPath] = await Promise.all([
       handle.stat(),
-      fs16.lstat(file),
-      fs16.realpath(file)
+      fs17.lstat(file),
+      fs17.realpath(file)
     ]);
     await verifyDirectoryChain6(chain);
     if (!afterPath.isFile() || afterPath.isSymbolicLink() || afterRealPath !== beforeRealPath || !isInsidePath(realChangeRoot, afterRealPath) || !sameFileIdentity7(opened, afterHandle) || !sameFileIdentity7(opened, afterPath)) {
@@ -19123,6 +19541,7 @@ function projectionManifest(projection) {
     createdAt: "1970-01-01T00:00:00.000Z",
     complete: projection.complete,
     limits: projection.limits,
+    ...projection.policy ? { policy: projection.policy } : {},
     entries: projection.entries,
     omitted: projection.omitted,
     omittedCount: projection.omittedCount,
@@ -19137,12 +19556,13 @@ function nativeRootRef2(paths) {
   return value;
 }
 async function currentProjectionHash(options) {
-  const current = await createNativeContentSnapshot(options.paths, {
+  const baseline = projectionManifest(options.bundle.baseline);
+  const current = await createNativeCurrentContentSnapshot(options.paths, baseline, {
     origin: "explicit",
     now: options.now
   });
   return buildNativeImplementationScopeBundle({
-    baseline: projectionManifest(options.bundle.baseline),
+    baseline,
     current,
     contractHash: options.bundle.scope.contractHash,
     declaredArtifacts: options.bundle.scope.declaredArtifacts,
@@ -19406,7 +19826,7 @@ function archiveTargetRef(name, now) {
 }
 async function exists2(target) {
   try {
-    await fs17.lstat(target);
+    await fs18.lstat(target);
     return true;
   } catch (error) {
     if (error.code === "ENOENT") return false;
@@ -19488,7 +19908,7 @@ async function inspectNativeArchivePreflight(options) {
 }
 
 // domains/comet-native/native-archive-content.ts
-import { promises as fs18 } from "node:fs";
+import { promises as fs19 } from "node:fs";
 import path30 from "node:path";
 var TREE_HASH_TAG = "comet.native.archive-tree.v1";
 var NATIVE_ARCHIVE_CONTENT_LIMITS = {
@@ -19548,7 +19968,7 @@ async function walkArchiveTree(root, directory, entries, budget, limits, depth) 
     await protectedDirectory.verify();
     const target = path30.join(directory, child.name);
     const ref = path30.relative(root, target).replaceAll("\\", "/");
-    const stat = await fs18.lstat(target);
+    const stat = await fs19.lstat(target);
     if (child.isSymbolicLink() || stat.isSymbolicLink()) {
       throw new Error(`Native Archive content must not contain symlinks or junctions: ${ref}`);
     }
@@ -19595,7 +20015,7 @@ async function walkArchiveTree(root, directory, entries, budget, limits, depth) 
 async function hashNativeArchiveTree(directory, requestedLimits = {}) {
   const limits = normalizedLimits(requestedLimits);
   directory = path30.resolve(directory);
-  const stat = await fs18.lstat(directory);
+  const stat = await fs19.lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new Error(`Native Archive move source must be a real directory: ${directory}`);
   }
@@ -19613,7 +20033,7 @@ async function inspectNativeArchiveContent(target, requestedLimits = {}) {
   target = path30.resolve(target);
   let stat;
   try {
-    stat = await fs18.lstat(target);
+    stat = await fs19.lstat(target);
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -19637,7 +20057,7 @@ async function inspectNativeArchiveContent(target, requestedLimits = {}) {
 }
 
 // domains/comet-native/native-archive-transaction.ts
-import { promises as fs19 } from "node:fs";
+import { promises as fs20 } from "node:fs";
 import path31 from "node:path";
 var NATIVE_ARCHIVE_COPY_MAX_BYTES = 16 * 1024 * 1024;
 var NATIVE_ARCHIVE_JOURNAL_MAX_BYTES = 256 * 1024;
@@ -19671,8 +20091,8 @@ async function assertContent(options) {
 async function createNativeArchiveTransactionV2(paths, journal) {
   const validated = parseNativeArchiveTransactionJournalV2(journal);
   const tx = await resolveNativeTransactionPaths(paths, validated.id);
-  await fs19.mkdir(tx.staged, { recursive: true });
-  await fs19.mkdir(tx.backups, { recursive: true });
+  await fs20.mkdir(tx.staged, { recursive: true });
+  await fs20.mkdir(tx.backups, { recursive: true });
   await atomicWriteJson(tx.journal, validated, { containedRoot: paths.nativeRoot });
   await appendNativeTransactionEvent(paths, validated.id, "prepared");
 }
@@ -19711,8 +20131,8 @@ function fileVersion(stat) {
     size: stat.size
   };
 }
-function sameFileObject(expected, actual) {
-  return sameNativeFileObject(
+function sameFileObject2(expected, actual) {
+  return sameFileObject(
     { ...expected, birthtime: expected.birthtimeMs },
     {
       ...actual,
@@ -19721,11 +20141,11 @@ function sameFileObject(expected, actual) {
   ) && expected.birthtimeMs === actual.birthtimeMs;
 }
 function sameFileVersion(expected, actual) {
-  return sameFileObject(expected, actual) && expected.birthtimeMs === actual.birthtimeMs && expected.ctimeMs === actual.ctimeMs && expected.mtimeMs === actual.mtimeMs && expected.size === actual.size;
+  return sameFileObject2(expected, actual) && expected.birthtimeMs === actual.birthtimeMs && expected.ctimeMs === actual.ctimeMs && expected.mtimeMs === actual.mtimeMs && expected.size === actual.size;
 }
 async function pathExists(target) {
   try {
-    await fs19.lstat(target);
+    await fs20.lstat(target);
     return true;
   } catch (error) {
     if (error.code === "ENOENT") return false;
@@ -19733,7 +20153,7 @@ async function pathExists(target) {
   }
 }
 async function captureStableArchiveFile(options) {
-  const before = await fs19.lstat(options.file);
+  const before = await fs20.lstat(options.file);
   if (!before.isFile() || before.isSymbolicLink()) {
     throw new Error(`${options.label} must be a regular file`);
   }
@@ -19744,7 +20164,7 @@ async function captureStableArchiveFile(options) {
     maxBytes: NATIVE_ARCHIVE_COPY_MAX_BYTES,
     label: options.label
   });
-  const after = await fs19.lstat(options.file);
+  const after = await fs20.lstat(options.file);
   if (!after.isFile() || after.isSymbolicLink() || !sameFileVersion(beforeVersion, fileVersion(after)) || snapshot2.hash !== options.expectedHash) {
     throw new Error(`${options.label} content changed or object identity changed while binding`);
   }
@@ -19822,7 +20242,7 @@ async function readCasRecord(options) {
 async function persistCasRecord(options) {
   const existing = await readCasRecord(options);
   if (existing) {
-    if (!sameFileObject(existing.identity, options.identity)) {
+    if (!sameFileObject2(existing.identity, options.identity)) {
       throw new Error(
         `Archive CAS ${options.operation.id} ${options.role} object identity changed`
       );
@@ -19850,7 +20270,7 @@ async function persistCasRecord(options) {
     if (error.code !== "EEXIST") throw error;
   }
   const persisted = await readCasRecord(options);
-  if (!persisted || !sameFileObject(persisted.identity, options.identity)) {
+  if (!persisted || !sameFileObject2(persisted.identity, options.identity)) {
     throw new Error(`Archive CAS ${options.operation.id} ${options.role} record changed`);
   }
   return persisted;
@@ -19862,7 +20282,7 @@ async function validateFileAgainstCasRecord(options) {
     expectedHash: options.record.hash,
     label: options.label
   });
-  if (!sameFileObject(options.record.identity, current.identity)) {
+  if (!sameFileObject2(options.record.identity, current.identity)) {
     throw new Error(`${options.label} object identity changed`);
   }
 }
@@ -19899,20 +20319,20 @@ async function restoreUnexpectedQuarantine(options) {
   });
   await guard.verify();
   try {
-    await fs19.link(options.quarantine, options.target);
+    await fs20.link(options.quarantine, options.target);
   } catch (error) {
     if (error.code === "EEXIST") return;
     throw error;
   }
   await guard.verify();
   const [quarantine, target] = await Promise.all([
-    fs19.lstat(options.quarantine),
-    fs19.lstat(options.target)
+    fs20.lstat(options.quarantine),
+    fs20.lstat(options.target)
   ]);
-  if (!sameFileObject(fileObjectIdentity(quarantine), fileObjectIdentity(target))) {
+  if (!sameFileObject2(fileObjectIdentity(quarantine), fileObjectIdentity(target))) {
     throw new Error(`Archive CAS ${options.operation.id} could not restore quarantined content`);
   }
-  await fs19.unlink(options.quarantine);
+  await fs20.unlink(options.quarantine);
   await guard.verify();
 }
 async function quarantineBoundTarget(options) {
@@ -19948,7 +20368,7 @@ async function quarantineBoundTarget(options) {
     label: `Archive ${options.phase} target ${options.operation.target}`
   });
   try {
-    await fs19.rename(options.target, options.quarantine);
+    await fs20.rename(options.target, options.quarantine);
     await guard.verify();
     await validateFileAgainstCasRecord({
       paths: options.paths,
@@ -19980,7 +20400,7 @@ async function removeExactCasFile(options) {
   });
   await guard.verify();
   await validateFileAgainstCasRecord(options);
-  await fs19.unlink(options.file);
+  await fs20.unlink(options.file);
   await guard.verify();
 }
 async function ensureBackup(paths, operation, hooks) {
@@ -20173,7 +20593,7 @@ async function ensureWriteInstalled(options) {
       expectedHash,
       label: `Archive write target ${options.operation.target}`
     });
-    if (!sameFileObject(candidateIdentity2.identity, targetIdentity2.identity)) {
+    if (!sameFileObject2(candidateIdentity2.identity, targetIdentity2.identity)) {
       throw new Error(
         `Archive write target ${options.operation.target} is occupied by an external object`
       );
@@ -20228,7 +20648,7 @@ async function ensureWriteInstalled(options) {
     label: `Archive write candidate ${options.operation.target}`
   });
   try {
-    await fs19.link(candidate, options.target);
+    await fs20.link(candidate, options.target);
   } catch (error) {
     if (error.code === "EEXIST") {
       throw new Error(
@@ -20246,7 +20666,7 @@ async function ensureWriteInstalled(options) {
     expectedHash,
     label: `Archive write target ${options.operation.target}`
   });
-  if (!sameFileObject(candidateIdentity.identity, targetIdentity.identity)) {
+  if (!sameFileObject2(candidateIdentity.identity, targetIdentity.identity)) {
     throw new Error(`Archive write target ${options.operation.target} changed during install`);
   }
   record8 = await persistCasRecord({
@@ -20332,8 +20752,8 @@ async function applyMove(paths, operation) {
       `Archive transaction move ${operation.id} content changed: source=${contentDescription(sourceContent)}, target=${contentDescription(targetContent)}`
     );
   }
-  await fs19.mkdir(path31.dirname(target), { recursive: true });
-  await fs19.rename(source, target);
+  await fs20.mkdir(path31.dirname(target), { recursive: true });
+  await fs20.rename(source, target);
   await assertContent({
     target,
     expectedHash: operation.expectedSourceHash,
@@ -20535,7 +20955,7 @@ async function installOriginalTarget(options) {
     label: `Archive rollback original quarantine ${options.operation.target}`
   });
   try {
-    await fs19.link(options.quarantine, options.target);
+    await fs20.link(options.quarantine, options.target);
   } catch (error) {
     if (error.code === "EEXIST") {
       throw new Error(
@@ -20615,7 +21035,7 @@ async function rollbackWriteOrRemove(paths, journal, operation, hooks) {
       expectedHash: operation.stagedHash,
       label: `Archive rollback target ${operation.target}`
     });
-    if (sameFileObject(candidate.identity, current.identity)) {
+    if (sameFileObject2(candidate.identity, current.identity)) {
       postRecord = await persistCasRecord({
         paths,
         file: cas.postRecord,
@@ -20729,8 +21149,8 @@ async function rollbackMove(paths, operation) {
       `Archive rollback move ${operation.id} content changed: source=${contentDescription(sourceContent)}, target=${contentDescription(targetContent)}`
     );
   }
-  await fs19.mkdir(path31.dirname(source), { recursive: true });
-  await fs19.rename(target, source);
+  await fs20.mkdir(path31.dirname(source), { recursive: true });
+  await fs20.rename(target, source);
 }
 async function rollbackNativeArchiveTransactionV2(paths, journal, hooks) {
   const events = await readNativeTransactionEvents(paths, journal.id);
@@ -20828,7 +21248,7 @@ async function finalizeNativeArchiveTransactionV2(paths, journal, event) {
 
 // domains/comet-native/native-checkpoint-journal.ts
 import { randomUUID as randomUUID4 } from "crypto";
-import { promises as fs20 } from "fs";
+import { promises as fs21 } from "fs";
 
 // domains/comet-native/native-checkpoint-storage.ts
 import path32 from "path";
@@ -21364,7 +21784,7 @@ async function continueNativeCheckpointLocked(paths, name, hooks) {
   await hooks?.afterStateWritten?.(journal);
   await writeNativeProgressCheckpoint(paths, journal.checkpoint);
   await hooks?.afterProgressWritten?.(journal);
-  await fs20.rm(nativeCheckpointJournalFile(paths, name), { force: true });
+  await fs21.rm(nativeCheckpointJournalFile(paths, name), { force: true });
   return journal;
 }
 async function continueNativeCheckpoint(paths, name, hooks) {
@@ -21386,7 +21806,7 @@ async function settleNativeChangeJournalsLocked(paths, name) {
 
 // domains/comet-entry/current-selection.ts
 import { randomUUID as randomUUID5 } from "crypto";
-import { promises as fs21 } from "fs";
+import { promises as fs22 } from "fs";
 import path33 from "path";
 var COMET_CURRENT_SELECTION_SCHEMA = "comet.selection.v2";
 var COMET_CURRENT_SELECTION_MAX_BYTES = 16 * 1024;
@@ -21449,16 +21869,11 @@ function parseSelection(source) {
 async function readCometCurrentSelection(projectRoot) {
   let source;
   try {
-    const stat = await fs21.lstat(cometCurrentSelectionFile(projectRoot));
-    if (stat.isSymbolicLink() || !stat.isFile()) {
-      throw new Error("current change selection must be a regular file");
-    }
-    if (stat.size > COMET_CURRENT_SELECTION_MAX_BYTES) {
-      throw new Error(
-        `current change selection exceeds ${COMET_CURRENT_SELECTION_MAX_BYTES} bytes`
-      );
-    }
-    source = await fs21.readFile(cometCurrentSelectionFile(projectRoot), "utf8");
+    const file = cometCurrentSelectionFile(projectRoot);
+    const { bytes } = await readFileRaceSafe(file, COMET_CURRENT_SELECTION_MAX_BYTES, {
+      label: "current change selection"
+    });
+    source = bytes.toString("utf8");
   } catch (error) {
     if (error.code === "ENOENT") return { status: "missing" };
     throw new Error(
@@ -21474,18 +21889,18 @@ async function writeCometCurrentSelection(projectRoot, selection) {
   if (parsed.legacy) throw new Error("cannot write a legacy current change selection");
   const file = cometCurrentSelectionFile(projectRoot);
   const temporary = `${file}.${randomUUID5()}.tmp`;
-  await fs21.mkdir(path33.dirname(file), { recursive: true });
+  await fs22.mkdir(path33.dirname(file), { recursive: true });
   try {
-    await fs21.writeFile(temporary, `${JSON.stringify(parsed.selection, null, 2)}
+    await fs22.writeFile(temporary, `${JSON.stringify(parsed.selection, null, 2)}
 `, "utf8");
-    await fs21.rename(temporary, file);
+    await fs22.rename(temporary, file);
   } catch (error) {
-    await fs21.rm(temporary, { force: true });
+    await fs22.rm(temporary, { force: true });
     throw error;
   }
 }
 async function clearCometCurrentSelection(projectRoot) {
-  await fs21.rm(cometCurrentSelectionFile(projectRoot), { force: true });
+  await fs22.rm(cometCurrentSelectionFile(projectRoot), { force: true });
 }
 async function clearCometCurrentSelectionIf(projectRoot, workflow, change) {
   const current = await readCometCurrentSelection(projectRoot);
@@ -21599,7 +22014,7 @@ function archiveTarget(paths, name, now) {
 }
 async function pathExists2(target) {
   try {
-    await fs22.access(target);
+    await fs23.access(target);
     return true;
   } catch (error) {
     if (error.code === "ENOENT") return false;
@@ -21910,7 +22325,7 @@ async function recoverArchiveTransaction(options) {
 }
 
 // domains/comet-native/native-diagnostics.ts
-import { promises as fs23 } from "fs";
+import { promises as fs24 } from "fs";
 
 // domains/comet-native/native-run-consistency.ts
 import path35 from "path";
@@ -22036,8 +22451,12 @@ async function inspectNativeRunConsistency(paths, state) {
 // domains/comet-native/native-continuation.ts
 var REPAIR_CODES = /^(?:run-|trajectory-|checkpoint-(?:missing|mismatch|invalid|progress-invalid)|transition-(?:incomplete|invalid))/u;
 function requiredPhaseInputs(state) {
-  if (state.phase === "shape") return ["summary"];
-  if (state.phase === "build") return ["summary", "artifact-or-no-code-reason"];
+  if (state.phase === "shape") {
+    return ["summary", "shared-understanding-confirmation"];
+  }
+  if (state.phase === "build") {
+    return state.approval === "confirmed" ? ["summary", "artifact-or-no-code-reason"] : ["summary", "artifact-or-no-code-reason", "shared-understanding-confirmation"];
+  }
   if (state.phase === "verify") return ["summary", "verification-result", "verification-report"];
   return [];
 }
@@ -22168,6 +22587,7 @@ function nativeContinuation(options) {
       requiredInputs: options.archiveReady ? [] : ["archive-readiness"]
     };
   }
+  const confirmationSuffix = options.state.phase === "shape" || options.state.phase === "build" && options.state.approval !== "confirmed" ? " --confirmed" : "";
   return {
     schema: "comet.native.continuation.v1",
     skill: "comet-native",
@@ -22176,7 +22596,7 @@ function nativeContinuation(options) {
     revision: options.state.revision,
     disposition: "continue",
     action: "advance-phase",
-    command: `comet native next ${options.state.name} --summary "<summary>"`,
+    command: `comet native next ${options.state.name} --summary "<summary>"${confirmationSuffix}`,
     requiresUserDecision: false,
     requiredInputs: requiredPhaseInputs(options.state)
   };
@@ -22189,6 +22609,18 @@ var EXACT_METADATA = {
   "brief-blocking-question": {
     severity: "error",
     requiredAction: "answer-blocking-question",
+    retry: "next",
+    repair: "none"
+  },
+  "shape-confirmation-required": {
+    severity: "error",
+    requiredAction: "confirm-shared-understanding",
+    retry: "next",
+    repair: "none"
+  },
+  "approval-confirmation-required": {
+    severity: "error",
+    requiredAction: "confirm-shared-understanding",
     retry: "next",
     repair: "none"
   },
@@ -22363,7 +22795,7 @@ function projectRelativePath3(paths, state, finding) {
 }
 function retryCommand(retry, state, code) {
   if (retry === "next") {
-    return `comet native next ${state.name} --summary "<summary>"${code === "contract-changed-after-approval" ? " --confirmed" : ""}`;
+    return `comet native next ${state.name} --summary "<summary>"${code === "contract-changed-after-approval" || code === "shape-confirmation-required" || code === "approval-confirmation-required" ? " --confirmed" : ""}`;
   }
   if (retry === "status") return `comet native status ${state.name} --details`;
   return null;
@@ -22381,7 +22813,7 @@ function structureNativeFindings(options) {
       repairCommand: metadata.repair === "doctor" ? `comet native doctor ${options.state.name} --repair${finding.code.startsWith("transition-") ? " --strategy continue" : ""}` : null,
       // This is intentionally code-based, not severity-based. Model-actionable
       // missing data must never be presented as a user decision.
-      requiresUserDecision: finding.code === "brief-blocking-question" || finding.code === "contract-changed-after-approval" || finding.code === "verification-scope-partial" || finding.code === "repair-iteration-limit" || finding.code === "repair-override-exhausted"
+      requiresUserDecision: finding.code === "brief-blocking-question" || finding.code === "shape-confirmation-required" || finding.code === "approval-confirmation-required" || finding.code === "contract-changed-after-approval" || finding.code === "verification-scope-partial" || finding.code === "repair-iteration-limit" || finding.code === "repair-override-exhausted"
     };
   }).sort((left, right) => {
     const severityRank = { error: 0, warning: 1, info: 2 };
@@ -22695,11 +23127,11 @@ async function selectedName(paths) {
     return null;
   }
 }
-function nativeNextCommand(state, archiveReady, evidenceRetreat = false) {
+function nativeNextCommand(state, archiveReady, evidenceRetreat = false, _clarificationMode) {
   if (state.phase === "archive") {
     return archiveReady ? `comet native archive ${state.name} --dry-run` : evidenceRetreat ? `comet native next ${state.name} --summary "<summary>"` : null;
   }
-  return `comet native next ${state.name} --summary "<summary>"`;
+  return `comet native next ${state.name} --summary "<summary>"${state.phase === "shape" || state.phase === "build" && state.approval !== "confirmed" ? " --confirmed" : ""}`;
 }
 async function statusFindings(paths, state) {
   const changeDir = nativeChangeDir(paths, state.name);
@@ -23030,13 +23462,19 @@ async function inspectNativeStatus(paths, name, options) {
     verificationResult: state.verification_result,
     specChanges: state.spec_changes.length,
     selected,
-    nextCommand: mutationBlocked || repairBlocked ? null : nativeNextCommand(state, archiveReady, evidenceRetreat),
+    nextCommand: mutationBlocked || repairBlocked ? null : nativeNextCommand(state, archiveReady, evidenceRetreat, options?.clarificationMode),
     archiveReady,
     inspection: resume.inspection,
     findingSummary: summarizeNativeFindings(findings),
     detailsCommand: `comet native status ${state.name} --details`,
     checkpoint: resume.checkpoint,
-    continuation: nativeContinuation({ state, findings, archiveReady, evidenceRetreat }),
+    continuation: nativeContinuation({
+      state,
+      findings,
+      archiveReady,
+      evidenceRetreat,
+      clarificationMode: options?.clarificationMode
+    }),
     repair,
     ...options?.details ? {
       ...acceptancePage ? { acceptancePage } : {},
@@ -23070,7 +23508,7 @@ async function boundedNativeChangeNames(paths) {
     throw error;
   }
   const names = [];
-  const directory = await fs23.opendir(paths.changesDir);
+  const directory = await fs24.opendir(paths.changesDir);
   try {
     for await (const entry2 of directory) {
       if (!entry2.isDirectory() || entry2.isSymbolicLink()) continue;
@@ -23119,7 +23557,11 @@ async function listNativeStatusPage(paths, options) {
     cursor: options?.cursor
   });
   const candidates = await Promise.all(
-    names.slice(offset, offset + NATIVE_STATUS_PAGE_LIMITS.maxItems).map((name) => inspectNativeStatus(paths, name))
+    names.slice(offset, offset + NATIVE_STATUS_PAGE_LIMITS.maxItems).map(
+      (name) => inspectNativeStatus(paths, name, {
+        clarificationMode: options?.clarificationMode
+      })
+    )
   );
   const items = [];
   for (const candidate of candidates) {
@@ -23151,23 +23593,25 @@ async function listNativeStatusPage(paths, options) {
     limits: { ...NATIVE_STATUS_PAGE_LIMITS }
   };
 }
-async function listNativeStatus(paths) {
-  return (await listNativeStatusPage(paths)).items;
+async function listNativeStatus(paths, options) {
+  return (await listNativeStatusPage(paths, {
+    clarificationMode: options?.clarificationMode
+  })).items;
 }
 
 // domains/comet-native/native-doctor.ts
-import { promises as fs27 } from "fs";
+import { promises as fs28 } from "fs";
 import path41 from "path";
 
 // domains/comet-native/native-evidence-retention.ts
 import { createHash as createHash13, randomUUID as randomUUID8 } from "node:crypto";
-import { constants as fsConstants4, promises as fs25 } from "node:fs";
+import { constants as fsConstants5, promises as fs26 } from "node:fs";
 import path39 from "node:path";
 
 // domains/comet-native/native-schema-migration.ts
 var import_yaml4 = __toESM(require_dist(), 1);
 import { randomUUID as randomUUID7 } from "crypto";
-import { promises as fs24 } from "fs";
+import { promises as fs25 } from "fs";
 import path38 from "path";
 import { isDeepStrictEqual as isDeepStrictEqual3 } from "util";
 var HASH_PATTERN14 = /^[a-f0-9]{64}$/u;
@@ -23650,7 +24094,7 @@ async function continueTransitionSupersede(paths, journal, hooks) {
     if (transitionHash !== supersede.sourceHash) {
       throw new Error(`Native superseded transition changed before removal for ${journal.change}`);
     }
-    await fs24.rm(transitionFile);
+    await fs25.rm(transitionFile);
     await hooks?.afterTransitionSuperseded?.(journal);
   }
 }
@@ -23732,7 +24176,7 @@ async function continueNativeSchemaMigrationLocked(paths, name, hooks) {
   }
   await continueTransitionSupersede(paths, journal, hooks);
   await continueRunRetreat(paths, journal, hooks);
-  await fs24.rm(nativeSchemaMigrationJournalFile(paths, name), { force: true });
+  await fs25.rm(nativeSchemaMigrationJournalFile(paths, name), { force: true });
   return journal.nextState;
 }
 async function stableEvidenceRetreat(options) {
@@ -24038,7 +24482,7 @@ var MANAGED_KINDS = [
   "check-receipts"
 ];
 function sameObjectIdentity(left, right) {
-  return sameNativeFileObject(
+  return sameFileObject(
     { ...left, birthtime: left.birthtimeMs },
     {
       ...right,
@@ -24089,11 +24533,11 @@ async function captureDirectoryChain6(managedRoot, directory) {
   let cursor = root;
   for (const segment of ["", ...segments]) {
     if (segment) cursor = path39.join(cursor, segment);
-    const stat = await fs25.lstat(cursor);
+    const stat = await fs26.lstat(cursor);
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
       throw new Error(`Native evidence retention parent must be a real directory: ${cursor}`);
     }
-    const realPath = await fs25.realpath(cursor);
+    const realPath = await fs26.realpath(cursor);
     if (chain.length > 0 && !isInsidePath(chain[0].realPath, realPath)) {
       throw new Error(`Native evidence retention parent resolves outside its change: ${cursor}`);
     }
@@ -24103,8 +24547,8 @@ async function captureDirectoryChain6(managedRoot, directory) {
 }
 async function verifyDirectoryChain7(chain) {
   for (const identity of chain) {
-    const stat = await fs25.lstat(identity.path);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || !sameObjectIdentity(identity, stat) || await fs25.realpath(identity.path) !== identity.realPath) {
+    const stat = await fs26.lstat(identity.path);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || !sameObjectIdentity(identity, stat) || await fs26.realpath(identity.path) !== identity.realPath) {
       throw new Error(`Native evidence retention parent changed: ${identity.path}`);
     }
   }
@@ -24176,7 +24620,7 @@ function parseDocument4(kind, hash6, value, expectedChange) {
   return { canonical: receipt, dependencies: [] };
 }
 async function readCanonicalDocument(options) {
-  const before = await fs25.lstat(options.file);
+  const before = await fs26.lstat(options.file);
   if (!before.isFile() || before.isSymbolicLink()) {
     throw new Error(`Native evidence entry is not a regular file: ${options.ref}`);
   }
@@ -24184,12 +24628,12 @@ async function readCanonicalDocument(options) {
   if (before.size > maximumBytes) {
     throw new Error(`Native evidence entry exceeds its byte budget: ${options.ref}`);
   }
-  const beforeRealPath = await fs25.realpath(options.file);
+  const beforeRealPath = await fs26.realpath(options.file);
   if (!isInsidePath(options.directoryChain[0].realPath, beforeRealPath)) {
     throw new Error(`Native evidence entry resolves outside its change: ${options.ref}`);
   }
-  const openFlags = process.platform === "win32" ? "r" : fsConstants4.O_RDONLY | fsConstants4.O_NOFOLLOW | fsConstants4.O_NONBLOCK;
-  const handle = await fs25.open(options.file, openFlags).catch((error) => {
+  const openFlags = process.platform === "win32" ? "r" : fsConstants5.O_RDONLY | fsConstants5.O_NOFOLLOW | fsConstants5.O_NONBLOCK;
+  const handle = await fs26.open(options.file, openFlags).catch((error) => {
     if (error.code === "ELOOP" || error.code === "ENXIO") {
       throw new Error(`Native evidence entry became unsafe while opening: ${options.ref}`);
     }
@@ -24198,8 +24642,8 @@ async function readCanonicalDocument(options) {
   try {
     const [opened, pathAfterOpen, realPathAfterOpen] = await Promise.all([
       handle.stat(),
-      fs25.lstat(options.file),
-      fs25.realpath(options.file)
+      fs26.lstat(options.file),
+      fs26.realpath(options.file)
     ]);
     await verifyDirectoryChain7(options.directoryChain);
     if (!opened.isFile() || !pathAfterOpen.isFile() || pathAfterOpen.isSymbolicLink() || realPathAfterOpen !== beforeRealPath || !sameIdentity(fileIdentity2(before), opened) || !sameIdentity(fileIdentity2(opened), pathAfterOpen)) {
@@ -24220,8 +24664,8 @@ async function readCanonicalDocument(options) {
     }
     const [afterHandle, afterPath, afterRealPath] = await Promise.all([
       handle.stat(),
-      fs25.lstat(options.file),
-      fs25.realpath(options.file)
+      fs26.lstat(options.file),
+      fs26.realpath(options.file)
     ]);
     await verifyDirectoryChain7(options.directoryChain);
     if (!afterPath.isFile() || afterPath.isSymbolicLink() || afterRealPath !== beforeRealPath || !sameIdentity(fileIdentity2(opened), afterHandle) || !sameIdentity(fileIdentity2(opened), afterPath)) {
@@ -24258,7 +24702,7 @@ async function readCanonicalDocument(options) {
 }
 async function pathIsMissing(file) {
   try {
-    await fs25.lstat(file);
+    await fs26.lstat(file);
     return false;
   } catch (error) {
     if (error.code === "ENOENT") return true;
@@ -24272,7 +24716,7 @@ async function inspectCleanupQuarantines(options) {
   let rootEntries;
   try {
     const rootChain = await captureDirectoryChain6(changeRoot, evidenceRoot);
-    rootEntries = await fs25.readdir(evidenceRoot, { withFileTypes: true });
+    rootEntries = await fs26.readdir(evidenceRoot, { withFileTypes: true });
     await verifyDirectoryChain7(rootChain);
   } catch (error) {
     if (error.code === "ENOENT") {
@@ -24285,7 +24729,7 @@ async function inspectCleanupQuarantines(options) {
     if (!rootEntries.some((entry2) => entry2.name === kind)) continue;
     const directory = path39.join(evidenceRoot, kind);
     const directoryChain = await captureDirectoryChain6(changeRoot, directory);
-    const entries = (await fs25.readdir(directory, { withFileTypes: true })).sort(
+    const entries = (await fs26.readdir(directory, { withFileTypes: true })).sort(
       (left, right) => compareText8(left.name, right.name)
     );
     const byOriginal = /* @__PURE__ */ new Map();
@@ -24388,20 +24832,20 @@ async function inspectCleanupQuarantines(options) {
           `Native evidence cleanup original or quarantine changed during recovery: ${recovery.ref}`
         );
       }
-      await fs25.rm(recovery.quarantine);
+      await fs26.rm(recovery.quarantine);
       await verifyDirectoryChain7(recovery.document.directoryChain);
       continue;
     }
     if (!await pathIsMissing(recovery.original)) {
       throw new Error(`Native evidence cleanup original appeared during recovery: ${recovery.ref}`);
     }
-    const quarantineStat = await fs25.lstat(recovery.quarantine);
+    const quarantineStat = await fs26.lstat(recovery.quarantine);
     if (!quarantineStat.isFile() || quarantineStat.isSymbolicLink() || !sameIdentity(recovery.document.identity, quarantineStat)) {
       throw new Error(
         `Native evidence cleanup quarantine changed during recovery: ${recovery.ref}`
       );
     }
-    await fs25.link(recovery.quarantine, recovery.original);
+    await fs26.link(recovery.quarantine, recovery.original);
     await options.hooks.afterRecoveryLink?.({
       ref: recovery.ref,
       original: recovery.original,
@@ -24428,7 +24872,7 @@ async function inspectCleanupQuarantines(options) {
     if (!sameContentVersionAfterLinkOrRename(recovery.document.identity, restored.identity) || !sameIdentity(restored.identity, linkedQuarantine.identity)) {
       throw new Error(`Native evidence cleanup recovery identity changed: ${recovery.ref}`);
     }
-    await fs25.rm(recovery.quarantine);
+    await fs26.rm(recovery.quarantine);
     await verifyDirectoryChain7(recovery.document.directoryChain);
   }
   return {
@@ -24452,7 +24896,7 @@ async function scanEvidenceStore(paths, name) {
   let rootEntries;
   try {
     const rootChain = await captureDirectoryChain6(changeRoot, evidenceRoot);
-    rootEntries = await fs25.readdir(evidenceRoot, { withFileTypes: true });
+    rootEntries = await fs26.readdir(evidenceRoot, { withFileTypes: true });
     await verifyDirectoryChain7(rootChain);
   } catch (error) {
     if (error.code === "ENOENT") return [];
@@ -24472,7 +24916,7 @@ async function scanEvidenceStore(paths, name) {
     if (!rootEntries.some((entry2) => entry2.name === kind)) continue;
     const directory = path39.join(evidenceRoot, kind);
     const directoryChain = await captureDirectoryChain6(changeRoot, directory);
-    const entries = (await fs25.readdir(directory, { withFileTypes: true })).sort(
+    const entries = (await fs26.readdir(directory, { withFileTypes: true })).sort(
       (left, right) => compareText8(left.name, right.name)
     );
     await verifyDirectoryChain7(directoryChain);
@@ -24616,13 +25060,13 @@ function summaryFinding(name, plan, repaired, evidenceRoot) {
 }
 async function restoreQuarantineIfSafe(quarantine, original) {
   try {
-    await fs25.lstat(original);
+    await fs26.lstat(original);
     return;
   } catch (error) {
     if (error.code !== "ENOENT") return;
   }
   try {
-    await fs25.rename(quarantine, original);
+    await fs26.rename(quarantine, original);
   } catch {
   }
 }
@@ -24638,8 +25082,8 @@ async function deleteCandidate(candidate, hooks) {
     name: candidate.change,
     directoryChain: candidate.directoryChain
   });
-  const before = await fs25.lstat(candidate.file);
-  const beforeRealPath = await fs25.realpath(candidate.file);
+  const before = await fs26.lstat(candidate.file);
+  const beforeRealPath = await fs26.realpath(candidate.file);
   if (!before.isFile() || before.isSymbolicLink() || !sameIdentity(candidate.identity, before) || !sameIdentity(candidate.identity, beforeDocument.identity) || !isInsidePath(candidate.directoryChain[0].realPath, beforeRealPath)) {
     throw new Error(`Native evidence candidate changed before cleanup: ${candidate.ref}`);
   }
@@ -24647,18 +25091,18 @@ async function deleteCandidate(candidate, hooks) {
     path39.dirname(candidate.file),
     `.${path39.basename(candidate.file)}.${randomUUID8()}.gc`
   );
-  await fs25.rename(candidate.file, quarantine);
+  await fs26.rename(candidate.file, quarantine);
   try {
     const [moved, movedRealPath] = await Promise.all([
-      fs25.lstat(quarantine),
-      fs25.realpath(quarantine)
+      fs26.lstat(quarantine),
+      fs26.realpath(quarantine)
     ]);
     await verifyDirectoryChain7(candidate.directoryChain);
     if (!moved.isFile() || moved.isSymbolicLink() || !sameContentVersionAfterLinkOrRename(candidate.identity, moved) || !isInsidePath(candidate.directoryChain[0].realPath, movedRealPath)) {
       await restoreQuarantineIfSafe(quarantine, candidate.file);
       throw new Error(`Native evidence candidate changed during cleanup: ${candidate.ref}`);
     }
-    await fs25.rm(quarantine);
+    await fs26.rm(quarantine);
     await verifyDirectoryChain7(candidate.directoryChain);
   } catch (error) {
     await restoreQuarantineIfSafe(quarantine, candidate.file);
@@ -24670,7 +25114,7 @@ async function hasPendingRelocationOrArchive(paths) {
   if (config?.native.pending_root_move) return true;
   let entries;
   try {
-    entries = await fs25.readdir(paths.transactionsDir, { withFileTypes: true });
+    entries = await fs26.readdir(paths.transactionsDir, { withFileTypes: true });
   } catch (error) {
     if (error.code === "ENOENT") return false;
     throw error;
@@ -24690,7 +25134,7 @@ async function changeNames(paths, requested) {
   if (requested) return [requested];
   let entries;
   try {
-    entries = await fs25.readdir(paths.changesDir, { withFileTypes: true });
+    entries = await fs26.readdir(paths.changesDir, { withFileTypes: true });
   } catch (error) {
     if (error.code === "ENOENT") return [];
     throw error;
@@ -24820,14 +25264,14 @@ async function inspectNativeEvidenceRetention(options) {
 
 // domains/comet-native/native-root-move.ts
 import { createHash as createHash14, randomUUID as randomUUID9 } from "crypto";
-import { promises as fs26 } from "fs";
+import { promises as fs27 } from "fs";
 import path40 from "path";
 var NATIVE_ROOT_MOVE_MAX_FILE_BYTES = 64 * 1024 * 1024;
 var NATIVE_ROOT_MOVE_MAX_JOURNAL_BYTES = 256 * 1024;
 var NATIVE_ROOT_MOVE_MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
 async function exists3(target) {
   try {
-    await fs26.access(target);
+    await fs27.access(target);
     return true;
   } catch (error) {
     if (error.code === "ENOENT") return false;
@@ -24837,7 +25281,7 @@ async function exists3(target) {
 async function assertNoUnfinishedTransactions(paths) {
   let entries;
   try {
-    entries = await fs26.readdir(paths.transactionsDir, { withFileTypes: true });
+    entries = await fs27.readdir(paths.transactionsDir, { withFileTypes: true });
   } catch (error) {
     if (error.code === "ENOENT") return;
     throw error;
@@ -24862,7 +25306,7 @@ async function assertNoUnfinishedTransactions(paths) {
   }
 }
 async function assertNoOtherLocks(paths, ownedLock) {
-  for (const entry2 of await fs26.readdir(paths.locksDir, { withFileTypes: true })) {
+  for (const entry2 of await fs27.readdir(paths.locksDir, { withFileTypes: true })) {
     const file = path40.join(paths.locksDir, entry2.name);
     if (path40.resolve(file) === path40.resolve(ownedLock)) continue;
     if (entry2.isFile() || entry2.isSymbolicLink()) {
@@ -24873,7 +25317,7 @@ async function assertNoOtherLocks(paths, ownedLock) {
 async function refreshNativeWorkspaceIdentities(paths) {
   let entries;
   try {
-    entries = await fs26.readdir(paths.changesDir, { withFileTypes: true });
+    entries = await fs27.readdir(paths.changesDir, { withFileTypes: true });
   } catch (error) {
     if (error.code === "ENOENT") return;
     throw error;
@@ -24913,7 +25357,7 @@ async function walkTree(root, options) {
         await protectedDirectory.verify();
         continue;
       }
-      const stat = await fs26.lstat(target);
+      const stat = await fs27.lstat(target);
       if (entry2.isSymbolicLink() || stat.isSymbolicLink()) {
         if (options.rejectSymlinks) throw new Error(`Native root contains a symlink: ${target}`);
         await protectedDirectory.verify();
@@ -24967,7 +25411,7 @@ async function copyTree(source, target, excludedFile, targetRoot) {
         await protectedDirectory.verify();
         continue;
       }
-      const stat = await fs26.lstat(sourceEntry);
+      const stat = await fs27.lstat(sourceEntry);
       if (entry2.isSymbolicLink() || stat.isSymbolicLink()) {
         throw new Error(`Native root contains a symlink: ${sourceEntry}`);
       }
@@ -25414,7 +25858,7 @@ async function finishForwardMove(options) {
         options.staging,
         options.lockFile
       );
-      await fs26.rename(options.staging, options.destinationPaths.nativeRoot);
+      await fs27.rename(options.staging, options.destinationPaths.nativeRoot);
     }
     config = await setPendingStage({
       projectRoot: options.projectRoot,
@@ -25460,7 +25904,8 @@ async function finishForwardMove(options) {
   const stableNative = {
     artifact_root: config.native.artifact_root,
     language: config.native.language,
-    clarification_mode: config.native.clarification_mode
+    clarification_mode: config.native.clarification_mode,
+    snapshot: config.native.snapshot
   };
   const committed = {
     ...config,
@@ -25603,7 +26048,8 @@ async function recoverNativeRootMove(options) {
     const stableNative = {
       artifact_root: config.native.artifact_root,
       language: config.native.language,
-      clarification_mode: config.native.clarification_mode
+      clarification_mode: config.native.clarification_mode,
+      snapshot: config.native.snapshot
     };
     const restored = {
       ...config,
@@ -25734,7 +26180,7 @@ async function inspectSelection(paths, repair) {
     }
   }
   if (repair) {
-    await fs27.rm(file, { force: true });
+    await fs28.rm(file, { force: true });
     return [
       {
         severity: "info",
@@ -26321,7 +26767,7 @@ async function doctorNativeProject(options) {
 
 // domains/comet-native/native-check-receipt.ts
 import { createHash as createHash15 } from "node:crypto";
-import { constants as fsConstants5, promises as fs28 } from "node:fs";
+import { constants as fsConstants6, promises as fs29 } from "node:fs";
 import path42 from "node:path";
 import { TextDecoder as TextDecoder5 } from "node:util";
 var ISSUE_KIND_RANK = {
@@ -26347,6 +26793,7 @@ function projectionManifest2(projection) {
     createdAt: "1970-01-01T00:00:00.000Z",
     complete: projection.complete,
     limits: projection.limits,
+    ...projection.policy ? { policy: projection.policy } : {},
     entries: projection.entries,
     omitted: projection.omitted,
     omittedCount: projection.omittedCount,
@@ -26354,16 +26801,17 @@ function projectionManifest2(projection) {
   };
 }
 async function collectBoundFacts(options) {
+  const baseline = projectionManifest2(options.scope.baseline);
   const [contract, snapshot2] = await Promise.all([
     collectNativeContractFiles({
       changeDir: nativeChangeDir(options.paths, options.state.name),
       briefRef: options.state.brief,
       specChanges: options.state.spec_changes
     }),
-    createNativeContentSnapshot(options.paths, { origin: "explicit" })
+    createNativeCurrentContentSnapshot(options.paths, baseline, { origin: "explicit" })
   ]);
   const currentBundle = buildNativeImplementationScopeBundle({
-    baseline: projectionManifest2(options.scope.baseline),
+    baseline,
     current: snapshot2,
     contractHash: options.scope.authority.contractHash,
     declaredArtifacts: options.scope.authority.declaredArtifacts,
@@ -26408,7 +26856,7 @@ function staleReasons(before, after, scope) {
 }
 function sameDirectoryIdentity7(identity, stat) {
   const stableMetadata = identity.birthtimeMs === stat.birthtimeMs && identity.ctimeMs === stat.ctimeMs;
-  return stableMetadata && sameNativeFileObject(
+  return stableMetadata && sameFileObject(
     { ...identity, birthtime: identity.birthtimeMs },
     {
       ...stat,
@@ -26418,7 +26866,7 @@ function sameDirectoryIdentity7(identity, stat) {
 }
 function sameFileIdentity8(left, right) {
   const stableMetadata = left.birthtimeMs === right.birthtimeMs && left.ctimeMs === right.ctimeMs && left.mtimeMs === right.mtimeMs && left.size === right.size;
-  return stableMetadata && sameNativeFileObject(
+  return stableMetadata && sameFileObject(
     { ...left, birthtime: left.birthtimeMs },
     {
       ...right,
@@ -26441,7 +26889,7 @@ async function captureProjectDirectoryChain(projectRoot, directory) {
     if (segment) cursor = path42.join(cursor, segment);
     let stat;
     try {
-      stat = await fs28.lstat(cursor);
+      stat = await fs29.lstat(cursor);
     } catch (error) {
       if (error.code === "ENOENT") {
         throw new ScopedFileError("scope-mismatch", "Scoped file parent no longer exists");
@@ -26451,7 +26899,7 @@ async function captureProjectDirectoryChain(projectRoot, directory) {
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
       throw new ScopedFileError("unsafe-file", "Scoped file parent is not a real directory");
     }
-    const realPath = await fs28.realpath(cursor);
+    const realPath = await fs29.realpath(cursor);
     if (chain.length > 0 && !isInsidePath(chain[0].realPath, realPath)) {
       throw new ScopedFileError("unsafe-file", "Scoped file parent resolves outside the project");
     }
@@ -26470,14 +26918,14 @@ async function verifyProjectDirectoryChain(chain) {
   for (const identity of chain) {
     let stat;
     try {
-      stat = await fs28.lstat(identity.path);
+      stat = await fs29.lstat(identity.path);
     } catch (error) {
       if (error.code === "ENOENT") {
         throw new ScopedFileError("unsafe-file", "Scoped file parent changed while reading");
       }
       throw error;
     }
-    if (!stat.isDirectory() || stat.isSymbolicLink() || !sameDirectoryIdentity7(identity, stat) || await fs28.realpath(identity.path) !== identity.realPath) {
+    if (!stat.isDirectory() || stat.isSymbolicLink() || !sameDirectoryIdentity7(identity, stat) || await fs29.realpath(identity.path) !== identity.realPath) {
       throw new ScopedFileError("unsafe-file", "Scoped file parent changed while reading");
     }
   }
@@ -26493,7 +26941,7 @@ async function readScopedFile(options) {
   );
   let before;
   try {
-    before = await fs28.lstat(lexicalFile);
+    before = await fs29.lstat(lexicalFile);
   } catch (error) {
     if (error.code === "ENOENT") {
       throw new ScopedFileError("scope-mismatch", "Scoped file no longer exists");
@@ -26509,12 +26957,12 @@ async function readScopedFile(options) {
       "Scoped file size no longer matches its projection"
     );
   }
-  const beforeRealPath = await fs28.realpath(lexicalFile);
+  const beforeRealPath = await fs29.realpath(lexicalFile);
   if (!isInsidePath(physicalRoot, beforeRealPath)) {
     throw new ScopedFileError("unsafe-file", "Scoped file resolves outside the project root");
   }
-  const openFlags = process.platform === "win32" ? "r" : fsConstants5.O_RDONLY | fsConstants5.O_NOFOLLOW | fsConstants5.O_NONBLOCK;
-  const handle = await fs28.open(lexicalFile, openFlags).catch((error) => {
+  const openFlags = process.platform === "win32" ? "r" : fsConstants6.O_RDONLY | fsConstants6.O_NOFOLLOW | fsConstants6.O_NONBLOCK;
+  const handle = await fs29.open(lexicalFile, openFlags).catch((error) => {
     if (error.code === "ENOENT") {
       throw new ScopedFileError("scope-mismatch", "Scoped file no longer exists");
     }
@@ -26526,8 +26974,8 @@ async function readScopedFile(options) {
   try {
     const [opened, pathAfterOpen, realPathAfterOpen] = await Promise.all([
       handle.stat(),
-      fs28.lstat(lexicalFile),
-      fs28.realpath(lexicalFile)
+      fs29.lstat(lexicalFile),
+      fs29.realpath(lexicalFile)
     ]);
     await verifyProjectDirectoryChain(chain);
     if (!opened.isFile() || !pathAfterOpen.isFile() || pathAfterOpen.isSymbolicLink() || realPathAfterOpen !== beforeRealPath || !sameFileIdentity8(before, opened) || !sameFileIdentity8(opened, pathAfterOpen)) {
@@ -26554,8 +27002,8 @@ async function readScopedFile(options) {
     }
     const [afterHandle, afterPath, afterRealPath] = await Promise.all([
       handle.stat(),
-      fs28.lstat(lexicalFile),
-      fs28.realpath(lexicalFile)
+      fs29.lstat(lexicalFile),
+      fs29.realpath(lexicalFile)
     ]);
     await verifyProjectDirectoryChain(chain);
     if (total !== options.file.expected.size || digest.digest("hex") !== options.file.expected.hash) {
@@ -26869,7 +27317,7 @@ async function checkpointNativeChange(options) {
 }
 
 // domains/comet-native/native-specs.ts
-import { promises as fs29 } from "fs";
+import { promises as fs30 } from "fs";
 import path43 from "path";
 var MAX_NATIVE_PROPOSED_SPEC_DIRECTORY_ENTRIES = NATIVE_CONTRACT_FILE_LIMITS.maxSpecs * 4;
 async function optionalHash3(file) {
@@ -26895,7 +27343,7 @@ async function proposedCapabilities(paths, name) {
   }
   const capabilities = [];
   let entryCount = 0;
-  const directory = await fs29.opendir(specsDir);
+  const directory = await fs30.opendir(specsDir);
   try {
     for await (const entry2 of directory) {
       entryCount += 1;
@@ -26913,7 +27361,7 @@ async function proposedCapabilities(paths, name) {
       await resolveContainedNativePath(paths.nativeRoot, source);
       let stat;
       try {
-        stat = await fs29.lstat(source);
+        stat = await fs30.lstat(source);
       } catch (error) {
         if (error.code === "ENOENT") continue;
         throw error;
@@ -27133,7 +27581,7 @@ async function readNativeProposedSpecs(paths, name) {
 import { randomUUID as randomUUID11 } from "crypto";
 
 // domains/comet-native/native-guards.ts
-import { promises as fs30 } from "fs";
+import { promises as fs31 } from "fs";
 import path44 from "path";
 function validation(findings) {
   return { valid: findings.length === 0, findings };
@@ -27166,7 +27614,7 @@ async function validateBuildArtifacts(paths, evidence) {
       continue;
     }
     try {
-      await fs30.access(target);
+      await fs31.access(target);
     } catch {
       findings.push({
         code: "build-artifact-missing",
@@ -27217,12 +27665,24 @@ async function inspectNativeGuard(options) {
     const brief = await validateNativeBrief(changeDir, options.state.brief);
     const specs = await validateNativeSpecChanges(options.paths, options.state);
     findings.push(...brief.findings, ...specs.findings);
+    if (findings.length === 0 && !options.evidence.confirmed) {
+      findings.push({
+        code: "shape-confirmation-required",
+        message: "Native clarification requires explicit user confirmation of the shared understanding before Build"
+      });
+    }
   } else if (options.state.phase === "build") {
     findings.push(
       ...(await validateNativeBrief(changeDir, options.state.brief)).findings,
       ...(await validateNativeSpecChanges(options.paths, options.state)).findings
     );
     findings.push(...await validateBuildArtifacts(options.paths, options.evidence));
+    if (findings.length === 0 && options.state.approval !== "confirmed" && !options.evidence.confirmed) {
+      findings.push({
+        code: "approval-confirmation-required",
+        message: "Native approval is implicit; confirm the current shared understanding before leaving Build"
+      });
+    }
   } else if (options.state.phase === "verify") {
     const report = options.evidence.verificationReport ?? options.state.verification_report;
     if (!report) {
@@ -27250,7 +27710,7 @@ async function inspectNativeGuard(options) {
 }
 
 // domains/comet-native/native-build-evidence.ts
-import { promises as fs31 } from "node:fs";
+import { promises as fs32 } from "node:fs";
 import path45 from "node:path";
 var NATIVE_BUILD_EVIDENCE_LIMITS = {
   maxDeclaredArtifacts: 128,
@@ -27326,12 +27786,12 @@ async function inspectDeclaredArtifact(paths, baseline, rawRef) {
   }
   await resolveContainedNativePath(paths.projectRoot, target);
   try {
-    const stat = await fs31.lstat(target);
+    const stat = await fs32.lstat(target);
     if (stat.isSymbolicLink()) {
       throw new Error(`Native build artifact must not be a symlink or junction: ${artifactRef}`);
     }
-    const realTarget = await fs31.realpath(target);
-    const realProjectRoot = await fs31.realpath(paths.projectRoot);
+    const realTarget = await fs32.realpath(target);
+    const realProjectRoot = await fs32.realpath(paths.projectRoot);
     if (!isInsidePath(realProjectRoot, realTarget)) {
       throw new Error(`Native build artifact resolves outside the project: ${artifactRef}`);
     }
@@ -27401,7 +27861,7 @@ async function inspectNativeBuildEvidence(options) {
     baseline,
     refs: options.artifactRefs
   });
-  const current = await createNativeContentSnapshot(options.paths, {
+  const current = await createNativeCurrentContentSnapshot(options.paths, baseline, {
     origin: "explicit",
     now: options.now
   });
@@ -27599,7 +28059,8 @@ async function retreatStaleNativeEvidence(options) {
       findings,
       continuation: nativeContinuation({
         state: options.state,
-        archiveReady: previousPhase === "archive"
+        archiveReady: previousPhase === "archive",
+        clarificationMode: options.transition.clarificationMode
       })
     };
   }
@@ -27654,7 +28115,10 @@ async function retreatStaleNativeEvidence(options) {
     next: "auto",
     nextCommand: null,
     findings: [],
-    continuation: nativeContinuation({ state: persisted })
+    continuation: nativeContinuation({
+      state: persisted,
+      clarificationMode: options.transition.clarificationMode
+    })
   };
 }
 async function advanceNativeChange(options) {
@@ -27701,7 +28165,8 @@ async function advanceNativeChangeLocked(options) {
         continuation: nativeContinuation({
           state,
           findings: repairFindings2,
-          archiveReady: state.phase === "archive" && state.verification_result === "pass"
+          archiveReady: state.phase === "archive" && state.verification_result === "pass",
+          clarificationMode: options.clarificationMode
         }),
         ...repair ? { repair } : {}
       };
@@ -27740,7 +28205,8 @@ async function advanceNativeChangeLocked(options) {
   const guard = await inspectNativeGuard({
     paths: options.paths,
     state: candidate,
-    evidence: options.evidence
+    evidence: options.evidence,
+    clarificationMode: options.clarificationMode
   });
   if (!guard.valid) {
     const findings = structureNativeFindings({
@@ -27754,7 +28220,11 @@ async function advanceNativeChangeLocked(options) {
       next: "manual",
       nextCommand: null,
       findings,
-      continuation: nativeContinuation({ state, findings })
+      continuation: nativeContinuation({
+        state,
+        findings,
+        clarificationMode: options.clarificationMode
+      })
     };
   }
   const shapeContract = state.phase === "shape" ? await collectNativeContractFiles({
@@ -27793,7 +28263,11 @@ async function advanceNativeChangeLocked(options) {
       next: "manual",
       nextCommand: null,
       findings,
-      continuation: nativeContinuation({ state, findings })
+      continuation: nativeContinuation({
+        state,
+        findings,
+        clarificationMode: options.clarificationMode
+      })
     };
   }
   const preparedScope = buildEvidence ? {
@@ -27825,7 +28299,11 @@ async function advanceNativeChangeLocked(options) {
       next: "manual",
       nextCommand: null,
       findings,
-      continuation: nativeContinuation({ state, findings }),
+      continuation: nativeContinuation({
+        state,
+        findings,
+        clarificationMode: options.clarificationMode
+      }),
       preparedScope
     };
   }
@@ -27870,7 +28348,11 @@ async function advanceNativeChangeLocked(options) {
         next: "manual",
         nextCommand: null,
         findings,
-        continuation: nativeContinuation({ state, findings }),
+        continuation: nativeContinuation({
+          state,
+          findings,
+          clarificationMode: options.clarificationMode
+        }),
         preparedScope: preparedScope ? { ...preparedScope, partialAllowanceRef: null } : preparedScope
       };
     }
@@ -27899,7 +28381,11 @@ async function advanceNativeChangeLocked(options) {
       next: "manual",
       nextCommand: null,
       findings,
-      continuation: nativeContinuation({ state, findings })
+      continuation: nativeContinuation({
+        state,
+        findings,
+        clarificationMode: options.clarificationMode
+      })
     };
   }
   let repairDecision = null;
@@ -27954,7 +28440,7 @@ async function advanceNativeChangeLocked(options) {
     ...candidate,
     revision: state.revision + 1,
     phase: advanced.currentStep,
-    approval: options.evidence.confirmed ? "confirmed" : state.phase === "shape" && state.approval === null ? "implicit" : state.approval,
+    approval: options.evidence.confirmed ? "confirmed" : state.approval,
     approved_contract_hash: state.phase === "shape" ? shapeContract.contract.contractHash : state.phase === "build" && options.evidence.confirmed ? buildEvidence.contract.contract.contractHash : state.approved_contract_hash ?? null,
     run_id: run.runId,
     ...state.phase === "build" ? {
@@ -28031,7 +28517,8 @@ async function advanceNativeChangeLocked(options) {
     continuation: nativeContinuation({
       state: persisted,
       findings: repairFindings,
-      archiveReady: persisted.phase === "archive" && persisted.verification_result === "pass"
+      archiveReady: persisted.phase === "archive" && persisted.verification_result === "pass",
+      clarificationMode: options.clarificationMode
     }),
     ...preparedScope ? { preparedScope } : {},
     ...repairDecision ? { repair: repairDecision } : {}
@@ -28039,7 +28526,7 @@ async function advanceNativeChangeLocked(options) {
 }
 
 // domains/comet-native/native-hook-guard.ts
-import { promises as fs32 } from "fs";
+import { promises as fs33 } from "fs";
 import path46 from "path";
 
 // domains/comet-entry/hook-adapter.ts
@@ -28204,7 +28691,7 @@ async function activeNativeContext(projectRoot) {
   const paths = await nativeProjectPaths(projectRoot, config.native.artifact_root);
   let entries;
   try {
-    entries = await fs32.readdir(paths.changesDir, { withFileTypes: true });
+    entries = await fs33.readdir(paths.changesDir, { withFileTypes: true });
   } catch (error) {
     if (error.code === "ENOENT") return { paths, changes: [] };
     throw error;
@@ -28325,6 +28812,7 @@ Commands:
   select <change-name>
   checkpoint <change-name> --summary <text> --next-action <text> [--artifact <project-relative>] [--expect-revision <n>]
   check <change-name>
+  evidence format [--entries <path>]
   next <change-name> --summary <text> [--confirmed] [--artifact <path>] [--no-code-reason <text>] [--allow-partial-scope <sha256> --partial-reason <text>] [--result pass|fail] [--report <path>] [--receipt <change-relative-ref>] [--failure-category <token>] [--failed-check <token>] [--override-repair <sha256> --override-summary <text>]
   archive <change-name> --dry-run
   archive <change-name> --expect-preflight <sha256>
@@ -28404,6 +28892,44 @@ async function doctorPaths(projectRoot) {
 }
 function success(command, data, text) {
   return { command, exitCode: 0, data, text: text ?? JSON.stringify(data, null, 2) + "\n" };
+}
+async function readBoundedEvidenceFile(filePath, maxBytes) {
+  try {
+    const { bytes } = await readFileRaceSafe(filePath, maxBytes, {
+      label: "Acceptance evidence entries file"
+    });
+    return bytes.toString("utf8");
+  } catch (error) {
+    if (error instanceof RaceSafeReadError) {
+      if (error.reason === "not-regular-file") {
+        throw new Error(`Acceptance evidence entries path is not a regular file: ${filePath}`, {
+          cause: error
+        });
+      }
+      if (error.reason === "too-large") {
+        throw new Error(`Acceptance evidence entries file exceeds ${maxBytes} bytes: ${filePath}`, {
+          cause: error
+        });
+      }
+      throw new Error(`Acceptance evidence entries file changed while reading: ${filePath}`, {
+        cause: error
+      });
+    }
+    throw error;
+  }
+}
+async function readBoundedEvidenceStdin(maxBytes) {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of process.stdin) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+    total += buffer.byteLength;
+    if (total > maxBytes) {
+      throw new Error(`Acceptance evidence entries on stdin exceed ${maxBytes} bytes`);
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 async function dispatch(rawArgs, explicitProjectRoot) {
   if (rawArgs.length === 0 || rawArgs[0] === "--help" || rawArgs[0] === "help") {
@@ -28510,7 +29036,9 @@ async function dispatch(rawArgs, explicitProjectRoot) {
     await ensureNativeDirectories(paths);
     const state = await createNativeChange({ paths, name, language });
     await selectNativeChange(paths, state.name);
-    const status = await inspectNativeStatus(paths, state.name);
+    const status = await inspectNativeStatus(paths, state.name, {
+      clarificationMode: config.native.clarification_mode
+    });
     return success(
       "new",
       { ...state, continuation: status.continuation },
@@ -28524,9 +29052,11 @@ async function dispatch(rawArgs, explicitProjectRoot) {
       const name = requiredPositional(rawArgs, "change name");
       const capability = requiredPositional(rawArgs, "capability");
       assertNoArguments(rawArgs);
-      const { paths } = await configuredPaths(projectRoot);
+      const { config, paths } = await configuredPaths(projectRoot);
       const state = await markNativeSpecRemoval(paths, name, capability);
-      const status = await inspectNativeStatus(paths, state.name);
+      const status = await inspectNativeStatus(paths, state.name, {
+        clarificationMode: config.native.clarification_mode
+      });
       return success(
         "spec remove",
         { ...state, continuation: status.continuation },
@@ -28539,9 +29069,11 @@ async function dispatch(rawArgs, explicitProjectRoot) {
       const summary = takeOption(rawArgs, "--summary");
       if (!summary) throw new NativeUsageError("--summary is required");
       assertNoArguments(rawArgs);
-      const { paths } = await configuredPaths(projectRoot);
+      const { config, paths } = await configuredPaths(projectRoot);
       const state = await rebaseNativeSpecChanges({ paths, name, summary });
-      const status = await inspectNativeStatus(paths, state.name);
+      const status = await inspectNativeStatus(paths, state.name, {
+        clarificationMode: config.native.clarification_mode
+      });
       return success(
         "spec rebase",
         { ...state, continuation: status.continuation },
@@ -28554,8 +29086,11 @@ async function dispatch(rawArgs, explicitProjectRoot) {
   if (command === "list") {
     const cursor = takeOption(rawArgs, "--cursor");
     assertNoArguments(rawArgs);
-    const { paths } = await configuredPaths(projectRoot);
-    const page = await listNativeStatusPage(paths, cursor ? { cursor } : void 0);
+    const { config, paths } = await configuredPaths(projectRoot);
+    const page = await listNativeStatusPage(paths, {
+      ...cursor ? { cursor } : {},
+      clarificationMode: config.native.clarification_mode
+    });
     return success("list", page);
   }
   if (command === "show") {
@@ -28611,19 +29146,25 @@ async function dispatch(rawArgs, explicitProjectRoot) {
       throw new NativeUsageError("--acceptance-cursor requires a change name");
     }
     assertNoArguments(rawArgs);
-    const { paths } = await configuredPaths(projectRoot);
+    const { config, paths } = await configuredPaths(projectRoot);
     const data = name ? await inspectNativeStatus(paths, name, {
       details,
-      ...acceptanceCursor2 ? { acceptanceCursor: acceptanceCursor2 } : {}
-    }) : await listNativeStatusPage(paths, cursor ? { cursor } : void 0);
+      ...acceptanceCursor2 ? { acceptanceCursor: acceptanceCursor2 } : {},
+      clarificationMode: config.native.clarification_mode
+    }) : await listNativeStatusPage(paths, {
+      ...cursor ? { cursor } : {},
+      clarificationMode: config.native.clarification_mode
+    });
     return success("status", data);
   }
   if (command === "select") {
     const name = requiredPositional(rawArgs, "change name");
     assertNoArguments(rawArgs);
-    const { paths } = await configuredPaths(projectRoot);
+    const { config, paths } = await configuredPaths(projectRoot);
     await selectNativeChange(paths, name);
-    const status = await inspectNativeStatus(paths, name);
+    const status = await inspectNativeStatus(paths, name, {
+      clarificationMode: config.native.clarification_mode
+    });
     return success(
       "select",
       { selected: name, continuation: status.continuation },
@@ -28640,7 +29181,7 @@ async function dispatch(rawArgs, explicitProjectRoot) {
     const artifacts = takeMany(rawArgs, "--artifact");
     const expectedRevision = revisionOption(rawArgs);
     assertNoArguments(rawArgs);
-    const { paths } = await configuredPaths(projectRoot);
+    const { config, paths } = await configuredPaths(projectRoot);
     const result2 = await checkpointNativeChange({
       paths,
       name,
@@ -28649,7 +29190,9 @@ async function dispatch(rawArgs, explicitProjectRoot) {
       artifacts,
       expectedRevision
     });
-    const status = await inspectNativeStatus(paths, name);
+    const status = await inspectNativeStatus(paths, name, {
+      clarificationMode: config.native.clarification_mode
+    });
     const manifestRef = path47.relative(
       paths.projectRoot,
       path47.join(nativeChangeDir(paths, name), ...result2.checkpoint.manifestRef.split("/"))
@@ -28687,6 +29230,43 @@ async function dispatch(rawArgs, explicitProjectRoot) {
       text: `Native check ${passed ? "passed" : "failed"}: ${checked.ref}
 `
     };
+  }
+  if (command === "evidence") {
+    const subcommand = requiredPositional(rawArgs, "evidence subcommand");
+    if (subcommand === "format") {
+      const entriesPath = takeOption(rawArgs, "--entries");
+      assertNoArguments(rawArgs);
+      let raw;
+      if (entriesPath) {
+        raw = await readBoundedEvidenceFile(
+          path47.resolve(entriesPath),
+          MAX_NATIVE_IMPLEMENTATION_EVIDENCE_DOCUMENT_BYTES
+        );
+      } else {
+        if (process.stdin.isTTY) {
+          throw new NativeUsageError(
+            "evidence format requires acceptance evidence entries JSON on stdin, or --entries <path>"
+          );
+        }
+        raw = await readBoundedEvidenceStdin(MAX_NATIVE_IMPLEMENTATION_EVIDENCE_DOCUMENT_BYTES);
+      }
+      let entries;
+      try {
+        entries = JSON.parse(raw);
+      } catch (error) {
+        throw new Error(
+          `Acceptance evidence entries must be valid JSON: ${error.message}`,
+          { cause: error }
+        );
+      }
+      if (!Array.isArray(entries)) {
+        throw new Error("Acceptance evidence entries must be a JSON array");
+      }
+      const block = serializeNativeVerificationMachineBlock(entries);
+      return success("evidence format", { block }, `${block}
+`);
+    }
+    throw new NativeUsageError(`Unknown evidence command: ${subcommand}`);
   }
   if (command === "next") {
     const name = requiredPositional(rawArgs, "change name");
@@ -28736,7 +29316,7 @@ async function dispatch(rawArgs, explicitProjectRoot) {
       throw new NativeUsageError("--override-repair cannot be combined with --result");
     }
     assertNoArguments(rawArgs);
-    const { paths } = await configuredPaths(projectRoot);
+    const { config, paths } = await configuredPaths(projectRoot);
     const evidence = {
       summary,
       ...confirmed ? { confirmed: true } : {},
@@ -28752,7 +29332,12 @@ async function dispatch(rawArgs, explicitProjectRoot) {
       ...repairOverrideSignature ? { repairOverrideSignature } : {},
       ...repairOverrideSummary ? { repairOverrideSummary } : {}
     };
-    const result2 = await advanceNativeChange({ paths, name, evidence });
+    const result2 = await advanceNativeChange({
+      paths,
+      name,
+      evidence,
+      clarificationMode: config.native.clarification_mode
+    });
     if (result2.next === "manual") {
       const repairBlocked = result2.repair?.disposition === "manual-stop" || result2.repair?.disposition === "hard-stop" || result2.findings.some(
         (finding) => [
@@ -28771,7 +29356,9 @@ async function dispatch(rawArgs, explicitProjectRoot) {
         }
       };
     }
-    const status = await inspectNativeStatus(paths, name);
+    const status = await inspectNativeStatus(paths, name, {
+      clarificationMode: config.native.clarification_mode
+    });
     return success("next", { ...result2, continuation: status.continuation });
   }
   if (command === "archive") {
@@ -28888,6 +29475,13 @@ function errorResult(command, error) {
         omittedByReason: error.omittedByReason,
         samplePaths: error.samplePaths,
         sampleTruncated: error.sampleTruncated,
+        effectiveLimits: error.effectiveLimits,
+        policyHash: error.policyHash,
+        configPath: ".comet/config.yaml",
+        supportedFixes: [
+          "increase native.snapshot.max_total_bytes or native.snapshot.max_duration_ms",
+          "add an explicit native.snapshot.exclude pattern for data outside implementation scope"
+        ],
         requiredAction: "resolve-native-baseline"
       },
       error: { code: "baseline-incomplete", message: error.message }
