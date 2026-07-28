@@ -1,45 +1,60 @@
-# Issue tracker: GitHub
+# 问题追踪器：本地 Markdown
 
-Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
+本仓库的工作项以 Markdown 文件形式保存在 `openspec/changes/` 下。
 
-## Conventions
+## 变更目录结构
 
-- **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.
-- **Read an issue**: `gh issue view <number> --comments`, filtering comments by `jq` and also fetching labels.
-- **List issues**: `gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with appropriate `--label` and `--state` filters.
-- **Comment on an issue**: `gh issue comment <number> --body "..."`
-- **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
-- **Close**: `gh issue close <number> --comment "..."`
+每项变更使用以下结构：
 
-Infer the repo from `git remote -v` — `gh` does this automatically when run inside a clone.
+```text
+openspec/changes/<change-name>/
+├── spec.md
+└── issues/
+    ├── 01-<ticket-name>.md
+    ├── 02-<ticket-name>.md
+    └── ...
+```
 
-## Pull requests as a triage surface
+需要时，由问题追踪技能创建变更目录。
 
-**PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_
+## 变更名称
 
-When set to `yes`, PRs run through the same labels and states as issues, using the `gh pr` equivalents:
+变更名称采用以下格式：
 
-- **Read a PR**: `gh pr view <number> --comments` and `gh pr diff <number>` for the diff.
-- **List external PRs for triage**: `gh pr list --state open --json number,title,body,labels,author,authorAssociation,comments` then keep only `authorAssociation` of `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, or `NONE` (drop `OWNER`/`MEMBER`/`COLLABORATOR`).
-- **Comment / label / close**: `gh pr comment`, `gh pr edit --add-label`/`--remove-label`, `gh pr close`.
+```text
+YYYY-MM-DD-kebab-case-change-name
+```
 
-GitHub shares one number space across issues and PRs, so a bare `#42` may be either — resolve with `gh pr view 42` and fall back to `gh issue view 42`.
+示例：
 
-## When a skill says "publish to the issue tracker"
+```text
+2026-07-28-improve-local-research
+```
 
-Create a GitHub issue.
+使用当前本地日期作为前缀，后接简短、小写的 kebab-case（短横线命名）描述。创建目录前，必须确认名称符合 `openspec/changes/` 的要求，并且不存在同名目录。
 
-## When a skill says "fetch the relevant ticket"
+## 规格
 
-Run `gh issue view <number> --comments`.
+当技能要求将规格发布到问题追踪器时，写入：
 
-## Wayfinding operations
+```text
+openspec/changes/<change-name>/spec.md
+```
 
-Used by `/wayfinder`. The **map** is a single issue with **child** issues as tickets.
+未经确认，不得覆盖已有规格。
 
-- **Map**: a single issue labelled `wayfinder:map`, holding the Notes / Decisions-so-far / Fog body. `gh issue create --label wayfinder:map`.
-- **Child ticket**: an issue linked to the map as a GitHub sub-issue (`gh api` on the sub-issues endpoint). Where sub-issues aren't enabled, add the child to a task list in the map body and put `Part of #<map>` at the top of the child body. Labels: `wayfinder:<type>` (`research`/`prototype`/`grilling`/`task`). Once claimed, the ticket is assigned to the driving dev.
-- **Blocking**: GitHub's **native issue dependencies** — the canonical, UI-visible representation. Add an edge with `gh api --method POST repos/<owner>/<repo>/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>`, where `<blocker-db-id>` is the blocker's numeric **database id** (`gh api repos/<owner>/<repo>/issues/<n> --jq .id`, _not_ the `#number` or `node_id`). GitHub reports `issue_dependencies_summary.blocked_by` (open blockers only — the live gate). Where dependencies aren't available, fall back to a `Blocked by: #<n>, #<n>` line at the top of the child body. A ticket is unblocked when every blocker is closed.
-- **Frontier query**: list the map's open children (`gh issue list --state open`, scoped to the map's sub-issues / task list), drop any with an open blocker (`issue_dependencies_summary.blocked_by > 0`, or an open issue in the `Blocked by` line) or an assignee; first in map order wins.
-- **Claim**: `gh issue edit <n> --add-assignee @me` — the session's first write.
-- **Resolve**: `gh issue comment <n> --body "<answer>"`, then `gh issue close <n>`, then append a context pointer (gist + link) to the map's Decisions-so-far.
+## 票据
+
+当技能要求发布票据时，每张票据分别写入：
+
+```text
+openspec/changes/<change-name>/issues/
+```
+
+票据从 `01` 开始，按照依赖顺序编号；前置票据排在被阻塞票据之前。每张票据都要记录其状态和前置票据。
+
+如果会话中已经确定了相关变更目录，后续技能必须复用该目录；否则根据当前工作创建符合规则的变更名称。
+
+## 问题分流状态
+
+标准问题分流状态直接记录在本地 Markdown 票据中。新发布且可由 Agent（代理）处理的规格和票据使用 `ready-for-agent`。

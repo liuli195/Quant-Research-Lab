@@ -35,16 +35,16 @@
 - **输出**：简体中文，简洁直白；英文技术名词后跟中文释义。
 - **引用**：引用本地文件时使用可点击路径。
 
-## Agent skills
+## Agent skills（代理技能）
 
-### Issue tracker
+### Issue tracker（问题追踪器）
 
-Issues are tracked in GitHub Issues. See `docs/agents/issue-tracker.md`.
+问题以本地 Markdown（标记文档）文件形式保存在 `openspec/changes/<change-name>/`。详见 `docs/agents/issue-tracker.md`。
 
-### Triage labels
+### Triage labels（问题分流标签）
 
-Use the five canonical triage labels. See `docs/agents/triage-labels.md`.
+五种标准问题分流状态保持原名不变。详见 `docs/agents/triage-labels.md`。
 
-### Domain docs
+### Domain docs（领域文档）
 
-Use the single-context layout with authoritative specifications in `docs/comet/specs/`. See `docs/agents/domain.md`.
+本仓库采用 single-context（单上下文）布局。详见 `docs/agents/domain.md`。
