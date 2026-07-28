@@ -7,7 +7,7 @@
 - 即时路径正确使用 `Portfolio.from_order_func()`，延迟路径却先用 Python 手工维护现金、持仓、费用和权益，再通过 `Portfolio.from_orders()` 重放，形成双账本。
 - 标准结果完成后只发布到 `.local/quant-research`，策略目录没有可以脱离运行缓存直接复盘的不可变研究档案。
 
-本变更由一个 OpenSpec change 完成三层重构和档案晋升。虽然两部分可独立描述，但它们共享同一 Strategy Module、结果包和清单契约；分开实施会引入中间兼容格式和双生产路径，因此用户明确选择单 change 原子迁移。
+本变更由一个 MySpec change 完成三层重构和档案晋升。虽然两部分可独立描述，但它们共享同一 Strategy Module、结果包和清单契约；分开实施会引入中间兼容格式和双生产路径，因此用户明确选择单 change 原子迁移。
 
 既有 `build-turtle-etf-local-research-workflow` 设计中“vectorbt 只属于 strategy-003”和“延迟使用 from_orders”的实现约束由本变更显式取代；聚宽正式回测和模拟交易仍只在云端运行。
 
@@ -153,7 +153,7 @@ joinquant/strategies/<strategy_id>/research/archives/<analysis_id>/
 8. 把晋升收敛为扫描、标准复制、摘要复核和原子发布，删除敌对并发树状态机。
 9. 建立通用 vectorbt 唯一账本 runtime，只用通用 primary/follow-up fixture 证明共享接线。
 10. 在海龟 Strategy Module 内同时迁移即时与延迟 OrderProgram，逐笔一致后删除手工账本。
-11. 单次切换生产配置，更新测试、代码身份、Skill 文档和旧 OpenSpec 约束，删除所有旧生产文件、共享 `adapter_guard.py` 和 runner v1 command 路径。
+11. 单次切换生产配置，更新测试、代码身份、Skill 文档和旧 MySpec 约束，删除所有旧生产文件、共享 `adapter_guard.py` 和 runner v1 command 路径。
 12. 运行共享 CLI → vectorbt → 标准结果包 → 自包含档案的完整端到端回归和真实规模性能验证。
 
 回滚以任务提交为单位进行：在旧生产入口尚未删除前，可回退最近迁移提交；删除旧入口后只允许整体回退到最后一个已验证提交，不提供运行时双路径开关。

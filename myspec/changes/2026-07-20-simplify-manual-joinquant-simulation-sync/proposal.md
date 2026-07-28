@@ -22,5 +22,5 @@
 ## Impact
 
 - 修改 `.agents/skills/joinquant-archive-sync/` 内的 CLI（命令行接口）、调度编排和操作文档，以及对应的同步测试。
-- 修改 `openspec/specs/joinquant-archive-sync/spec.md` 的自动归档验收要求。
+- 修改 `myspec/specs/joinquant-archive-sync/spec.md` 的自动归档验收要求。
 - 不改变 JoinQuant（聚宽）采集、归档清单、完整性门禁、查询或导出语义；不新增依赖、服务或配置。

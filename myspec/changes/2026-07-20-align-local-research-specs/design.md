@@ -28,7 +28,7 @@
 ## Migration Plan
 
 1. 更新 `local-quant-research-workflow` 的验证要求和场景。
-2. 运行 OpenSpec（开放规格）验证及与规格相关的现有布局和 E2E（端到端）回归。
+2. 运行 MySpec（自有规格）验证及与规格相关的现有布局和 E2E（端到端）回归。
 3. 无需数据迁移或运行时回滚；若规格表述出现问题，恢复该规格文本即可。
 
 ## Open Questions

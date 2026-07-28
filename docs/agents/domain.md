@@ -5,7 +5,7 @@
 ## 调查前阅读
 
 - 仓库根目录的 `CONTEXT.md`
-- `openspec/specs/` 中与当前工作相关的规格
+- `myspec/specs/` 中与当前工作相关的规格
 
 如果这些文件不存在，直接继续，不要报告缺失，也不要预先建议创建。只有在领域术语或规格确实得到确认后，才创建领域文档。
 
@@ -16,7 +16,7 @@
 ```text
 /
 ├── CONTEXT.md
-├── openspec/
+├── myspec/
 │   ├── specs/
 │   └── changes/
 ├── joinquant/

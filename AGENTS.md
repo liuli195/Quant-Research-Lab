@@ -39,7 +39,7 @@
 
 ### Issue tracker（问题追踪器）
 
-问题以本地 Markdown（标记文档）文件形式保存在 `openspec/changes/<change-name>/`。详见 `docs/agents/issue-tracker.md`。
+问题以本地 Markdown（标记文档）文件形式保存在 `myspec/changes/<change-name>/`。详见 `docs/agents/issue-tracker.md`。
 
 ### Triage labels（问题分流标签）
 

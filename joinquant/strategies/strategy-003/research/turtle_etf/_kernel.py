@@ -666,32 +666,42 @@ def _risk_cap_targets_nb(
         allowances[offset] = budget if np.isfinite(budget) and budget >= 0.0 else 0.0
         capped[offset] = False
 
-    for group in range(group_count):
-        group_budget = 0.0
-        locked_loss = 0.0
-        adjustable_budget = 0.0
-        for offset in range(targets.shape[0]):
-            if asset_group_ids[from_column + offset] != group:
-                continue
-            group_budget += allowances[offset]
-            if locked_quantities[offset] >= 0:
-                locked_loss += _planned_loss_nb(
-                    int(targets[offset]),
-                    int(round(positions[offset])),
-                    position_costs[offset],
-                    buy_prices[offset],
-                    stops[offset],
-                )
-            else:
-                adjustable_budget += allowances[offset]
-        remaining = max(group_budget - locked_loss, 0.0)
-        scale = min(remaining / adjustable_budget, 1.0) if adjustable_budget > 0.0 else 0.0
-        for offset in range(targets.shape[0]):
-            if (
-                asset_group_ids[from_column + offset] == group
-                and locked_quantities[offset] < 0
-            ):
-                allowances[offset] *= scale
+    any_locked = False
+    for offset in range(targets.shape[0]):
+        if locked_quantities[offset] >= 0:
+            any_locked = True
+            break
+    if any_locked:
+        for group in range(group_count):
+            group_budget = 0.0
+            locked_loss = 0.0
+            adjustable_budget = 0.0
+            for offset in range(targets.shape[0]):
+                if asset_group_ids[from_column + offset] != group:
+                    continue
+                group_budget += allowances[offset]
+                if locked_quantities[offset] >= 0:
+                    locked_loss += _planned_loss_nb(
+                        int(targets[offset]),
+                        int(positions[offset]),
+                        position_costs[offset],
+                        buy_prices[offset],
+                        stops[offset],
+                    )
+                else:
+                    adjustable_budget += allowances[offset]
+            remaining = max(group_budget - locked_loss, 0.0)
+            scale = (
+                min(remaining / adjustable_budget, 1.0)
+                if adjustable_budget > 0.0
+                else 0.0
+            )
+            for offset in range(targets.shape[0]):
+                if (
+                    asset_group_ids[from_column + offset] == group
+                    and locked_quantities[offset] < 0
+                ):
+                    allowances[offset] *= scale
 
     portfolio_budget = 0.0
     locked_loss = 0.0
@@ -703,7 +713,7 @@ def _risk_cap_targets_nb(
         if locked_quantities[offset] >= 0:
             locked_loss += _planned_loss_nb(
                 int(targets[offset]),
-                int(round(positions[offset])),
+                int(positions[offset]),
                 position_costs[offset],
                 buy_prices[offset],
                 stops[offset],
@@ -719,7 +729,7 @@ def _risk_cap_targets_nb(
         before = int(targets[offset])
         targets[offset] = _risk_capped_target_nb(
             before,
-            int(round(positions[offset])),
+            int(positions[offset]),
             position_costs[offset],
             buy_prices[offset],
             stops[offset],
@@ -742,7 +752,7 @@ def _cash_after_targets_nb(
     projected_cash = cash
     for offset in range(targets.shape[0]):
         column = from_column + offset
-        current = int(round(positions[offset]))
+        current = int(positions[offset])
         if targets[offset] >= current:
             continue
         quantity = current - targets[offset]
@@ -754,7 +764,7 @@ def _cash_after_targets_nb(
         )
     for offset in range(targets.shape[0]):
         column = from_column + offset
-        current = int(round(positions[offset]))
+        current = int(positions[offset])
         if targets[offset] <= current:
             continue
         quantity = targets[offset] - current
