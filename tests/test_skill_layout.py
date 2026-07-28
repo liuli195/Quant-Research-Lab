@@ -291,16 +291,21 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
         "tests\\local_quant_research\\test_turtle_vectorbt_callbacks.py::"
         "test_group_and_portfolio_unit_scales_follow_confirmed_formula"
     )
-    required_paths = {
+    shared_skill_paths = {
         ".agents/skills/run-local-quant-research/**",
         ".claude/skills/run-local-quant-research",
-        "scripts/research/**",
-        "joinquant/strategies/strategy-003/research/**",
-        "tests/local_quant_research/**",
-        "tests/quant_analysis/**",
     }
-    assert all(required_paths.issubset(item["paths"]) for item in unit_checks)
-    assert required_paths.issubset(e2e["paths"])
+    assert all(shared_skill_paths.issubset(item["paths"]) for item in unit_checks)
+    assert "scripts/research/result_package.py" in unit_checks[0]["paths"]
+    assert "scripts/research/market_data/**" in unit_checks[1]["paths"]
+    assert "scripts/research/local_quant_research/**" in unit_checks[2]["paths"]
+    assert "tests/quant_analysis/**" in unit_checks[2]["paths"]
+    assert {"scripts/research/**", *shared_skill_paths}.issubset(e2e["paths"])
+    assert "joinquant/strategies/strategy-003/research/**" in turtle_e2e["paths"]
+    assert all(
+        "tests/local_quant_research/**" not in item["paths"]
+        for item in [*unit_checks, vectorbt_unit, *equivalence, e2e, turtle_e2e, jit]
+    )
     assert {".agents/skills/**", ".claude/skills/**"}.issubset(layout["paths"])
     assert {".agents/skills/**", ".claude/skills/**"}.issubset(layout["inputs"])
     local_checks = [*unit_checks, vectorbt_unit, *equivalence, e2e, turtle_e2e, jit]
