@@ -1,13 +1,13 @@
 # 问题追踪器：本地 Markdown
 
-本仓库的工作项以 Markdown 文件形式保存在 `openspec/changes/` 下。
+本仓库的工作项以 Markdown 文件形式保存在 `myspec/changes/` 下。
 
 ## 变更目录结构
 
 每项变更使用以下结构：
 
 ```text
-openspec/changes/<change-name>/
+myspec/changes/<change-name>/
 ├── spec.md
 └── issues/
     ├── 01-<ticket-name>.md
@@ -31,14 +31,14 @@ YYYY-MM-DD-kebab-case-change-name
 2026-07-28-improve-local-research
 ```
 
-使用当前本地日期作为前缀，后接简短、小写的 kebab-case（短横线命名）描述。创建目录前，必须确认名称符合 `openspec/changes/` 的要求，并且不存在同名目录。
+使用当前本地日期作为前缀，后接简短、小写的 kebab-case（短横线命名）描述。创建目录前，必须确认名称符合 `myspec/changes/` 的要求，并且不存在同名目录。
 
 ## 规格
 
 当技能要求将规格发布到问题追踪器时，写入：
 
 ```text
-openspec/changes/<change-name>/spec.md
+myspec/changes/<change-name>/spec.md
 ```
 
 未经确认，不得覆盖已有规格。
@@ -48,7 +48,7 @@ openspec/changes/<change-name>/spec.md
 当技能要求发布票据时，每张票据分别写入：
 
 ```text
-openspec/changes/<change-name>/issues/
+myspec/changes/<change-name>/issues/
 ```
 
 票据从 `01` 开始，按照依赖顺序编号；前置票据排在被阻塞票据之前。每张票据都要记录其状态和前置票据。

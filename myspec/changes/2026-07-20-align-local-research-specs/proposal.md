@@ -20,5 +20,5 @@
 
 ## Impact
 
-- 修改 `openspec/specs/local-quant-research-workflow/spec.md`。
+- 修改 `myspec/specs/local-quant-research-workflow/spec.md`。
 - 不修改本地研究 CLI（命令行接口）、运行器、测试、依赖或验证配置。

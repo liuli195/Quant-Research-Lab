@@ -29,9 +29,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install OpenSpec
-        run: npm install -g @fission-ai/openspec@1.4.1
-
       - name: Install dependencies
         shell: pwsh
         run: |
