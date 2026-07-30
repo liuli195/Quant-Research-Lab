@@ -417,6 +417,26 @@
         ],
         "checkParallel": true,
         "timeoutSeconds": 300
+      },
+      {
+        "id": "verify.worktree-setup",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest tests\\test_setup_worktree.py",
+        "paths": [
+          ".gitignore",
+          ".build-and-verify/config.json",
+          "scripts/setup-worktree.ps1",
+          "tests/test_setup_worktree.py",
+          "requirements*.txt"
+        ],
+        "inputs": [
+          ".gitignore",
+          ".build-and-verify/config.json",
+          "scripts/setup-worktree.ps1",
+          "tests/test_setup_worktree.py",
+          "requirements.txt",
+          "requirements-dev.txt"
+        ],
+        "checkParallel": true
       }
     ]
   }
