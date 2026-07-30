@@ -6,16 +6,32 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $python = Join-Path $projectRoot '.venv\Scripts\python.exe'
 $manifests = 'requirements.txt', 'requirements-dev.txt'
 
+function Resolve-FullPath([string]$path, [string]$base) {
+    [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($path)) { $path } else { Join-Path $base $path }))
+}
+
+function Get-FileSha256([string]$path) {
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    $stream = [IO.File]::OpenRead($path)
+    try {
+        [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '')
+    }
+    finally {
+        $stream.Dispose()
+        $sha256.Dispose()
+    }
+}
+
 function Get-DependencyFingerprint([string]$root) {
     foreach ($manifest in $manifests) {
-        "$(Get-FileHash (Join-Path $root $manifest) | Select-Object -ExpandProperty Hash) $manifest"
+        "$(Get-FileSha256 (Join-Path $root $manifest)) $manifest"
     }
 }
 
 Push-Location $projectRoot
 try {
-    $gitDir = [IO.Path]::GetFullPath((git rev-parse --git-dir), $projectRoot)
-    $commonGitDir = [IO.Path]::GetFullPath((git rev-parse --git-common-dir), $projectRoot)
+    $gitDir = Resolve-FullPath (git rev-parse --git-dir) $projectRoot
+    $commonGitDir = Resolve-FullPath (git rev-parse --git-common-dir) $projectRoot
     if ($gitDir -ne $commonGitDir) {
         $mainRoot = Split-Path -Parent $commonGitDir
         $sharedVenv = Join-Path $mainRoot '.venv'
@@ -23,7 +39,7 @@ try {
             Write-Error 'Shared Python environment is missing; run scripts/setup-worktree.ps1 in the main repository first.'
         }
         foreach ($manifest in $manifests) {
-            if ((Get-FileHash (Join-Path $projectRoot $manifest)).Hash -ne (Get-FileHash (Join-Path $mainRoot $manifest)).Hash) {
+            if ((Get-FileSha256 (Join-Path $projectRoot $manifest)) -ne (Get-FileSha256 (Join-Path $mainRoot $manifest))) {
                 Write-Error "Worktree and main repository dependency manifests differ: $manifest"
             }
         }

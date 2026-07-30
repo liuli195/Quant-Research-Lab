@@ -5,6 +5,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "setup-worktree.ps1"
@@ -148,7 +150,8 @@ def test_build_and_verify_uses_shared_venv_from_worktree(tmp_path):
     assert (worktree / "bav-marker").read_text(encoding="utf-8") == "ok"
 
 
-def test_linked_worktree_reuses_main_repository_venv(tmp_path):
+@pytest.mark.parametrize("shell_name", ["powershell", "pwsh"])
+def test_linked_worktree_reuses_main_repository_venv(tmp_path, shell_name):
     repo = make_repo(tmp_path)
     shared_venv = prepare_shared_venv(repo)
     (shared_venv / "shared-marker").write_text("shared", encoding="utf-8")
@@ -160,12 +163,12 @@ def test_linked_worktree_reuses_main_repository_venv(tmp_path):
     fake_bin.mkdir()
     (fake_bin / "py.cmd").write_text("@exit /b 99\n", encoding="ascii")
     env = os.environ | {"PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"}
-    result = run("pwsh", "-NoProfile", "-File", str(worktree / "scripts" / SCRIPT.name), cwd=worktree, env=env)
+    result = run(shell_name, "-NoProfile", "-File", str(worktree / "scripts" / SCRIPT.name), cwd=worktree, env=env)
 
     assert result.returncode == 0, result.stderr
     assert (worktree / ".venv" / "shared-marker").read_text(encoding="utf-8") == "shared"
 
-    result = run("pwsh", "-NoProfile", "-File", str(worktree / "scripts" / SCRIPT.name), cwd=worktree, env=env)
+    result = run(shell_name, "-NoProfile", "-File", str(worktree / "scripts" / SCRIPT.name), cwd=worktree, env=env)
     assert result.returncode == 0, result.stderr
 
 
