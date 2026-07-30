@@ -1,8 +1,11 @@
 # joinquant-archive-sync Specification
 
 ## Purpose
+
 TBD - created by archiving change add-joinquant-archive-sync. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: 页面对象必须映射到稳定仓库目录
 系统 MUST（必须）以 `joinquant/strategies/<strategy_id>/` 表示一个聚宽策略详情页，并分别以 `backtests/<backtest_id>/` 和 `simulations/<simulation_id>/` 表示该策略的回测和模拟交易对象。目录主键 MUST 使用可复核的本地稳定键；会随页面刷新变化的远端传输标识 MUST 作为清单别名保存而不能成为唯一主键。聚宽页面和官方 `get_backtest` 接口没有独立“构建”对象，不得杜撰 `builds/` 或 `sync-build` 协议。
 
@@ -13,7 +16,6 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 #### Scenario: 远端传输标识变化
 - **WHEN** 同一页面对象的远端传输标识变化但稳定页面身份和代码摘要未变化
 - **THEN** 系统更新别名而不创建重复策略、回测或模拟交易目录
-
 ### Requirement: 历史运行同步必须由明确目标驱动
 系统 MUST 只同步调用者明确指定的历史回测记录。有效目标 SHALL（应当）为策略页面内可复核的序号或详情链接；缺失目标、含义不明确的目标或 `latest`（最新）选择器 MUST 被拒绝。多个目标只有逐项明确列出后才能同步。补录小于当前最大页面序号的历史回测时，系统 MUST 保持 `latest_backtest_id`（最新回测编号）单调不减。
 
@@ -32,7 +34,6 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 #### Scenario: 补录较早历史回测
 - **WHEN** 策略索引的最新回测编号为 115，调用者显式同步页面序号 88
 - **THEN** 系统归档页面序号 88，同时保持最新回测编号为 115
-
 ### Requirement: 代码和运行上下文必须完整保存
 系统 MUST 保存策略当前默认代码、每个已同步回测的完整代码，以及每个已同步模拟交易的当前代码和完整代码变更历史。回测目录 MUST 包含代码、参数、数据和报告；模拟交易目录 MUST 包含来源回测、代码、参数、快照、代码变更记录、数据和报告。
 
@@ -47,7 +48,6 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 #### Scenario: 模拟交易发生代码变更
 - **WHEN** 模拟交易的代码历史新增记录
 - **THEN** 系统按远端顺序增量保存所有新增版本及摘要，并保留每条历史记录的 `sourceBacktestId`、操作时间、历史顺序到完整代码文件的可离线复核映射；此前版本不得重复下载或丢失
-
 ### Requirement: 结构化数据必须按运行状态校验
 系统 MUST 对已完成回测保存并校验结果、资金、持仓、订单、自定义记录、风险和分期风险数据。对于失败或取消运行，系统 MUST 根据远端状态验证允许为空的数据集，而不能伪造空表为成功结果。分页 MUST 持续到接口提供明确终止条件。每个运行 MUST 保存 Research 单次原始返回包，并把其 SHA256 绑定到所有结构化数据集；模拟交易增量 MUST 保留不可变来源链，严格验证 MUST 对照原始返回、压缩 JSON 和 Parquet 内容，要求累计行有来源覆盖并从文件复算数据流摘要。活动模拟交易的 `results`（结果）请求重叠点 MUST 来自已验证来源链中的稳定前序时间；清单最高时间行从后续源响应消失时，系统 MUST 使用该前序重叠或安全全量刷新证明连续，同时保持累计事实和数据流高水位单调不回退。
 
@@ -70,7 +70,6 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 #### Scenario: 活动结果临时游标行消失
 - **WHEN** 已归档 `results` 同时包含稳定前序行和更晚的临时行，后续 Research 响应不再返回该临时最高时间但包含新增结果
 - **THEN** 系统只在已验证来源链提供稳定前序重叠或安全全量刷新能够证明连续时合并提交，保留全部既有已验证事实和新来源事实且不产生业务键重复；否则失败且不推进游标
-
 ### Requirement: 每种预期数据都必须有独立完整性状态
 每个归档对象的 `manifest.json` MUST 列出全部预期数据集，并为每个数据集记录来源、行数或字节数、时间范围、分页证据、文件 SHA256 和 `complete`、`capped_free`、`missing_at_source`、`unsupported_api_version` 或 `failed` 状态。对象只有在必需核心数据均为 `complete` 且其余预期数据均具有可接受的显式状态时才能通过完整性门禁。具有稳定采集围栏但未通过门禁的对象 MUST 使用 `gate.status=fail` 原子保留已验证文件、失败数据集状态和失败证据。部分归档 MUST NOT 通过默认查询或导出路径访问，也 MUST NOT 报告为完整。
 
@@ -97,7 +96,6 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 #### Scenario: 校验或查询部分归档
 - **WHEN** 调用方校验或查询 `gate.status=fail` 的对象
 - **THEN** 校验过程验证清单结构和引用文件摘要并明确返回 `partial`，默认查询和导出路径则拒绝该对象
-
 ### Requirement: 日志必须按价值、来源和费用分别处理
 系统 MUST 把归因日志作为独立核心数据集，默认完整同步并严格校验，同时完整同步失败运行的错误日志。历史回测 MUST 只读取目标源码明确指定的单一日志，校验 Token（标识）、连续序号、唯一运行边界，并把 `run_end` 的最终资产与该回测 Research（研究环境）最终资金记录关联；关联不一致时不得认定归因日志属于目标回测。模拟交易 MUST 保存完整代码历史及其源码映射，但只能读取和归档模拟交易启动生命周期实际初始化的单一归因路径；后续代码历史中仅出现、却没有生命周期所有权的其他路径不得读取或保存到该模拟交易目录。活动运行不得包含 `run_end`，已结束运行必须且只能包含一个末尾 `run_end`。归属不唯一、身份冲突、断序、运行边界或最终资产关联不符都 MUST 阻断对象完整性门禁。源代码未实现归因写入器时 MUST 以启动代码摘要和判断证据标记 `missing_at_source`，不得伪造补全。普通控制台日志和性能响应 MUST 默认获取全部免费内容；只有后续内容存在但无法免费取得或无法证明分页结束时才能标记 `capped_free`。
 
@@ -136,7 +134,6 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 #### Scenario: 日志响应不是合法 JSON
 - **WHEN** 日志或性能响应因未转义代码文本而无法按标准 JSON 解析
 - **THEN** 系统先原样保存响应，再用容错解析恢复可识别记录，并在清单中记录解析错误和恢复数量
-
 ### Requirement: 积分日志必须显式选择和确认
 系统 MUST 只在调用者明确指定运行和日志类型后请求积分日志，并 MUST 在下载前展示聚宽返回的范围和积分价格。未获得当次明确确认时，系统不得发起消耗积分的导出。
 
@@ -147,7 +144,6 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 #### Scenario: 已确认指定积分导出
 - **WHEN** 调用者确认了指定运行、日志类型、范围和聚宽返回的积分价格
 - **THEN** 系统明确披露聚宽按完整日志固定计费且不提供远端分段下载；只有调用者确认完整日志范围、当次积分价格和本地保留范围后才下载一次完整日志，在本地只保留指定行范围，并把完整付费源文件、费用确认、选择范围和文件摘要写入清单
-
 ### Requirement: 活动模拟交易必须由显式手动命令同步
 系统 MUST 只在调用者显式运行 `sync-active-simulations --repository <仓库路径>` 时扫描和增量同步全部活动模拟交易。该入口 MUST 复用既有采集、归档清单和完整性门禁；它 MUST NOT 创建或调用 Windows 任务计划程序、专用 worktree（工作树）、自动分支、Git（版本管理）提交或 PR Flow（拉取请求流程）。
 
@@ -158,7 +154,6 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 #### Scenario: 手动同步遇到对象失败
 - **WHEN** 任一活动模拟交易在手动同步中未通过采集或完整性门禁
 - **THEN** 系统返回失败对象和原因，不创建 Git 提交或 PR，并保留既有已验证归档
-
 ### Requirement: 浏览器认证和下载不得暴露明文凭证
 生产同步 MUST 使用仓库现有 Playwright（浏览器自动化）及仓库外专用持久浏览器目录复用登录状态。认证流程 MAY（可以）只在内存中读取聚宽域名的会话 Cookie（浏览器凭证），并使用 Windows DPAPI（数据保护接口）在仓库外保存只允许当前 Windows 用户解密的密文。系统 MUST NOT（不得）保存用户名、密码、明文 Cookie、`storage_state`（浏览器状态导出）或非聚宽域名 Cookie，也不得打印或提交任何凭证与浏览器配置；同步流程 MUST 不依赖 Codex 会话。大文件 MUST 通过浏览器下载事件进入临时目录而不能通过 Agent 对话传输。
 
@@ -181,7 +176,6 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 #### Scenario: 首次实施验证真实下载能力
 - **WHEN** 开始实现生产浏览器和 Research API（研究接口）适配器
 - **THEN** 系统先用一个明确指定且存在归因写入器的真实回测验证登录、结构化导出、官方文件下载、完整归因日志和本地落盘；自动下载失败时必须验证人工导入同一暂存协议，两条路径均失败则停止后续实施并报告阻断
-
 ### Requirement: 归档必须紧凑并可直接查询
 系统 MUST 将原始证据保存为 gzip（压缩）JSON/JSONL，将结构化事实保存为 Parquet + Zstd（列式压缩格式），并按需生成读取 Parquet 的 DuckDB（嵌入式分析数据库）视图。压缩原始数据、JSONL 日志和 Parquet MUST 使用 Git LFS（大文件存储），代码、清单和小型文本继续使用普通 Git。系统 MUST 只在调用者指定数据范围时物化 Vibe-Trading 可读取的 CSV，不保存重复 DuckDB 数据库副本。
 
@@ -192,7 +186,6 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 #### Scenario: 为 Vibe-Trading 导出数据
 - **WHEN** 调用者指定策略、运行、数据集、字段和时间范围
 - **THEN** 系统只生成该范围的 CSV，并记录来源文件摘要和过滤条件
-
 ### Requirement: 仓库 Skill 必须提供统一同步入口
 仓库 MUST 只在 `.agents/skills/joinquant-archive-sync/` 保存一份真实 Skill（技能）目录，并在其中自包含 `SKILL.md`、Python CLI（命令行接口）、运行依赖和参考资料。`.claude/skills/joinquant-archive-sync` MUST 使用同仓库相对 SymbolicLink（符号链接）指向该目录；不得创建 Plugin（插件）、marketplace（市场）、第二份同步脚本或缓存更新层。认证、抓取、解析、落盘、完整性校验和查询逻辑 MUST 只实现一次，Codex、Claude 和人工命令 MUST 调用该同一入口；系统 MUST NOT 提供 Windows 任务计划程序调用入口。
 
@@ -203,14 +196,12 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 #### Scenario: Codex 和 Claude 发现同一 Skill
 - **WHEN** 分别从 Codex 和 Claude 项目入口加载 `joinquant-archive-sync`
 - **THEN** 两端解析到同一仓库目录，且 `SKILL.md` 与执行脚本的 SHA256 完全一致
-
 ### Requirement: 正式运行必须保持在聚宽云端
 系统 MUST 只进行策略编写辅助、资料同步、本地归档、查询和复盘，不得在本地把任何结果声明为正式回测或模拟交易结果。
 
 #### Scenario: 本地查询归档数据
 - **WHEN** Vibe-Trading 或 Agent 查询本地 Parquet 或 CSV
 - **THEN** 输出明确保留聚宽运行身份和来源链接，不把本地计算替代为正式云端裁决
-
 ### Requirement: 端到端回归必须覆盖手动同步入口
 实现完成前 MUST 从 Codex、Claude 的仓库 Skill 或手动同步入口执行 `self-test`（自检）端到端回归。`self-test` MUST 在进程内生成小型证据并复用生产同步核心，覆盖明确目标选择、完整性门禁、临时归档、重复同步、查询和 CSV（逗号分隔值）输出；DuckDB（嵌入式分析数据库）使用内存数据库，归档只写系统临时目录，不得访问网络或加载历史归档。单元测试组合不得替代该主流程回归。真实聚宽能力只由首次实施 PoC（概念验证）验证，不进入常规端到端回归。
 
@@ -225,7 +216,6 @@ TBD - created by archiving change add-joinquant-archive-sync. Update Purpose aft
 #### Scenario: 手动模拟交易入口回归
 - **WHEN** 验收从 `sync-active-simulations` 入口使用受控外部边界执行活动模拟交易同步
 - **THEN** 入口验证同一 `.venv`、CLI 路径和完整性门禁，且不访问真实聚宽、创建 Git 提交、PR、专用工作树或 Windows 任务
-
 ### Requirement: 官方回测摘要必须保留来源和用途边界
 系统 MUST 将 `data/official-summary.csv` 作为聚宽回测详情页官方导出源文件的唯一合法路径，`reports/` MUST 只存放人工分析报告。所有回测清单的 `official_summary` 数据集 MUST 明确记录版本化证据，包括详情页下载来源、编码、表头、行数和关联的 Research（研究环境）数据集。系统 MUST 迁移既有官方摘要和清单引用，不得保留 `reports/` 下的旧位置、双路径或旧路径兼容读取。文档 MUST 区分可近似对齐、仅可交叉校验和不可由官方摘要推导的字段，并说明日常分析应读取的权威明细数据集。
 

@@ -1,8 +1,11 @@
 # turtle-etf-local-research Specification
 
 ## Purpose
+
 TBD - created by archiving change build-turtle-etf-local-research-workflow. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: 海龟项目使用固定 11 ETF 基线
 
 海龟项目 SHALL（必须）只从项目配置读取证券和分组。当前基线 SHALL 固定为 11 只 ETF 和 6 个资产组，不按动量、信号时间或代码顺序筛选突破标的。
@@ -11,7 +14,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 - **WHEN** 项目加载 `baseline.json`
 - **THEN** 证券必须为 `510300.XSHG`、`512100.XSHG`、`512480.XSHG`、`159819.XSHE`、`516160.XSHG`、`513100.XSHG`、`513180.XSHG`、`515180.XSHG`、`516080.XSHG`、`518880.XSHG`、`511010.XSHG`
 - **AND** 分组必须与项目配置逐项一致，17 ETF 扩展不得进入当前基线
-
 ### Requirement: 行情使用未复权事实和连续经济执行口径
 
 项目 SHALL 使用共享 Parquet（列式文件）快照中的原始未复权 OHLC、`pre_close`、`factor`、停牌和涨跌停事实，并在内存中使用应用日可见原始行情派生连续经济价格。成交额和流动性 SHALL NOT（不得）进入海龟策略输入或订单规则。
@@ -29,7 +31,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 无策略层流动性规则
 - **WHEN** 成交额很低、缺失或超过任意假设比例
 - **THEN** 海龟策略不得缩小、拒绝或延迟入场、加仓、退出和止损；不存在单笔成交额 1% 规则
-
 ### Requirement: 信号固定为 55/20/20 海龟规则
 
 项目 SHALL 使用此前 55 日最高价突破入场、此前 20 日最低价退出和 20 日递推 N。所有信号 SHALL 在收盘检查并错位到下一交易日开盘执行。
@@ -45,7 +46,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 无前视成交
 - **WHEN** T 日收盘形成入场、加仓、退出或止损信号
 - **THEN** 订单只能使用 T 日及以前信息，并在 T+1 日开盘执行；基线不增加额外延迟
-
 ### Requirement: 每个逻辑单位冻结自己的 N 风险
 
 项目 SHALL 为每只 ETF 保存最多 4 个逻辑单位。单位候选基础数量 MUST（必须）为 `floor_to_100_shares(signal_equity × 1% / signal_n)`，且只有真实买入成交才建立单位。
@@ -57,7 +57,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 候选未成交
 - **WHEN** 停牌、涨停、现金缩放、整手取整或官方拒单使候选没有净新增成交
 - **THEN** 项目不得建立单位、推进加仓档位或更新共同止损，并在后续交易日重新检查
-
 ### Requirement: 加仓使用固定 0.5N 档位
 
 项目 SHALL 以首次实际成交价和首次信号日 N 冻结 `0.5N`、`1.0N`、`1.5N` 三个后续档位。每只 ETF 每日最多新增一个单位，最多 4 个单位。
@@ -69,7 +68,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 四单位后停止加仓
 - **WHEN** 单标的已有 4 个逻辑单位
 - **THEN** 项目不得再生成加仓候选，但继续每日检查止损和 20 日趋势退出
-
 ### Requirement: 保护性止损按逐单位冻结 N 只上移
 
 每个真实成交的入场或加仓单位 SHALL 生成 `actual_fill_price - 2 × frozen_signal_n` 候选止损，共同止损 SHALL 取历史候选止损最大值。
@@ -85,7 +83,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 保护性完整退出
 - **WHEN** 收盘价小于或等于共同止损
 - **THEN** 项目在下一交易日开盘尝试完整退出；只有全部实际持仓退出后才清除单位、档位和止损状态
-
 ### Requirement: 风险预算使用 4/6/12 N 单位
 
 项目 SHALL 使用单标的最多 4 个逻辑单位、资产组最多 6 个有效单位、组合最多 12 个有效单位。资产组比例 SHALL 先计算，组合比例 SHALL 再对组缩放后的有效单位计算。
@@ -101,7 +98,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 输入顺序不影响结果
 - **WHEN** 同一单位簿以不同证券列顺序输入
 - **THEN** 还原证券顺序后的组比例、组合比例、现金比例和目标数量必须一致
-
 ### Requirement: 组合事件执行全量仓位再分配
 
 有效入场、有效加仓、保护性止损或趋势退出 SHALL 触发一次全组合目标重算。无事件日 SHALL NOT 调仓。
@@ -118,7 +114,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 - **WHEN** 4/6/12 缩放后的目标需要超过可用现金
 - **THEN** 项目将预计卖出净收入、买入价、滑点和每笔佣金纳入计算，在 `[0,1]` 上求全部可调整目标共同的最大可行现金比例，按 100 股向下取整
 - **AND** 不得使用余额补仓、最大余数分配、融资或按代码顺序买到现金耗尽
-
 ### Requirement: 动作顺序和状态隔离固定
 
 同一组合事件 SHALL 按“完整退出、再分配卖出、入场或加仓、再分配买入”执行。再分配动作 SHALL 只改变实际持仓。
@@ -134,7 +129,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 同标的退出覆盖买入
 - **WHEN** 同一 ETF 同日同时满足退出和入场或加仓条件
 - **THEN** 只保留完整退出，取消该 ETF 买入候选
-
 ### Requirement: 市场不可交易时失败安全
 
 项目 SHALL 根据执行日开盘价、停牌、涨停和跌停决定订单可交易性，状态 SHALL 只按真实成交更新。
@@ -150,7 +144,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 官方拒单
 - **WHEN** vectorbt 官方订单结果为拒绝或零成交
 - **THEN** 项目记录拒单原因，单位、档位和止损不得推进
-
 ### Requirement: 使用 vectorbt 官方生命周期作为唯一生产本地执行路径
 
 项目 SHALL 使用 `Portfolio.from_order_func()`、一个共享现金组和 Numba 回调执行基线。项目 SHALL NOT 另建订单、现金、持仓和权益引擎，也 SHALL NOT 保留旧执行兼容层。
@@ -162,7 +155,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 额外延迟保持冻结动作
 - **WHEN** 研究配置显式增加一个或多个交易日延迟
 - **THEN** 项目冻结原动作、目标、原因和 N，延迟日只按开盘、费用、现金、持仓和可交易性机械执行；再分配动作仍不得改变海龟单位状态
-
 ### Requirement: 旧交易控制从生产路径物理删除
 
 项目 SHALL NOT 在配置、输入、回调、结果适配或分析订单路径中保留资金仓位上限、计划风险上限、交易用协方差、最低对齐样本、目标波动率、强制波动率减仓或旧新增订单分配。
@@ -170,7 +162,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 旧字段被拒绝
 - **WHEN** 风险配置包含任一旧字段
 - **THEN** 项目必须以明确错误拒绝，不得用极大值、`null`、默认值或回退路径继续
-
 ### Requirement: 结果包保持标准四表并增加海龟归因
 
 项目 SHALL 输出聚宽口径兼容的 `results`、`balances`、`positions`、`orders` 四类共同事实，海龟专用信息 SHALL 只写入归因扩展。
@@ -182,7 +173,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 聚宽结果无需海龟扩展
 - **WHEN** 独立策略分析读取没有海龟归因的现有聚宽结果
 - **THEN** 通用收益和实际暴露分析仍可运行，海龟单位指标返回缺失或零，不要求聚宽结果改动
-
 ### Requirement: 单场景性能与完整入口验收
 
 项目 SHALL 从公开本地研究入口完成一个场景，冷启动和预热 SHALL 分别计时并都不超过 180 秒，规范化结果摘要 SHALL 一致。
