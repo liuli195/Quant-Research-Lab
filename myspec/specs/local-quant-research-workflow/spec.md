@@ -1,8 +1,11 @@
 # local-quant-research-workflow Specification
 
 ## Purpose
+
 TBD - created by archiving change build-turtle-etf-local-research-workflow. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Skill 编排与共用脚本分层
 系统 SHALL（必须）由 `run-local-quant-research` Skill（技能）只负责用户意图、流程顺序、输入输出、停止状态和安全边界；配置契约、运行身份、共享行情中心、项目安全调用和证据收口 SHALL（必须）由 `scripts/research/` 下与具体策略解耦的共用脚本实现。
 
@@ -21,7 +24,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 通用层不解释策略语义
 - **WHEN** 使用非海龟策略模块运行同一流程
 - **THEN** Skill、共用脚本和共享行情中心无需海龟资产、参数、信号、风险或报告规则即可完成运行
-
 ### Requirement: 共享日线行情中心
 系统 SHALL（必须）在仓库已忽略的 `.local/market-data/` 提供与任何策略解耦的共享行情中心；完整行情值不得写入公开仓库。首版只实现日线行情，但 SHALL（必须）通过来源、标的类型、频率和显式字段能力允许以后追加其他标的。
 
@@ -48,7 +50,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 首版范围外的数据类型
 - **WHEN** 调用者要求分钟线、基本面、财务或因子数据
 - **THEN** 系统明确报告首版不支持，不把未实现的数据类型伪装成日线行情
-
 ### Requirement: 快照身份与完整性门禁
 系统 SHALL（必须）验证快照引用的来源、标的类型、频率、数据截止日、价格口径、字段、证券清单、批次、导出代码摘要和文件 SHA256（文件摘要），不得用隐式默认值补齐缺失身份。
 
@@ -59,7 +60,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 快照不可追溯或已被修改
 - **WHEN** 任一身份字段缺失或任一文件摘要不匹配
 - **THEN** 系统拒绝执行研究入口；身份或来源本来就缺失时输出 `evidence_insufficient`，既有文件被篡改或内容不一致时输出 `failed`
-
 ### Requirement: 权威 Parquet 与可重建 DuckDB 视图
 系统 SHALL（必须）把每个批次的 `market-data.parquet` 作为本地唯一行情事实源；聚宽导出的 CSV（逗号分隔文件）只允许存在于传输和导入暂存阶段。DuckDB（嵌入式分析数据库）只从权威 Parquet 建立可重建的内存查询视图，不得保存持久数据库副本或第二份权威行情。`batch_id` SHALL（必须）绑定规范化逻辑内容与来源契约，Parquet 字节摘要 SHALL（必须）单独用于文件完整性验证，避免编码器版本变化静默改变逻辑身份。
 
@@ -94,7 +94,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 禁止持久 DuckDB 副本
 - **WHEN** 查询或研究运行结束
 - **THEN** `.local/market-data/` 中不存在作为长期事实源的 `.duckdb` 文件，后续查询可仅凭快照清单和权威 Parquet 重建
-
 ### Requirement: 唯一三态收口
 每次运行 SHALL（必须）且只能以 `complete`、`evidence_insufficient` 或 `failed` 之一收口；流程状态不得与项目研究建议混为一谈。
 
@@ -109,7 +108,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 完整成功
 - **WHEN** 输入门禁、项目流程、声明输出、摘要校验和证据固化全部通过
 - **THEN** 系统输出 `complete`
-
 ### Requirement: 不可变且原子固化的研究证据
 系统 SHALL（必须）以快照摘要、生产配置摘要、规范化单场景配置摘要、自动发现的策略/共享运行时代码摘要和执行后端身份生成 `run_id`，先在暂存位置生成产物，全部校验通过后一次性固化包含输入、状态、结果包路径和输出摘要的不可变证据；不同场景配置不得复用同一 `run_id`。
 
@@ -136,7 +134,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 失败后重试
 - **WHEN** 调用者重试一个 `failed` 或 `evidence_insufficient` 运行
 - **THEN** 系统保留原尝试证据并创建新的尝试记录；只有新尝试全部通过才可固化为 `complete`
-
 ### Requirement: 共享 vectorbt 后端与策略模块分层
 通用本地研究流程 SHALL（必须）把 vectorbt（向量化回测框架）`Portfolio.from_order_func()` 作为即时和后续执行的唯一账户账本。共享 runtime 负责成交、费用、现金、持仓和净值；策略模块只提供准备、订单程序、后续计划和版本化结果扩展，不维护第二套账户事实。
 
@@ -155,7 +152,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 更换后端不改变通用分析契约
 - **WHEN** 项目从旧逐日实现迁移到 vectorbt 后端
 - **THEN** 共享 writer 输出与聚宽现有归档同名同义的 `results`、`balances`、`positions`、`orders` 四类共同执行事实和独立 `local-research-package/2` 清单；既有聚宽归档无需改动，分析层无需解释 vectorbt 对象
-
 ### Requirement: 每次 Skill 调用只交付一个场景结果
 本地研究流程 SHALL（必须）每次只接受一个策略项目、一个快照和一个场景配置，只编排一次项目执行、单份兼容结果校验、运行身份和证据收口，不接收候选数组、不循环多个场景，也不调用或包含策略分析 Skill（技能）。`scripts/research/local_quant_research/` 和策略项目不得导入绩效、归因、稳健性、压力、证据矩阵、报告或推荐算法。
 
@@ -188,7 +184,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 - **WHEN** 两个调用场景的证券集合不同
 - **THEN** 每个调用只接收与自身证券集合完全一致的不可变快照
 - **AND** 快照共享相同不可变批次、截止日、字段和价格口径，重叠证券行情及公司行动摘要必须完全一致
-
 ### Requirement: 仓库运行与能力复用边界
 系统 MUST（必须）使用项目 `.venv`（虚拟环境）运行本地 Python（编程语言）入口，并复用既有聚宽认证和归档能力，不得保存或打印账号、密码、Token（访问令牌）或 Cookie（浏览器凭证）。
 
@@ -199,7 +194,6 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 #### Scenario: 运行环境或依赖缺失
 - **WHEN** 项目 `.venv` 不存在或明确必需依赖不可用
 - **THEN** 系统报告具体缺项并停止，不回退到系统 Python 或静默安装依赖
-
 ### Requirement: Skill 结构和通用性验证
 实现 SHALL（必须）以 `.agents/skills/run-local-quant-research/` 中的元数据、`.claude/skills/` 兼容链接、仓库布局测试、契约测试、确定性回归、共享行情链路回归和用户入口 E2E（端到端）回归验证 `run-local-quant-research` Skill（技能）。组合式 E2E（端到端）夹具 SHALL（必须）先通过共享行情能力完成 CSV（逗号分隔文件）暂存导入、Parquet（列式文件）固化和不可变快照创建，再通过 Skill 文档公开的 `run` 入口执行本地研究。仓库 `verify --full`（全量验证）MUST 保留全部测试，只在本机进程及其子进程内执行，不得联网调用外部系统；其性能预算为 60 秒，超预算 MUST（必须）记录性能报告和告警，但不得覆盖各检查决定的功能通过状态。
 

@@ -1,8 +1,11 @@
 # local-research-archive-promotion Specification
 
 ## Purpose
+
 TBD - created by archiving change refactor-local-research-three-layer-architecture. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: 完成本地研究必须能够显式晋升为策略档案
 共享 CLI MUST 提供独立晋升动作，只接受已通过 `complete` 门禁且清单验证成功的 `.local/quant-research/<strategy_id>/<run_id>/`。目标 MUST 为 `joinquant/strategies/<strategy_id>/research/archives/<analysis_id>/`，并且 `analysis_id` 必须由调用者显式提供。
 
@@ -13,7 +16,6 @@ TBD - created by archiving change refactor-local-research-three-layer-architectu
 #### Scenario: 尝试晋升失败运行
 - **WHEN** 源运行缺少 `complete` 状态、必需文件或有效摘要
 - **THEN** 系统拒绝晋升，不创建目标档案且不修改源运行
-
 ### Requirement: 策略档案必须对分析自包含
 每个档案 MUST 包含不可变清单、完整策略源码、运行配置、代码身份、四张核心事实表、全部声明策略扩展、性能证据、环境证据、行情快照身份和机械执行报告。调用者 MUST 能在不访问 `.local` 的情况下查询结果、比较参数、检查策略代码和重新生成机械执行报告。
 
@@ -28,7 +30,6 @@ TBD - created by archiving change refactor-local-research-three-layer-architectu
 #### Scenario: 机械执行报告保持事实边界
 - **WHEN** 共享流程为完成包生成 `report/` 内容
 - **THEN** 报告只包含可从包内复核的运行身份、参数、数据范围、成交与持仓统计、净值摘要、性能和完整性事实，不生成策略推荐、稳健性结论或实盘准入判断
-
 ### Requirement: 晋升不得重新计算研究结果
 晋升 MUST 只复制并校验完成运行中已经固化的字节。它不得加载 Strategy Module、调用 vectorbt、重新生成核心事实或扩展、重新序列化 Parquet、重新计算报告指标，且不得计入回测冷启动或预热耗时。
 
@@ -39,7 +40,6 @@ TBD - created by archiving change refactor-local-research-three-layer-architectu
 #### Scenario: 共享行情保持单份
 - **WHEN** 晋升一个使用共享行情快照的运行
 - **THEN** 档案只复制快照身份、来源、范围、字段、价格口径和摘要，不复制共享 market-data.parquet
-
 ### Requirement: 晋升必须不可变、幂等且冲突安全
 晋升 MUST 先在目标同级暂存目录复制全部文件并复核摘要，再以原子目录替换发布。相同 analysis_id 和相同内容 MUST 返回复用；相同 analysis_id 但内容不同 MUST 失败且不得覆盖、合并或生成隐式后缀。
 
@@ -60,7 +60,6 @@ TBD - created by archiving change refactor-local-research-three-layer-architectu
 #### Scenario: 源树包含不支持的文件对象
 - **WHEN** 晋升前扫描发现符号链接、目录连接、硬链接或非普通文件
 - **THEN** 系统在复制前拒绝晋升且不创建完成目标
-
 ### Requirement: 本地研究档案必须与聚宽正式运行隔离
 本地研究档案 MUST 只写入 `research/archives/`，其清单和报告 MUST 明确标记本地探索性 vectorbt 来源。正式聚宽回测和模拟交易 MUST 继续分别写入 `backtests/` 和 `simulations/`，分析层不得因目录位于同一策略下而混淆运行身份。
 
