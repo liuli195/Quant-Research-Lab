@@ -19,7 +19,7 @@ def run(*args, cwd, env=None):
 
 
 def output(result):
-    return ANSI_ESCAPE.sub("", result.stdout + result.stderr)
+    return " ".join(re.sub(r"\s*\|\s*", " ", ANSI_ESCAPE.sub("", result.stdout + result.stderr)).split())
 
 
 def make_repo(tmp_path):
