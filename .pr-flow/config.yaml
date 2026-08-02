@@ -4,7 +4,7 @@ defaults:
   reviewGate:
     mode: github
   hotfix:
-    verifyCommand: build-and-verify verify --project . --full
+    verifyCommand: C:\Users\liuli\AppData\Roaming\npm\build-and-verify.cmd verify --project . --full
   wait:
     timeoutSeconds: 600
     pollSeconds: 15
