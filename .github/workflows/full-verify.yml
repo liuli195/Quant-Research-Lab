@@ -42,6 +42,13 @@ jobs:
           tzutil.exe /s "China Standard Time"
           .\.venv\Scripts\python.exe -m playwright install chromium
 
+      - name: Install Build and Verify
+        shell: pwsh
+        run: |
+          $toolchain = Get-Content .pr-flow/toolchain.json | ConvertFrom-Json
+          $buildAndVerify = $toolchain.tools.'build-and-verify'
+          npm install --global --ignore-scripts --no-audit --no-fund "$($buildAndVerify.packageName)@$($buildAndVerify.packageVersion)"
+
       - name: Run full verification
         shell: pwsh
-        run: .\.venv\Scripts\python.exe .\.build-and-verify\runtime\build_and_verify.py verify --project . --full
+        run: build-and-verify verify --project . --full

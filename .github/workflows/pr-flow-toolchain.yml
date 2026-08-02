@@ -1,0 +1,24 @@
+name: PR Flow toolchain
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pr-flow-toolchain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: npm install --global --ignore-scripts --no-audit --no-fund @liuli195/myspec@0.1.58
+      - run: npm install --global --ignore-scripts --no-audit --no-fund @liuli195/build-and-verify@0.1.57
+      - run: myspec doctor --all
+      - run: build-and-verify verify --project .

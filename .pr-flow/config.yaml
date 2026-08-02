@@ -4,7 +4,7 @@ defaults:
   reviewGate:
     mode: github
   hotfix:
-    verifyCommand: C:\Users\liuli\AppData\Roaming\npm\build-and-verify.cmd verify --project . --full
+    verifyCommand: cmd.exe /d /s /c "build-and-verify verify --project . --full"
   wait:
     timeoutSeconds: 600
     pollSeconds: 15
@@ -37,7 +37,7 @@ setup:
       label: Full Verify
       source: .build-and-verify/config.json
       workflowOrJob: .github/workflows/full-verify.yml / Full Verify
-      purpose: Run full verification through build-and-verify runtime
+      purpose: Run full verification through the pinned build-and-verify CLI
       failureImpact: Block PR merge
     requiredChecks: true
     codeScanning:

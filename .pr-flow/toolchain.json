@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "tools": {
+    "myspec": {
+      "mode": "release",
+      "packageName": "@liuli195/myspec",
+      "packageVersion": "0.1.58"
+    },
+    "build-and-verify": {
+      "mode": "release",
+      "packageName": "@liuli195/build-and-verify",
+      "packageVersion": "0.1.57"
+    }
+  }
+}

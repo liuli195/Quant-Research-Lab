@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -10,10 +11,15 @@ import pytest
 
 REPO_ROOT = Path(__file__).parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "setup-worktree.ps1"
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def run(*args, cwd, env=None):
     return subprocess.run(args, cwd=cwd, env=env, text=True, encoding="utf-8", errors="replace", capture_output=True)
+
+
+def output(result):
+    return ANSI_ESCAPE.sub("", result.stdout + result.stderr)
 
 
 def make_repo(tmp_path):
@@ -107,8 +113,7 @@ def test_failed_main_repository_update_invalidates_fingerprint(tmp_path):
 
 def test_build_and_verify_uses_shared_venv_from_worktree(tmp_path):
     repo = make_repo(tmp_path)
-    runtime = repo / ".build-and-verify" / "runtime"
-    shutil.copytree(REPO_ROOT / ".build-and-verify" / "runtime", runtime)
+    (repo / ".build-and-verify").mkdir()
     config = {
         "version": 1,
         "build": {"checks": []},
@@ -137,16 +142,11 @@ def test_build_and_verify_uses_shared_venv_from_worktree(tmp_path):
     assert result.returncode == 0, result.stderr
     (worktree / "probe.txt").write_text("changed", encoding="utf-8")
 
-    result = run(
-        str(worktree / ".venv" / "Scripts" / "python.exe"),
-        str(worktree / ".build-and-verify" / "runtime" / "build_and_verify.py"),
-        "verify",
-        "--project",
-        ".",
-        cwd=worktree,
-    )
+    command = shutil.which("build-and-verify")
+    assert command, "build-and-verify CLI is required"
+    result = run(command, "verify", "--project", ".", cwd=worktree)
 
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode == 0, output(result)
     assert (worktree / "bav-marker").read_text(encoding="utf-8") == "ok"
 
 
@@ -181,7 +181,7 @@ def test_linked_worktree_stops_when_shared_venv_is_missing(tmp_path):
     result = run("pwsh", "-NoProfile", "-File", str(worktree / "scripts" / SCRIPT.name), cwd=worktree)
 
     assert result.returncode != 0
-    assert "run scripts/setup-worktree.ps1 in the main repository first" in (result.stdout + result.stderr)
+    assert "run scripts/setup-worktree.ps1 in the main repository first" in output(result)
     assert not (worktree / ".venv").exists()
 
 
@@ -212,5 +212,5 @@ def test_linked_worktree_stops_when_dependency_manifests_differ(tmp_path):
     result = run("pwsh", "-NoProfile", "-File", str(worktree / "scripts" / SCRIPT.name), cwd=worktree)
 
     assert result.returncode != 0
-    assert "dependency manifests differ" in (result.stdout + result.stderr)
+    assert "dependency manifests differ" in output(result)
     assert not (worktree / ".venv").exists()
