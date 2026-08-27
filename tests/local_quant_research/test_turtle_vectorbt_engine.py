@@ -35,11 +35,13 @@ def test_vectorbt_runtime_is_pinned_and_available(repo_root: Path) -> None:
     }
 
     assert "vectorbt==1.1.0" in requirements
+    assert "plotly==6.9.0" in requirements
     assert "numpy==2.4.6" in shared_requirements
     assert "pandas==3.0.3" in shared_requirements
     assert not any(line.startswith(("numpy==", "pandas==")) for line in requirements)
     assert importlib.util.find_spec("vectorbt") is not None
     assert importlib.metadata.version("vectorbt") == "1.1.0"
+    assert importlib.metadata.version("plotly") == "6.9.0"
 
 
 def test_vectorbt_license_is_auditable() -> None:

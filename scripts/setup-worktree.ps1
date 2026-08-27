@@ -4,6 +4,10 @@ param()
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $python = Join-Path $projectRoot '.venv\Scripts\python.exe'
+$pythonLauncher = (Get-Command py -CommandType Application -ErrorAction SilentlyContinue).Source
+if (-not $pythonLauncher -and $env:LOCALAPPDATA) {
+    $pythonLauncher = Join-Path $env:LOCALAPPDATA 'Programs\Python\Launcher\py.exe'
+}
 $manifests = 'requirements.txt', 'requirements-dev.txt'
 
 function Resolve-FullPath([string]$path, [string]$base) {
@@ -60,7 +64,10 @@ try {
     }
 
     if (-not (Test-Path $python)) {
-        py -3.12 -m venv .venv
+        if (-not $pythonLauncher -or -not (Test-Path $pythonLauncher)) {
+            Write-Error 'Python 3.12 launcher is missing.'
+        }
+        & $pythonLauncher -3.12 -m venv .venv
         if ($LASTEXITCODE) { exit $LASTEXITCODE }
     }
 

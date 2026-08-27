@@ -17,7 +17,8 @@
           "joinquant/strategies/strategy-003/research/turtle_etf/**",
           "tests/local_quant_research/test_local_research_equivalence.py",
           "tests/local_quant_research/fixtures/**",
-          "requirements*.txt"
+          "requirements*.txt",
+          "tests/conftest.py"
         ],
         "inputs": [
           "scripts/research/local_quant_research/**",
@@ -26,7 +27,8 @@
           "tests/local_quant_research/test_local_research_equivalence.py",
           "tests/local_quant_research/fixtures/**",
           "requirements.txt",
-          "requirements-dev.txt"
+          "requirements-dev.txt",
+          "tests/conftest.py"
         ],
         "checkParallel": true,
         "timeoutSeconds": 300
@@ -40,7 +42,8 @@
           "joinquant/strategies/strategy-003/research/turtle_etf/**",
           "tests/local_quant_research/test_local_research_equivalence.py",
           "tests/local_quant_research/fixtures/**",
-          "requirements*.txt"
+          "requirements*.txt",
+          "tests/conftest.py"
         ],
         "inputs": [
           "scripts/research/local_quant_research/**",
@@ -49,7 +52,8 @@
           "tests/local_quant_research/test_local_research_equivalence.py",
           "tests/local_quant_research/fixtures/**",
           "requirements.txt",
-          "requirements-dev.txt"
+          "requirements-dev.txt",
+          "tests/conftest.py"
         ],
         "checkParallel": true,
         "timeoutSeconds": 300
@@ -63,7 +67,8 @@
           "joinquant/strategies/strategy-003/research/turtle_etf/**",
           "tests/local_quant_research/test_local_research_equivalence.py",
           "tests/local_quant_research/fixtures/**",
-          "requirements*.txt"
+          "requirements*.txt",
+          "tests/conftest.py"
         ],
         "inputs": [
           "scripts/research/local_quant_research/**",
@@ -72,7 +77,8 @@
           "tests/local_quant_research/test_local_research_equivalence.py",
           "tests/local_quant_research/fixtures/**",
           "requirements.txt",
-          "requirements-dev.txt"
+          "requirements-dev.txt",
+          "tests/conftest.py"
         ],
         "checkParallel": true,
         "timeoutSeconds": 300
@@ -87,7 +93,8 @@
           "joinquant/strategies/strategy-003/research/**",
           "tests/local_quant_research/test_turtle_e2e.py",
           "tests/local_quant_research/fixtures/**",
-          "requirements*.txt"
+          "requirements*.txt",
+          "tests/conftest.py"
         ],
         "inputs": [
           ".agents/skills/run-local-quant-research/**",
@@ -97,7 +104,8 @@
           "tests/local_quant_research/test_turtle_e2e.py",
           "tests/local_quant_research/fixtures/**",
           "requirements.txt",
-          "requirements-dev.txt"
+          "requirements-dev.txt",
+          "tests/conftest.py"
         ],
         "checkParallel": true,
         "timeoutSeconds": 300
@@ -113,7 +121,8 @@
           "tests/local_quant_research/test_local_research_v2_e2e.py",
           "tests/local_quant_research/fixtures/**",
           "tests/quant_analysis/**",
-          "requirements*.txt"
+          "requirements*.txt",
+          "tests/conftest.py"
         ],
         "inputs": [
           ".agents/skills/run-local-quant-research/**",
@@ -124,7 +133,8 @@
           "tests/local_quant_research/fixtures/**",
           "tests/quant_analysis/**",
           "requirements.txt",
-          "requirements-dev.txt"
+          "requirements-dev.txt",
+          "tests/conftest.py"
         ],
         "checkParallel": true,
         "timeoutSeconds": 300
@@ -135,25 +145,23 @@
         "paths": [
           ".agents/skills/run-local-quant-research/**",
           ".claude/skills/run-local-quant-research",
-          "scripts/research/result_package.py",
-          "scripts/research/analysis_data/**",
-          "scripts/research/local_quant_research/archive.py",
-          "scripts/research/local_quant_research/contracts.py",
           "tests/local_quant_research/test_archive_promotion.py",
           "tests/local_quant_research/test_result_package.py",
-          "requirements*.txt"
+          "requirements*.txt",
+          "tests/conftest.py",
+          "scripts/research/**",
+          "tests/local_quant_research/test_analysis_data_views.py"
         ],
         "inputs": [
           ".agents/skills/run-local-quant-research/**",
           ".claude/skills/run-local-quant-research",
-          "scripts/research/result_package.py",
-          "scripts/research/analysis_data/**",
-          "scripts/research/local_quant_research/archive.py",
-          "scripts/research/local_quant_research/contracts.py",
           "tests/local_quant_research/test_archive_promotion.py",
           "tests/local_quant_research/test_result_package.py",
           "requirements.txt",
-          "requirements-dev.txt"
+          "requirements-dev.txt",
+          "tests/conftest.py",
+          "scripts/research/**",
+          "tests/local_quant_research/test_analysis_data_views.py"
         ],
         "checkParallel": true,
         "timeoutSeconds": 300
@@ -165,14 +173,16 @@
           ".agents/skills/joinquant-archive-sync/**",
           ".claude/skills/joinquant-archive-sync",
           "tests/joinquant_sync/**",
-          "requirements*.txt"
+          "requirements*.txt",
+          "tests/conftest.py"
         ],
         "inputs": [
           ".agents/skills/joinquant-archive-sync/**",
           ".claude/skills/joinquant-archive-sync",
           "tests/joinquant_sync/**",
           "requirements.txt",
-          "requirements-dev.txt"
+          "requirements-dev.txt",
+          "tests/conftest.py"
         ],
         "checkParallel": true
       },
@@ -183,14 +193,16 @@
           ".agents/skills/joinquant-docs-sync/**",
           ".claude/skills/joinquant-docs-sync",
           "tests/joinquant_docs_sync/**",
-          "requirements*.txt"
+          "requirements*.txt",
+          "tests/conftest.py"
         ],
         "inputs": [
           ".agents/skills/joinquant-docs-sync/**",
           ".claude/skills/joinquant-docs-sync",
           "tests/joinquant_docs_sync/**",
           "requirements.txt",
-          "requirements-dev.txt"
+          "requirements-dev.txt",
+          "tests/conftest.py"
         ],
         "checkParallel": true
       },
@@ -200,13 +212,15 @@
         "paths": [
           ".agents/skills/joinquant-archive-sync/**",
           "tests/joinquant_sync/**",
-          "requirements*.txt"
+          "requirements*.txt",
+          "tests/conftest.py"
         ],
         "inputs": [
           ".agents/skills/joinquant-archive-sync/**",
           "tests/joinquant_sync/**",
           "requirements.txt",
-          "requirements-dev.txt"
+          "requirements-dev.txt",
+          "tests/conftest.py"
         ],
         "checkParallel": true
       },
@@ -217,6 +231,7 @@
           ".agents/skills/**",
           ".claude/skills/**",
           ".gitattributes",
+          ".github/workflows/full-verify.yml",
           "requirements*.txt",
           "tests/conftest.py",
           "tests/test_skill_layout.py"
@@ -225,6 +240,7 @@
           ".agents/skills/**",
           ".claude/skills/**",
           ".gitattributes",
+          ".github/workflows/full-verify.yml",
           "requirements.txt",
           "requirements-dev.txt",
           "tests/conftest.py",
@@ -238,13 +254,15 @@
         "paths": [
           ".agents/skills/joinquant-archive-sync/**",
           "tests/joinquant_sync/**",
-          "requirements*.txt"
+          "requirements*.txt",
+          "tests/conftest.py"
         ],
         "inputs": [
           ".agents/skills/joinquant-archive-sync/**",
           "tests/joinquant_sync/**",
           "requirements.txt",
-          "requirements-dev.txt"
+          "requirements-dev.txt",
+          "tests/conftest.py"
         ],
         "checkParallel": true
       },
@@ -254,13 +272,15 @@
         "paths": [
           ".agents/skills/joinquant-archive-sync/**",
           "tests/joinquant_sync/**",
-          "requirements*.txt"
+          "requirements*.txt",
+          "tests/conftest.py"
         ],
         "inputs": [
           ".agents/skills/joinquant-archive-sync/**",
           "tests/joinquant_sync/**",
           "requirements.txt",
-          "requirements-dev.txt"
+          "requirements-dev.txt",
+          "tests/conftest.py"
         ],
         "checkParallel": true
       },
@@ -270,13 +290,15 @@
         "paths": [
           ".agents/skills/joinquant-archive-sync/**",
           "tests/joinquant_sync/**",
-          "requirements*.txt"
+          "requirements*.txt",
+          "tests/conftest.py"
         ],
         "inputs": [
           ".agents/skills/joinquant-archive-sync/**",
           "tests/joinquant_sync/**",
           "requirements.txt",
-          "requirements-dev.txt"
+          "requirements-dev.txt",
+          "tests/conftest.py"
         ],
         "checkParallel": true
       },
@@ -291,7 +313,8 @@
           "tests/local_quant_research/test_vectorbt_runtime.py",
           "tests/local_quant_research/fixtures/**",
           "tests/quant_analysis/test_unified_analysis.py",
-          "requirements*.txt"
+          "requirements*.txt",
+          "tests/conftest.py"
         ],
         "inputs": [
           "scripts/research/local_quant_research/**",
@@ -302,7 +325,8 @@
           "tests/local_quant_research/fixtures/**",
           "tests/quant_analysis/test_unified_analysis.py",
           "requirements.txt",
-          "requirements-dev.txt"
+          "requirements-dev.txt",
+          "tests/conftest.py"
         ],
         "checkParallel": true,
         "timeoutSeconds": 300
@@ -330,7 +354,8 @@
           "tests/local_quant_research/test_strategy_identity.py",
           "tests/local_quant_research/fixtures/**",
           "tests/quant_analysis/**",
-          "requirements*.txt"
+          "requirements*.txt",
+          "tests/conftest.py"
         ],
         "inputs": [
           ".claude/skills/analyze-quant-robustness",
@@ -353,7 +378,8 @@
           "tests/local_quant_research/fixtures/**",
           "tests/quant_analysis/**",
           "requirements.txt",
-          "requirements-dev.txt"
+          "requirements-dev.txt",
+          "tests/conftest.py"
         ],
         "checkParallel": true,
         "timeoutSeconds": 300
@@ -366,7 +392,8 @@
           "scripts/research/local_quant_research/contracts.py",
           "joinquant/strategies/strategy-003/research/turtle_etf/**",
           "tests/local_quant_research/test_turtle_vectorbt_callbacks.py",
-          "requirements*.txt"
+          "requirements*.txt",
+          "tests/conftest.py"
         ],
         "inputs": [
           "scripts/research/local_quant_research/vectorbt_runtime.py",
@@ -374,7 +401,8 @@
           "joinquant/strategies/strategy-003/research/turtle_etf/**",
           "tests/local_quant_research/test_turtle_vectorbt_callbacks.py",
           "requirements.txt",
-          "requirements-dev.txt"
+          "requirements-dev.txt",
+          "tests/conftest.py"
         ],
         "checkParallel": true,
         "timeoutSeconds": 300
@@ -396,7 +424,8 @@
           "tests/local_quant_research/test_market_data_economic_returns.py",
           "tests/local_quant_research/test_market_data_query.py",
           "tests/local_quant_research/test_market_data_storage.py",
-          "requirements*.txt"
+          "requirements*.txt",
+          "tests/conftest.py"
         ],
         "inputs": [
           ".agents/skills/run-local-quant-research/**",
@@ -413,7 +442,8 @@
           "tests/local_quant_research/test_market_data_query.py",
           "tests/local_quant_research/test_market_data_storage.py",
           "requirements.txt",
-          "requirements-dev.txt"
+          "requirements-dev.txt",
+          "tests/conftest.py"
         ],
         "checkParallel": true,
         "timeoutSeconds": 300
@@ -426,7 +456,8 @@
           ".build-and-verify/config.json",
           "scripts/setup-worktree.ps1",
           "tests/test_setup_worktree.py",
-          "requirements*.txt"
+          "requirements*.txt",
+          "tests/conftest.py"
         ],
         "inputs": [
           ".gitignore",
@@ -434,7 +465,8 @@
           "scripts/setup-worktree.ps1",
           "tests/test_setup_worktree.py",
           "requirements.txt",
-          "requirements-dev.txt"
+          "requirements-dev.txt",
+          "tests/conftest.py"
         ],
         "checkParallel": true
       }
