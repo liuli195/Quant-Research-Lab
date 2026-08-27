@@ -335,3 +335,4 @@ def test_full_verify_checkout_downloads_git_lfs_objects(repo_root: Path) -> None
     assert "$buildAndVerify.sourceCommit" in workflow
     assert '$buildAndVerify.mode -eq "release"' in workflow
     assert "$buildAndVerify.packageVersion" in workflow
+    assert 'PYTHONUTF8: "1"' in workflow

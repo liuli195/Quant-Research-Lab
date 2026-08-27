@@ -12,6 +12,8 @@ jobs:
   full-verify:
     name: Full Verify
     runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"
 
     steps:
       - name: Checkout
