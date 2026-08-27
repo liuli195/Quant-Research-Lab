@@ -331,3 +331,7 @@ def test_full_verify_checkout_downloads_git_lfs_objects(repo_root: Path) -> None
     ).read_text(encoding="utf-8")
 
     assert "uses: actions/checkout@v4\n        with:\n          lfs: true" in workflow
+    assert '$buildAndVerify.mode -eq "dev"' in workflow
+    assert "$buildAndVerify.sourceCommit" in workflow
+    assert '$buildAndVerify.mode -eq "release"' in workflow
+    assert "$buildAndVerify.packageVersion" in workflow

@@ -231,6 +231,7 @@
           ".agents/skills/**",
           ".claude/skills/**",
           ".gitattributes",
+          ".github/workflows/full-verify.yml",
           "requirements*.txt",
           "tests/conftest.py",
           "tests/test_skill_layout.py"
@@ -239,6 +240,7 @@
           ".agents/skills/**",
           ".claude/skills/**",
           ".gitattributes",
+          ".github/workflows/full-verify.yml",
           "requirements.txt",
           "requirements-dev.txt",
           "tests/conftest.py",
