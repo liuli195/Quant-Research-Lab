@@ -450,7 +450,7 @@
       },
       {
         "id": "verify.worktree-setup",
-        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest -p xdist.plugin tests\\test_setup_worktree.py",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set PYTEST_ADDOPTS=-n 4&& .\\.venv\\Scripts\\python.exe -m pytest -p xdist.plugin tests\\test_setup_worktree.py",
         "paths": [
           ".gitignore",
           ".build-and-verify/config.json",
@@ -468,8 +468,7 @@
           "requirements-dev.txt",
           "tests/conftest.py"
         ],
-        "checkParallel": true,
-        "pytestXdistWorkers": 4
+        "checkParallel": true
       }
     ]
   }
