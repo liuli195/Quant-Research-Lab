@@ -95,19 +95,23 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 - **WHEN** 查询或研究运行结束
 - **THEN** `.local/market-data/` 中不存在作为长期事实源的 `.duckdb` 文件，后续查询可仅凭快照清单和权威 Parquet 重建
 ### Requirement: 唯一三态收口
-每次运行 SHALL（必须）且只能以 `complete`、`evidence_insufficient` 或 `failed` 之一收口；流程状态不得与项目研究建议混为一谈。
+
+本地研究流程 SHALL 原样返回共享运行的 `complete`、`evidence_insufficient` 或 `failed` 状态，不得重定义状态含义、增加第四种流程状态或把流程状态与项目研究建议混为一谈。
 
 #### Scenario: 证据不足
-- **WHEN** 真实项目身份、快照、清单、必需字段、日期范围、来源证明或项目声明输入在执行前不完整
-- **THEN** 系统输出 `evidence_insufficient`，不进入项目研究计算
+
+- **WHEN** 共享运行因真实项目身份、快照、清单、必需字段、日期范围、来源证明或项目声明输入不完整而返回 `evidence_insufficient`
+- **THEN** 本地研究流程原样返回 `evidence_insufficient`，不进入项目研究计算
 
 #### Scenario: 执行或一致性失败
-- **WHEN** 已存在的证据发生摘要不一致、结构或类型违规、重复键、冲突重叠、项目进程异常、硬约束突破、同输入结果不一致或远端临时文件无法确认清理
-- **THEN** 系统输出 `failed`，保留失败证据且不得把部分结果标记为完成
+
+- **WHEN** 共享运行因摘要不一致、结构或类型违规、重复键、冲突重叠、项目进程异常、硬约束突破、同输入结果不一致或远端临时文件无法确认清理而返回 `failed`
+- **THEN** 本地研究流程原样返回 `failed`，保留失败证据且不得把部分结果标记为完成
 
 #### Scenario: 完整成功
-- **WHEN** 输入门禁、项目流程、声明输出、摘要校验和证据固化全部通过
-- **THEN** 系统输出 `complete`
+
+- **WHEN** 共享运行在输入门禁、项目流程、声明输出、摘要校验和证据固化全部通过后返回 `complete`
+- **THEN** 本地研究流程原样返回 `complete`
 ### Requirement: 不可变且原子固化的研究证据
 系统 SHALL（必须）以快照摘要、生产配置摘要、规范化单场景配置摘要、自动发现的策略/共享运行时代码摘要和执行后端身份生成 `run_id`，先在暂存位置生成产物，全部校验通过后一次性固化包含输入、状态、结果包路径和输出摘要的不可变证据；不同场景配置不得复用同一 `run_id`。
 
