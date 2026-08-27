@@ -248,7 +248,7 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
     jit = checks["verify.local-quant-research-jit"]
     layout = checks["verify.skill-layout"]
 
-    assert config["verify"]["maxParallel"] == 10
+    assert config["verify"]["maxParallel"] == 16
     assert config["verify"]["fullBudgetSeconds"] == 60
     assert len(checks) == 18
     assert [
