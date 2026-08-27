@@ -167,12 +167,14 @@ TBD - created by archiving change build-turtle-etf-local-research-workflow. Upda
 项目 SHALL 输出聚宽口径兼容的 `results`、`balances`、`positions`、`orders` 四类共同事实，海龟专用信息 SHALL 只写入归因扩展。
 
 #### Scenario: 再分配证据完整
+
 - **WHEN** 发生入场、加仓或全量仓位再分配
 - **THEN** 归因至少记录单位数、候选基础数量、冻结 N、实际成交价、共同止损、资产组比例、组合比例、现金比例、有效风险单位和 `redistribution_state_changed=false` 证据
 
 #### Scenario: 聚宽结果无需海龟扩展
-- **WHEN** 独立策略分析读取没有海龟归因的现有聚宽结果
-- **THEN** 通用收益和实际暴露分析仍可运行，海龟单位指标返回缺失或零，不要求聚宽结果改动
+
+- **WHEN** 独立策略分析读取没有海龟归因的现有聚宽标准结果包
+- **THEN** 通用收益和实际暴露分析仍可运行，海龟单位指标标记为 `evidence_insufficient`，不得以零代替缺失证据；只有来源明确提供数值零时才能返回零
 ### Requirement: 单场景性能与完整入口验收
 
 项目 SHALL 从公开本地研究入口完成一个场景，冷启动和预热 SHALL 分别计时并都不超过 180 秒，规范化结果摘要 SHALL 一致。

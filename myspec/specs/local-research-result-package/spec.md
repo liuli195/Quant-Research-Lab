@@ -7,15 +7,18 @@ TBD - created by archiving change refactor-local-research-three-layer-architectu
 ## Requirements
 
 ### Requirement: 共享结果包必须定义后端中立的核心事实
-系统 MUST 用版本化 Schema 定义结果、资金、持仓和订单四张核心事实表，并允许策略通过版本化扩展增加归因等证据。核心 writer 不得导入具体策略动作码，策略扩展不得改变核心表的字段含义。
+
+`local-research-package/2` MUST 是 `standard-strategy-analysis-data` 定义的标准结果包契约版本，不得定义第二套分析交接契约。共享 writer MUST 按该契约生成结果、资金、持仓和订单四张核心事实表，并允许策略通过版本化扩展增加归因等证据。核心 writer 不得导入具体策略动作码，策略扩展不得改变核心表的字段含义。
 
 #### Scenario: 海龟策略生成结果包
+
 - **WHEN** 海龟执行完成并提供策略轨迹
-- **THEN** 共享 writer 从 ExecutionLedger 生成四张核心表，并把海龟归因作为独立扩展写入清单
+- **THEN** 共享 writer 从 ExecutionLedger 生成符合标准结果包契约的四张核心表，并把海龟归因作为独立扩展写入清单
 
 #### Scenario: 最小策略不提供归因
+
 - **WHEN** 第二个测试策略只提供核心执行账本而没有策略扩展
-- **THEN** 共享 writer 仍生成合法完整结果包，并明确声明没有对应扩展
+- **THEN** 共享 writer 仍生成合法完整的标准结果包，并明确声明没有对应扩展
 ### Requirement: 策略扩展必须使用有边界的 Arrow 契约
 每个 `ResultExtension.table` MUST 只包含扁平 `string`、`bool`、`int64` 或 `float64` 列。浮点缺失值 MUST 使用 Arrow null，不得使用 NaN。dictionary、list、struct、map、union、run-end encoded 及其他类型 MUST 在冷/热比较前以 `result_contract_failed` 拒绝；共享层不得实现递归 Arrow 类型解释器或任意类型逻辑哈希。
 
@@ -46,19 +49,22 @@ ExecutionLedger MUST 对 orders、assets、cash 和 value 使用只读惰性缓�
 #### Scenario: 回读事实不一致
 - **WHEN** Parquet 回读后的核心事实摘要、扩展表或文件摘要与内存事实和最终清单不同
 - **THEN** 系统返回 `failed`，删除暂存结果且不覆盖既有完整运行
-### Requirement: 共享分析必须读取本地和聚宽结果
-analysis_data MUST 通过后端中立清单读取新的本地结果包和既有聚宽归档，并为相同概念提供一致查询视图。任何来源差异、缺失数据集和公式版本 MUST 保留显式证据，不得伪造成相同来源或静默补全。
-
-#### Scenario: 比较本地研究和聚宽回测
-- **WHEN** 分析流程同时打开一个本地 vectorbt 结果和一个聚宽正式回测
-- **THEN** 它通过统一视图查询共同事实，同时保留 backend、来源身份和数据集状态
-
-#### Scenario: 使用 vectorbt 统计交叉校验
-- **WHEN** 分析流程调用 vectorbt returns 或 stats 复核收益指标
-- **THEN** 结果被标记为交叉校验，不静默替换现有 Alpha、Information Ratio、CVaR 或其他公式版本
 ### Requirement: 结果包必须记录诚实的日常性能证据
 结果包内 `performance.json` MUST 记录从 writer 启动到最终 evidence/report/manifest 写入前的 `prefinalization_seconds` 及各阶段耗时，不得宣称包含尚未发生的自身写入或父进程发布。日常 cold/warm 检查 MUST 使用 writer 返回时的完整耗时，覆盖策略执行、核心事实、策略扩展、Parquet 写入、回读校验、摘要和最终元数据写入。系统不得为发布性能比较恢复 provisional/final 双包、第二次元数据写入或旁路清单；发布级性能差异只在外部验证报告中列示并由用户人工确认。
 
 #### Scenario: 抽取共享 writer
 - **WHEN** 原策略 writer 迁移到共享结果包
 - **THEN** 包内预最终化和日常 writer 返回耗时使用明确边界，并能区分执行、事实转换、扩展和文件阶段
+### Requirement: 共享分析必须只读取标准结果包
+
+本地研究、聚宽归档或其他生产流程 MUST 先生成同一标准结果包契约；analysis_data MUST 只通过该契约读取共同事实。标准结果包 MUST 在包内保留来源身份、数据集状态和公式版本，但分析读取路径不得按本地、聚宽、执行引擎或遗留来源清单分支，也不得静默补全来源差异。
+
+#### Scenario: 比较本地研究和聚宽回测
+
+- **WHEN** 分析流程同时打开由本地研究和聚宽正式回测生成的有效标准结果包
+- **THEN** 它通过同一标准结果包读取路径查询共同事实，同时保留每个包声明的来源身份和数据集状态
+
+#### Scenario: 使用 vectorbt 统计交叉校验
+
+- **WHEN** 分析流程调用 vectorbt returns 或 stats 复核收益指标
+- **THEN** 结果被标记为交叉校验，不静默替换现有 Alpha、Information Ratio、CVaR 或其他公式版本

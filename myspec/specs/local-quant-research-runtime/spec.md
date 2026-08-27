@@ -69,13 +69,16 @@ Strategy Module MUST 是仓库内受版本管理和代码审查的可信代码�
 - **WHEN** 配置包含旧 `command`、策略专属 `project_entry`、仓库外模块路径或安装命令
 - **THEN** 系统在启动项目进程前拒绝配置并返回 `evidence_insufficient`
 ### Requirement: 单场景停止状态必须保持固定
-共享运行 MUST 每次只接受一个场景，并且只返回 `complete`、`evidence_insufficient` 或 `failed`。完整运行 MUST 返回 `next_action=return_to_caller`；Skill 不得循环多个场景、解释策略字段或自动给出研究推荐。
+
+共享运行 MUST 每次只接受一个已冻结场景，并且只返回 `complete`、`evidence_insufficient` 或 `failed`。运行时只负责执行状态和对应证据，不定义 Skill 的批量编排、分析职责或下一步动作。
 
 #### Scenario: 输入证据缺失
+
 - **WHEN** 策略身份、配置、行情快照、范围或必需字段缺失
 - **THEN** 系统返回 `evidence_insufficient`，不猜测替代输入且不执行策略
 
 #### Scenario: 执行或证据失败
+
 - **WHEN** vectorbt 执行异常、输出缺失、摘要冲突、临时清理失败或性能超限
 - **THEN** 系统返回 `failed` 并保留紧凑失败证据，不发布完整运行
 ### Requirement: 重构必须保持结果一致并提供性能观测
