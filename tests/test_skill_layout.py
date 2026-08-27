@@ -296,7 +296,7 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
         ".claude/skills/run-local-quant-research",
     }
     assert all(shared_skill_paths.issubset(item["paths"]) for item in unit_checks)
-    assert "scripts/research/result_package.py" in unit_checks[0]["paths"]
+    assert "scripts/research/**" in unit_checks[0]["paths"]
     assert "scripts/research/market_data/**" in unit_checks[1]["paths"]
     assert "scripts/research/local_quant_research/**" in unit_checks[2]["paths"]
     assert "tests/quant_analysis/**" in unit_checks[2]["paths"]

@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -94,7 +95,7 @@ def test_main_repository_initializes_and_updates_venv(tmp_path):
 def test_failed_main_repository_update_invalidates_fingerprint(tmp_path):
     repo = make_repo(tmp_path)
     (repo / "requirements.txt").write_text("package-that-cannot-exist==0\n", encoding="utf-8")
-    result = run("py", "-3.12", "-m", "venv", ".venv", cwd=repo)
+    result = run(sys.executable, "-m", "venv", ".venv", cwd=repo)
     assert result.returncode == 0, result.stderr
     write_fingerprint(repo)
 
@@ -132,7 +133,7 @@ def test_build_and_verify_uses_shared_venv_from_worktree(tmp_path):
     run("git", "add", ".build-and-verify", cwd=repo)
     result = run("git", "commit", "-m", "add build verification", cwd=repo)
     assert result.returncode == 0, result.stderr
-    result = run("py", "-3.12", "-m", "venv", ".venv", cwd=repo)
+    result = run(sys.executable, "-m", "venv", ".venv", cwd=repo)
     assert result.returncode == 0, result.stderr
     write_fingerprint(repo)
     worktree = tmp_path / "worktree"
