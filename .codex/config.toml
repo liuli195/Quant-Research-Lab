@@ -1,0 +1,7 @@
+# awehitch 控制面：本项目专属条目（项目级配置优先级高于 ~/.codex/config.toml）
+# 账号里有多个 awehitch 连接器时，这一条保证 Codex 在本项目里用的是本项目的工作区。
+[mcp_servers.awehitch]
+type = "stdio"
+command = "C:\\Program Files\\nodejs\\node.exe"
+args = ["C:\\Users\\liuli\\AppData\\Roaming\\npm\\node_modules\\awehitch\\dist\\cli\\index.js", "control-plane", "--workspace", "D:\\My Project\\Quant-Research-Lab"]
+env = { AWEHITCH_CONTROL_PLANE = "1" }
