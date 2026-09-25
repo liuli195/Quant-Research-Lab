@@ -1,5 +1,0 @@
-# awehitch 控制面：全机共用一个连接器，本条目把 Codex 调用绑定到当前工作区。
-[mcp_servers.awehitch]
-command = "C:\\Program Files\\nodejs\\node.exe"
-args = ["C:\\Users\\liuli\\AppData\\Roaming\\npm\\node_modules\\awehitch\\dist\\cli\\index.js", "control-plane", "--workspace", "D:\\My Project\\Quant-Research-Lab", "--harness", "codex"]
-env = { AWEHITCH_CONTROL_PLANE = "1", AWEHITCH_MAX_PARALLEL_SESSIONS = "3" }
