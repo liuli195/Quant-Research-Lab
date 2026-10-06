@@ -30,6 +30,9 @@ def make_repo(tmp_path):
     shutil.copy2(SCRIPT, repo / "scripts" / SCRIPT.name)
     (repo / "requirements.txt").write_text("base\n", encoding="utf-8")
     (repo / "requirements-dev.txt").write_text("dev\n", encoding="utf-8")
+    nested = repo / ".agents/skills/joinquant-archive-sync/requirements.txt"
+    nested.parent.mkdir(parents=True, exist_ok=True)
+    nested.write_text("", encoding="utf-8")
     run("git", "init", cwd=repo)
     run("git", "config", "user.email", "test@example.com", cwd=repo)
     run("git", "config", "user.name", "Test", cwd=repo)
@@ -40,7 +43,7 @@ def make_repo(tmp_path):
 
 def write_fingerprint(repo):
     lines = []
-    for name in ("requirements.txt", "requirements-dev.txt"):
+    for name in ("requirements.txt", "requirements-dev.txt", ".agents/skills/joinquant-archive-sync/requirements.txt"):
         digest = hashlib.sha256((repo / name).read_bytes()).hexdigest().upper()
         lines.append(f"{digest} {name}")
     (repo / ".venv" / ".requirements.sha256").write_text("\n".join(lines) + "\n", encoding="ascii")
