@@ -8,7 +8,7 @@ $pythonLauncher = (Get-Command py -CommandType Application -ErrorAction Silently
 if (-not $pythonLauncher -and $env:LOCALAPPDATA) {
     $pythonLauncher = Join-Path $env:LOCALAPPDATA 'Programs\Python\Launcher\py.exe'
 }
-$manifests = 'requirements.txt', 'requirements-dev.txt'
+$manifests = 'requirements.txt', 'requirements-dev.txt', '.agents/skills/joinquant-archive-sync/requirements.txt'
 
 function Resolve-FullPath([string]$path, [string]$base) {
     [IO.Path]::GetFullPath($(if ([IO.Path]::IsPathRooted($path)) { $path } else { Join-Path $base $path }))
