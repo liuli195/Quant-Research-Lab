@@ -27,37 +27,39 @@ def repo_root() -> Path:
 
 
 @pytest.fixture
-def isolated_research_repo(tmp_path: Path, repo_root: Path):
-    root = tmp_path / "repository"
-    for relative in (
-        "scripts/__init__.py",
-        "scripts/research/__init__.py",
-        "scripts/research/result_contract.py",
-        "scripts/research/result_package.py",
-        "scripts/research/local_quant_research",
-        "scripts/research/market_data",
-        "scripts/research/analysis_data",
-        ".agents/skills/joinquant-archive-sync/references/manifest.schema.json",
-        "tests/local_quant_research/fixtures/minimal_strategy_b",
-        "joinquant/strategies/strategy-003/manifest.json",
-        "joinquant/strategies/strategy-003/research/baseline.json",
-        "joinquant/strategies/strategy-003/research/turtle_etf",
-    ):
-        source, target = repo_root / relative, root / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if source.is_dir():
-            shutil.copytree(source, target, ignore=shutil.ignore_patterns("__pycache__"))
-        else:
-            shutil.copy2(source, target)
-    venv = root / ".venv"
-    subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(venv), str(repo_root / ".venv")],
-        capture_output=True, text=True, shell=False, check=True,
-    )
-    try:
-        yield root
-    finally:
-        venv.rmdir()
+def isolated_research_repo(repo_root: Path):
+    with tempfile.TemporaryDirectory(prefix=".q", dir=repo_root) as directory:
+        root = Path(directory)
+        for relative in (
+            "scripts/__init__.py",
+            "scripts/research/__init__.py",
+            "scripts/research/result_contract.py",
+            "scripts/research/result_package.py",
+            "scripts/research/local_quant_research",
+            "scripts/research/market_data",
+            "scripts/research/analysis_data",
+            ".agents/skills/joinquant-archive-sync/references/manifest.schema.json",
+            "tests/local_quant_research/fixtures/minimal_strategy_b",
+            "joinquant/strategies/strategy-003/manifest.json",
+            "joinquant/strategies/strategy-003/research/baseline.json",
+            "joinquant/strategies/strategy-003/research/turtle_etf",
+        ):
+            source, target = repo_root / relative, root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if source.is_dir():
+                shutil.copytree(source, target, ignore=shutil.ignore_patterns("__pycache__"))
+            else:
+                shutil.copy2(source, target)
+        venv = root / ".venv"
+        try:
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(venv), str(repo_root / ".venv")],
+                capture_output=True, text=True, shell=False, check=True,
+            )
+            yield root
+        finally:
+            if venv.exists():
+                venv.rmdir()
 
 
 def pytest_configure(config: pytest.Config) -> None:
