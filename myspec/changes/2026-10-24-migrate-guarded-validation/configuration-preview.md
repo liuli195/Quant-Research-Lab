@@ -1,19 +1,19 @@
-# 14 项配置精确清单：已批准4×2，待官方覆盖与复验
+# 14 项配置精确清单：4×2已官方写入并正式验收
 
 完整命令及每项 paths/inputs 见 [config.candidate.json](config.candidate.json)。候选 SHA256：
 
 `6ba9c42fd344cb2883577432d5780fec255e7211336e7b837ff0dadecde2c395`
 
-历史：ca082经官方init更新为80bebb，旧4×4实现d683正式14全通过47.07秒。用户 Sentinel_90c7ae7dfa508191a155b0b9d242a4d0 现明确批准永久采用4×2。当前正式目标仍为旧80bebb，本候选仅 verify.worktree-setup.pytestXdistWorkers 从4改2；maxParallel仍4，14项命令/paths/inputs/角色/顺序/超时/60hard完全不变。对应布局契约改为2，不能拿试验中13pass/1旧契约fail冒称新整体验收。旧2d99不可用。本机offline期间不手写正式目标，恢复后官方init及一次无cache固定基线复验。
+历史ca082→80bebb为旧4×4，d683全绿47.07秒。用户明确采用4×2后，候选仅工作树workers4→2，maxParallel仍4；官方init提交2f5399a0baa4db959725008bd467eb6f26bd1c11，正式目标与上列候选SHA一致，14项命令/paths/inputs/角色/顺序/超时/60hard不变。布局契约和最小准备去重已同步；当前正式14全实际PASS，工具42.04秒/命令42.13秒，无cache/skip/未运行，7普通guard完整。三组临时13PASS/1旧契约FAIL不是正式通过，旧2d99不可用。
 
 最小历史验收及资源试验证据见 [verification-evidence.md](verification-evidence.md)。
 
 ## 已批准范围与本次配置变化
 
-用户 `Sentinel_5eba966575b48191aa0b9a7d916fb320` 已批准按领域/场景保留一条最核心真实链，并明确接受所披露的物理异常矩阵及三条私有全历史复算删除。不是把旧 253 个真实函数塞进几个入口。当前静态源映射312个函数：300普通、12真实；原4×4实现已全验收，新4×2含契约改动仍待正式复验。
+用户 `Sentinel_5eba966575b48191aa0b9a7d916fb320` 已批准按领域/场景保留一条最核心真实链，并明确接受所披露的物理异常矩阵及三条私有全历史复算删除。不是把旧 253 个真实函数塞进几个入口。静态312函数=300普通+12真实，当前4×2配置/契约正式14全验收，参数化实例另计。
 
 - 16 项改为 14 项：删除 `verify.skill-layout-real` 和 `verify.quant-equivalence`。普通 7 项，真实 7 项承接下列 12 链；每领域仍有独立选择和缓存。
-- 第一批顺序为 quant-real、analysis-real、quant-calculation、sync-real，其余保留原相对顺序。基于已有耗时让长组早启动；旧4×4固定实现47.07秒通过，不承诺不同机器或后续改动始终相同。
+- 第一批顺序为 quant-real、analysis-real、quant-calculation、sync-real，其余保留原相对顺序。基于已有耗时让长组早启动；旧4×4为47.07秒，当前4×2命令42.13秒通过；不把差值全归并发，不承诺未来恒定同速。
 - 命令改为实际保留模块列表，全部普通组使用精确 `-m "not real"`，全部真实组使用 `-m real`。删除已退休测试和大历史归档输入，不隐藏真实依赖。
 - 量化/行情/分析共 7 项的 paths 与 inputs 补齐 `scripts/__init__.py`、`scripts/research/__init__.py`。计算项另精确包含两个 minimal_strategy 目录和 performance-baseline.json；分析普通项包含现有静态策略输入和共享测试数据接缝，真实 SQL 数据在所属小型夹具中生成。
 
@@ -134,18 +134,18 @@
 - 通用研究：2 日、1 资产、1 批次、1 快照、1 run；海龟：70 个交易日、11 ETF、1 批次、1 快照、1 run、1 次晋升。两 case 各有宿主repo根内标准库TemporaryDirectory生成的短 .q 临时repo/venv junction，无新增session基线层；先rmdir junction再清owned目录，不清共享环境。
 - 行情：一个 4 行/2 证券的小运输与一个公司行动输入；分析 run/report 复用同一计划、两小结果包和一份基准。
 - 只读 SQL：backtest 和 simulation 各创建同 schema 的 6 张小 Parquet 表，共 12 张；非空结果/余额各 2 行、风险 1 行，其余允许空，仅读这些小树。simulation 固定一个 tiny-snapshot。没有扫描 backtests/111 或私有大历史。
-- 工作树：一个 Git 仓库、一个真实环境；同链完成 main、worktree 与正常清单更新。仍复用现有 PowerShell/项目 .venv，不用静态字符串代替实际分支。本轮该check实测17.09秒，不承诺未来运行耗时。
+- 工作树：一个 Git 仓库、一个真实环境；同链完成 main、worktree 与正常清单更新。仍复用现有 PowerShell/项目 .venv，不用静态字符串代替实际分支。当前正式该check15.75秒；另一次诊断14.98秒，不承诺未来恒定耗时。
 
 ## 覆盖变化与证据边界
 
 - 转普通：同步/归档前置拒绝与响应数据，文档解析/编码内存流，结果包数据契约及复用/冲突规则，行情规范化/选择与摘要，分析计划/schema/Arrow 表/统计/报告计算等；保留原有有价值断言，使用已有公开数据接缝，不造 fake FS/DB。
 - 按批准退休：锁竞争、系统重试、链接组合、异常回滚、历史格式、重复 CLI 接线的独有物理组合；生产保护未删，不能宣称物理异常覆盖完全不变。最后残留 backtests/111 全树/Parquet 历史实体验证也退休，不暗留未声明 LFS 依赖。
 - 删除三条私有全历史重算；保留两项静态历史夹具结构/摘要连接和原研究证据。静态证据不等于自动精确复算，无隐藏 skip、无第二手动入口。重复独立 JIT 检查已去重，公式仍在。
-- 初次清单阶段仅有静态检查，旧轮普通guard不能替代本轮。现d683正式14项实际PASS、7普通guard完整无违规、7真实12链全运行，无cache/skip/未运行；不以删除标记或AST解析冒称通过。
+- 初次清单阶段仅有静态检查，旧轮普通guard不能替代本轮。现2f5399正式14项实际PASS、7普通guard完整无违规、7真实12链全运行，无cache/skip/未运行；不以删除标记或AST解析冒称通过。
 
 ## 官方步骤与当前恢复位置
 
-1. 旧本机准确仓库/项目.venv/2.7.1身份已核，未重装依赖；当前本机offline。恢复后先核新feature提交/候选SHA及旧目标80bebb，不绕本机依赖限制。
-2. 用户已明确批准本次仅workers4→2；恢复后须经裸 `build-and-verify init --project "D:\My Project\Quant-Research-Lab" --config "D:\My Project\Quant-Research-Lab\myspec\changes\2026-10-24-migrate-guarded-validation\config.candidate.json" --overwrite` 备份并写入，核正式目标与候选一致；不手写目标。
-3. 官方写入新候选后串行一次无cache固定基线14项，保持60hard/guard不变；新结果未有。旧d683的14PASS/47.07秒、清理和试验失败边界保留，不能移作新配置通过。4×2/6×2/8×2临时试验均13PASS/1旧布局契约FAIL；浏览器波动使总耗时差不能全归因并发。
+1. 本机已恢复，准确仓库/项目.venv/2.7.1身份已核，未重装依赖；2f5399固定提交与目标/候选同6ba9已核。
+2. 用户明确批准仅workers4→2，已通过裸 `build-and-verify init --project "D:\My Project\Quant-Research-Lab" --config "D:\My Project\Quant-Research-Lab\myspec\changes\2026-10-24-migrate-guarded-validation\config.candidate.json" --overwrite` 备份并写入，核正式目标与候选一致；不手写目标。
+3. 2f5399已串行完成一次无cache固定基线14项正式全绿，工具42.04秒/命令42.13秒，60hard/guard不变。随后一次dirtyfast3-check长项诊断33.94秒只用于定位，源/env已恢复；不再网格或whole14重跑。历史试验/旧4×4边界保留。
 4. 量化仓库 BAV 身份已基于官方 doctor 同步 2.7.1 / 源 0cecf8a，独立 CI 旧锁已同步；MySpec 旧锁不擅改。Ubuntu 干净 verify 的 skipped 仅工具链/结构证据，非 Windows 验收。正式规格仍待 Gate2。

@@ -1,69 +1,81 @@
-# 已验收4×4历史与当前4×2待验收边界
+# 当前4×2正式验收与一次长项诊断
 
-## 身份与结果
+## 当前正式验收
 
-- 仓库：liuli195/Quant-Research-Lab；分支 codex/migrate-quant-guarded-validation。
-- 固定验收实现提交：`d6838e126cd86ed455a3b855ee906f3e1fe7b08a`；代码树 `1f7baca21a183498051af47b82ab2cd2b06aa7ba`。基线 `bd07f9ce5f13d18d0a17831759721d91647a727b`。
-- 最高公开入口：本机项目 .venv 环境中的裸 `build-and-verify verify`，固定基线、execution-context=local。这是一次正式固定基线运行，不以诊断或单节点替代，也不额外声称执行过另一次 --full。
-- 退出码 0，总计 **47.07 秒**，14 项均实际 PASS；无缓存命中、skip、未启动或未运行。7 普通组 guard startup/finish 完整，无违规；7 真实组实际跑完 12 条核心链。
-- 版本 2；本机 fullBudgetSeconds=60、enforceLocalBudget=true；外层4，既有工作树内部4，build 空。没有单测3秒限制；本轮未触发60秒硬截止。此前总截止的真实失败证据保留，不因本轮通过改写历史。
-- 目标 config 与候选 SHA256 同为 `80bebb691467584e27d83b400885805a88161c5ed8188113d7a4bacb452fd9e6`；由本机官方 init 在 `6aaaf81bbf983b199d103dc4e30d891916646bc4` 写入，备份 `.build-and-verify/backups/config-20261025-000356.json`。精确清单授权：用户 `Sentinel_90e2361f53fc8191913c065be55408f3` 回复完整清单。
-
-## 单项证据
+- 仓库liuli195/Quant-Research-Lab；分支codex/migrate-quant-guarded-validation；基线bd07f9ce5f13d18d0a17831759721d91647a727b。
+- 固定实现HEAD：`2f5399a0baa4db959725008bd467eb6f26bd1c11`，树`7753cd54f05a3b33a36e8b1d3bac1c8258b5656a`。裸build-and-verify verify、本机项目.venv、固定基线、execution-context=local；不额外声称又执行一次--full。
+- 退出0；工具报告总 **42.04秒**，外层命令墙钟 **42.13秒**。14项全部实际PASS，无cache/skip/未运行；7普通guard startup/finish完整且无违规，7真实组实际跑完12核心链。
+- 当前资源：outer4，仅工作树内部2，浏览器/工作树保留既有串行阶段；build空、插件禁自动加载。60秒本机总硬截止开启，无单测3秒；本轮未触发硬截止。
+- 正式目标与候选SHA256均为`6ba9c42fd344cb2883577432d5780fec255e7211336e7b837ff0dadecde2c395`；本机官方init仅把worker4改2，备份`.build-and-verify/backups/config-20261025-014335.json`。用户最新采用授权为Sentinel_90c7ae7dfa508191a155b0b9d242a4d0。
+- Python3.12.10、pytest9.0.3、xdist3.8、playwright1.61、Chromium1228及既有BAV2.7.1/dev源0cecf8a；无业务依赖安装或升级。
+- 4条既有依赖日期别名d弃用告警；本轮无报告的UTF8解码告警。owned进程核无残留，已记录.qg4dr9v72已清理；这不是全瞬时路径连续审计，不夸大为额外证明。验收前后clean。
+- 原始证据仅在本机仓库`.local/quant-validation-migration/accepted-b041204919fd4b6d9fa33d5d2210c25e/`，不把大量临时日志、私人行情或凭据上传。
 
 | ID | 角色 | 秒 | 结果 |
 |---|---|---:|---|
-| verify.quant-real | 真实 | 17.98 | PASS |
-| verify.analysis-real | 真实 | 4.62 | PASS |
-| verify.quant-calculation | 普通守卫 | 9.30 | PASS |
-| verify.sync-real | 真实 | 2.91 | PASS |
-| verify.skill-layout | 普通守卫 | 6.91 | PASS |
-| verify.sync-unit | 普通守卫 | 1.33 | PASS |
-| verify.browser-real | 真实 | 7.12 | PASS |
-| verify.docs-unit | 普通守卫 | 1.48 | PASS |
+| verify.quant-real | 真实 | 18.73 | PASS |
+| verify.analysis-real | 真实 | 4.83 | PASS |
+| verify.quant-calculation | 普通守卫 | 10.00 | PASS |
+| verify.sync-real | 真实 | 3.05 | PASS |
+| verify.skill-layout | 普通守卫 | 8.45 | PASS |
+| verify.sync-unit | 普通守卫 | 1.34 | PASS |
+| verify.browser-real | 真实 | 2.67 | PASS |
+| verify.docs-unit | 普通守卫 | 1.58 | PASS |
 | verify.docs-real | 真实 | 1.86 | PASS |
-| verify.quant-unit | 普通守卫 | 7.39 | PASS |
-| verify.market-unit | 普通守卫 | 1.75 | PASS |
-| verify.market-real | 真实 | 1.58 | PASS |
-| verify.analysis-unit | 普通守卫 | 2.53 | PASS |
-| verify.worktree-setup | 真实 | 17.09 | PASS |
+| verify.quant-unit | 普通守卫 | 7.69 | PASS |
+| verify.market-unit | 普通守卫 | 1.80 | PASS |
+| verify.market-real | 真实 | 1.56 | PASS |
+| verify.analysis-unit | 普通守卫 | 2.73 | PASS |
+| verify.worktree-setup | 真实 | 15.75 | PASS |
 
-检查并行，单项耗时不可相加冒充总耗时。完整12链映射/命令/paths/inputs见 configuration-preview.md 和 config.candidate.json。
+检查并行，单项不能求和当总耗时。12链/命令/paths/inputs见configuration-preview.md。
 
-## 环境与警告
+## 已批准覆盖变化与不变保障
 
-- 本机准确项目 .venv，Python3.12.10、pytest9.0.3、xdist3.8、playwright1.61、Chromium1228；BAV2.7.1开发绑定既有技能源码0cecf8a。未安装或升级业务依赖。
-- 只有 quant-calculation 的4条依赖日期别名 d 弃用告警；本轮无 UTF-8 线程解码警告。移除未消费 mklink 输出的 text=True 后没有再出现该警告，不据此倒推此前警告唯一根因已被证明。
-- 两个独占 .q 临时repo正常删除；本次 owned 进程无残留；共享 .venv 仍存在；验收前后工作树 clean。
-- 原始证据仅保留本机仓库内 `.local/quant-validation-migration/final-c61629eb53bb4dd0885785e8e801611b/`。本文件只记录最小结果，不上传临时日志、私人行情或凭据。
+用户Sentinel_5eba966575b48191aa0b9a7d916fb320确认从253旧real函数收敛为12条领域核心链，独立选择/缓存。静态312函数=300普通+12真实，参数化实例另计。
 
-## 已接受的覆盖变化
+- 可内存化解析、契约、计算、门禁、结果包复用/冲突和报告规则用已有公开数据接缝、Arrow表/流验证；本轮有实际guard证据，不只是删real标记。
+- 锁竞争、系统重试、链接矩阵、异常回滚、历史格式及重复CLI接线的独有物理组合按批准退休，不宣称覆盖完全不变。三私有全历史精确复算删除，保静态历史夹具结构/hash连接和既有研究证据，无隐藏skip或第二手动专项入口。
+- 生产正确性、原子/冲突/暂存区外写保护、self-test公开能力、正式JIT编译合同保留。普通仅模拟可选CCXT/IPv6宿主能力不可用，不改socket/Popen/guard，不证明这两项宿主能力；真实不应用。当前禁JIT公式通过不代表实际编译。
+- 工作树make_repo唯一调用前原双写依赖/双提交改为初始空依赖且完整配置后一次提交，保4次真实setup和全部断言；确定减少2个git进程/2次覆盖写，但单次噪声不能证明节省多少秒，不将其当15秒大头。
 
-用户 `Sentinel_5eba966575b48191aa0b9a7d916fb320` 确认从253个旧real函数收敛为12条领域核心链，保持独立检查/缓存。当前静态312测试函数=300普通+12真实；参数化实例另计。
+## 历史轨迹（不是当前配置验收）
 
-- 可内存化分支迁到已有公开数据/输入接缝、Arrow表和流，包括解析、规则、完整性前置拒绝、结果包复用/冲突、统计/报告计算；本轮实际 guard 已验证，非仅删 real 标记。
-- 锁竞争、系统重试、链接矩阵、异常回滚、历史格式及重复CLI接线的独有物理组合退休；生产保护保留，不能宣称物理覆盖完全不变。
-- 三条私有全历史精确重算删除，静态历史夹具结构/摘要连接及既有研究证据保留；它们不再自动证明三历史场景完全一致，不新造手动专项入口。
-- 生产结果正确性、原子/冲突/暂存区外写保护、生产self-test能力、正式JIT编译契约不删。本次保留公式但未进行真实JIT编译验收。
+- 66d67f03官方red：布局版本1!=2，12pass/1fail，总8.70秒。
+- d6838e1旧4×4/80bebb：正式14全实际PASS，47.07秒，7guard完整；保留该证据，不移作当前新配置通过。
+- 深层隔离repo曾使generic子CLI等待至60硬切；数据准备<0.085秒，旧request266/TEMP267字符。改短独占.q目录后generic一次真实节点6.26秒通过；精确OS机制未定论。
 
-## 修复与审查边界
-
-- 6aa新版14初轮7普通guard通过，但sync项目根/profile路径拒绝，quant等待子CLI至总截止；browser/worktree未启动，不能算通过。sync改真实隔离项目根而非绕校验。
-- 窄诊断证明generic数据准备小于0.085秒，真实子命令存在；深层request266字符、TEMP267字符且启动无输出，但未证明精确OS机制。改宿主repo内独占短目录后，generic一次真实节点6.26秒通过；最终14全部通过。只陈述行为证据，不将长路径假设写成确定机制。
-- 独立GPT-6-A基于bd07…d683完成最终限定审查，无剩余P1/P2；多次修复均仅复核相应差异。
-- 正式规格前置检查 `git diff --name-only bd07… -- myspec/specs/` 与 `git ls-files --others --exclude-standard -- myspec/specs/` 均空。正式规格尚未修改。
-- 后续若只改本change文档，交付文档HEAD会不同于d683；必须明确这一区别。仅文档不改变已验收代码/配置，不为更新证据无价值重跑全14。正式规格和PR交付仍须Gate2。
-
-## 用户追加资源试验与当前采用
-
-用户已明确批准4×2（Sentinel_90c7ae7dfa508191a155b0b9d242a4d0）：outer保持4，仅工作树内部4→2，其他检查、串行阶段与60hard不变。候选6ba9c42fd344cb2883577432d5780fec255e7211336e7b837ff0dadecde2c395及布局契约已更新，正式目标仍80bebb，因本机offline尚未官方写入/正式复验。
-
-| 临时方案 | 总秒 | quant-real | browser-real | worktree | 结果 |
+| 临时试验 | 总秒 | quant-real | browser-real | worktree | 结果 |
 |---|---:|---:|---:|---:|---|
-| 4×2 | 42.78 | 18.23 | 4.53 | 15.28 | 13 PASS / 1旧布局契约FAIL |
-| 6×2 | 40.75 | 19.05 | 1.83 | 15.12 | 13 PASS / 1旧布局契约FAIL |
-| 8×2 | 42.84 | 20.80 | 1.84 | 15.30 | 13 PASS / 1旧布局契约FAIL |
+| 4×2 | 42.78 | 18.23 | 4.53 | 15.28 | 13PASS/1旧布局契约FAIL |
+| 6×2 | 40.75 | 19.05 | 1.83 | 15.12 | 13PASS/1旧布局契约FAIL |
+| 8×2 | 42.84 | 20.80 | 1.84 | 15.30 | 13PASS/1旧布局契约FAIL |
 
-三组都实际完整执行14项且恢复原配置/clean，但不是整体验收通过；browser波动主导部分总差异，不能把改善全归因并发或挑最小数字承诺未来速度。用户选择4×2保持外层较小，仅降低单真实worktree场景的worker准备；不继续网格试验。长单项压缩仅做现有证据/源码ROI调查，不自动扩大生产改动、抽象或测试退役。
+三组均完整执行14项并恢复，不是整体验收。browser波动主导部分总差，不能把约9%或当前总改善全归因并发，也不据最小数字继续网格。用户选择4×2后，配置/契约同步才取得本文件首节的新正式全绿。
 
-当前另做一项等价测试准备去重：make_repo仅一个调用者，原先先写base/dev并add/commit，调用者在首次setup前又覆盖为空并add/commit。现在一开始就空依赖，仅在完整配置准备后保留一次add/commit，省两个git进程与两次覆盖写；四次真实setup和原独立共享/更新/公开验证断言不变。无历史提交内容断言依赖。收益尚未实测，预计只亚秒级，不将其冒称15秒长项主因；不引入缓存/框架或删cold/warm、隔离子进程。
+## 一次长项诊断：只定位，不代正式验收
+
+在同一2f5399实现上，仅临时改generic/turtle/worktree三个测试文件，记录既有helper与performance数据，不改生产/guard/配置/60hard。官方无base dirtyfast实际3checks（不是2）：quant-real15.66秒、skill-layout4.50秒、worktree14.98秒，全pass，总33.94秒；无其他全量重跑。源3files/env已按原bytes恢复、clean；本次owned/.q记录已清理。
+
+| 已记录阶段 | 秒 |
+|---|---:|
+| generic公开run墙钟 | 5.150288 |
+| turtle公开run墙钟 | 5.472226 |
+| turtle公开promote墙钟 | 0.966664 |
+| generic既有cold/warm口径 | 0.066391 / 0.065296 |
+| turtle既有cold/warm口径 | 0.217283 / 0.212915 |
+| generic/turtle落盘阶段 | 0.004794 / 0.015438 |
+| generic/turtle读取校验阶段 | 0.005657 / 0.009782 |
+| worktree首次main setup | 7.695189 |
+| worktree共享setup | 0.506540 |
+| worktree正常main更新 | 3.319228 |
+| worktree再次共享setup | 0.536633 |
+| worktree内官方smoke | 0.900675 |
+
+Git init0.093013、config mail0.064629/name0.064833、add0.079007、commit0.147420、worktree add0.171529秒。四次setup分别承担初始化、共享、正常更新、再次共享，不删其中保障；首次main内部未进一步拆venv/pip，不能把7.70秒全部归pip。cold/warm和stages是既有性能证据口径，可能包含共享阶段，不能直接求和与CLI墙钟相减后全归因导入；后者还含解释器/子进程、冻结/校验与其他准备。
+
+结论：已观察纯计算/落盘小、真实入口和环境准备占主要墙钟；没有证明可直接删除的高ROI重复核心步骤。保子进程隔离、cold/warm一致性和4次工作树真实阶段；不为几秒新增session缓存/框架、共享宿主runtime cache或削保障，按当前42.13秒方案收口。不承诺未来机器或运行恒定同速。原始诊断仅在`.local/quant-validation-migration/breakdown-cc1b7a7ee31e4875b7e8dff89f21cadc/`的两个PID JSONL及verification.log。
+
+## 交付边界
+
+独立审查已覆盖bd07…d683及后续短小4×2/准备去重差异，无剩余P1/P2；正式spec的tracked/untracked两项检查均空。后续只文档HEAD不等于重新测试，验收实现仍2f5399，不为文档无价值重跑全14。原MySpec会话已官方ABORTED完整归档；新文档树固定后import-aborted重建完整预览，再展示Gate2。尚未formal apply、PR complete、main合并或发布。
