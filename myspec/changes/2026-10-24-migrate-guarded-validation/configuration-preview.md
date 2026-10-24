@@ -1,17 +1,17 @@
-# 14 项配置精确清单：12 条领域核心冒烟（待官方覆盖确认）
+# 14 项配置精确清单：12 条领域核心冒烟（已官方写入并验收）
 
 完整命令及每项 paths/inputs 见 [config.candidate.json](config.candidate.json)。候选 SHA256：
 
 `80bebb691467584e27d83b400885805a88161c5ed8188113d7a4bacb452fd9e6`
 
-当前正式目标 SHA256 仍为 `ca0823e2dd84ac71fda2e0355f846c17c6b4e01007378409c79ea2dfc8c5b14f`，本次未改。旧排序候选 `2d99dffd` 已废弃，不能用于本轮初始化。
+写入前目标为 `ca0823e2dd84ac71fda2e0355f846c17c6b4e01007378409c79ea2dfc8c5b14f`；用户确认新清单后，官方 init 提交 `6aaaf81` 将目标更新为上列 `80bebb…`，与候选一致。旧排序候选 `2d99dffd` 已废弃。固定实现 `d6838e1` 正式14项全实际通过、47.07秒；最小证据见 [verification-evidence.md](verification-evidence.md)。
 
 ## 已批准范围与本次配置变化
 
-用户 `Sentinel_5eba966575b48191aa0b9a7d916fb320` 已批准按领域/场景保留一条最核心真实链，并明确接受所披露的物理异常矩阵及三条私有全历史复算删除。不是把旧 253 个真实函数塞进几个入口。当前静态源映射为 312 个测试函数：300 普通、12 真实；参数化实例数与运行结果尚待正式验收。
+用户 `Sentinel_5eba966575b48191aa0b9a7d916fb320` 已批准按领域/场景保留一条最核心真实链，并明确接受所披露的物理异常矩阵及三条私有全历史复算删除。不是把旧 253 个真实函数塞进几个入口。当前静态源映射为 312 个测试函数：300 普通、12 真实；参数化实例数另计；本轮14项实际运行证据见验收记录。
 
 - 16 项改为 14 项：删除 `verify.skill-layout-real` 和 `verify.quant-equivalence`。普通 7 项，真实 7 项承接下列 12 链；每领域仍有独立选择和缓存。
-- 第一批顺序为 quant-real、analysis-real、quant-calculation、sync-real，其余保留原相对顺序。基于已有耗时让长组早启动，不保证 60 秒已达标。
+- 第一批顺序为 quant-real、analysis-real、quant-calculation、sync-real，其余保留原相对顺序。基于已有耗时让长组早启动；本次固定实现47.07秒通过，不承诺不同机器或后续改动始终相同。
 - 命令改为实际保留模块列表，全部普通组使用精确 `-m "not real"`，全部真实组使用 `-m real`。删除已退休测试和大历史归档输入，不隐藏真实依赖。
 - 量化/行情/分析共 7 项的 paths 与 inputs 补齐 `scripts/__init__.py`、`scripts/research/__init__.py`。计算项另精确包含两个 minimal_strategy 目录和 performance-baseline.json；分析普通项包含现有静态策略输入和共享测试数据接缝，真实 SQL 数据在所属小型夹具中生成。
 
@@ -129,21 +129,21 @@
 
 - 同步：一份公开模拟响应和研究响应，一次归档数据；第二次同步验证幂等，不重新建独立归档。文档：一次离线目录树和同链输出。
 - 浏览器：一次 Chromium launch/context/download；DPAPI 一次会话加密/恢复，不另启动浏览器；付费预览一次文件 SQLite 创建/消费，并以第二次消费拒绝证明持久约束。三种不可替代能力各一条。
-- 通用研究：2 日、1 资产、1 批次、1 快照、1 run；海龟：70 个交易日、11 ETF、1 批次、1 快照、1 run、1 次晋升。两 case 各有独立临时 repo/venv junction，无新增 session 基线再复制层。
+- 通用研究：2 日、1 资产、1 批次、1 快照、1 run；海龟：70 个交易日、11 ETF、1 批次、1 快照、1 run、1 次晋升。两 case 各有宿主repo根内标准库TemporaryDirectory生成的短 .q 临时repo/venv junction，无新增session基线层；先rmdir junction再清owned目录，不清共享环境。
 - 行情：一个 4 行/2 证券的小运输与一个公司行动输入；分析 run/report 复用同一计划、两小结果包和一份基准。
 - 只读 SQL：backtest 和 simulation 各创建同 schema 的 6 张小 Parquet 表，共 12 张；非空结果/余额各 2 行、风险 1 行，其余允许空，仅读这些小树。simulation 固定一个 tiny-snapshot。没有扫描 backtests/111 或私有大历史。
-- 工作树：一个 Git 仓库、一个真实环境；同链完成 main、worktree 与正常清单更新。仍复用现有 PowerShell/项目 .venv，不用静态字符串代替实际分支。实际耗时待测，不承诺缩短秒数。
+- 工作树：一个 Git 仓库、一个真实环境；同链完成 main、worktree 与正常清单更新。仍复用现有 PowerShell/项目 .venv，不用静态字符串代替实际分支。本轮该check实测17.09秒，不承诺未来运行耗时。
 
 ## 覆盖变化与证据边界
 
 - 转普通：同步/归档前置拒绝与响应数据，文档解析/编码内存流，结果包数据契约及复用/冲突规则，行情规范化/选择与摘要，分析计划/schema/Arrow 表/统计/报告计算等；保留原有有价值断言，使用已有公开数据接缝，不造 fake FS/DB。
 - 按批准退休：锁竞争、系统重试、链接组合、异常回滚、历史格式、重复 CLI 接线的独有物理组合；生产保护未删，不能宣称物理异常覆盖完全不变。最后残留 backtests/111 全树/Parquet 历史实体验证也退休，不暗留未声明 LFS 依赖。
 - 删除三条私有全历史重算；保留两项静态历史夹具结构/摘要连接和原研究证据。静态证据不等于自动精确复算，无隐藏 skip、无第二手动入口。重复独立 JIT 检查已去重，公式仍在。
-- 本轮只完成源代码静态检查与独立审查，不把删除 real 标记/搜索 write/AST 解析当守卫通过。旧轮 7 个普通组 guard 通过仅属于旧提交，不替代本轮 14 项验收；正式运行将分别披露 pass/fail/skip/未运行/角色。
+- 初次清单阶段仅有静态检查，旧轮普通guard不能替代本轮。现d683正式14项实际PASS、7普通guard完整无违规、7真实12链全运行，无cache/skip/未运行；不以删除标记或AST解析冒称通过。
 
-## 确认后官方步骤
+## 官方步骤与当前结果
 
-1. 父线程在本机准确仓库复核固定提交、候选 SHA、项目 .venv 与现有 2.7.1 身份；仅在授权仓库内准备日志/临时目录，不重装依赖。
-2. 用户确认本完整清单后，经裸 `build-and-verify init --project "D:\My Project\Quant-Research-Lab" --config "D:\My Project\Quant-Research-Lab\myspec\changes\2026-10-24-migrate-guarded-validation\config.candidate.json" --overwrite` 备份并写入，核正式目标与候选一致；不手写目标。
-3. 父线程统一串行安排本机正式固定基线验证，禁止与其他任务抢资源。60 秒硬截止和守卫不放宽；若失败按根因分层，不自动反复全量。
+1. 已完成本机准确仓库/固定提交/项目.venv/2.7.1身份核对，未重装依赖。
+2. 用户已确认本完整清单，并经裸 `build-and-verify init --project "D:\My Project\Quant-Research-Lab" --config "D:\My Project\Quant-Research-Lab\myspec\changes\2026-10-24-migrate-guarded-validation\config.candidate.json" --overwrite` 备份并写入，核正式目标与候选一致；不手写目标。
+3. 父线程已串行完成d683正式固定基线验证：14实际PASS/47.07秒/无cache或skip，60hard和guard未放宽，owned进程与两个.q临时repo均已清理。此前失败和诊断如实保留，未以诊断替正式pass。
 4. 量化仓库 BAV 身份已基于官方 doctor 同步 2.7.1 / 源 0cecf8a，独立 CI 旧锁已同步；MySpec 旧锁不擅改。Ubuntu 干净 verify 的 skipped 仅工具链/结构证据，非 Windows 验收。正式规格仍待 Gate2。

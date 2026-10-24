@@ -41,6 +41,6 @@
 
 ## 当前状态与执行门禁
 
-新代码与候选：312 顶层测试函数，300普通+12真实；静态唯一映射，不代表参数化实例或 guard pass。有效4项审查发现已修：禁止重算helper恢复、plan/schema真实委托、3计算fixture双数组闭包、111历史实体退休。目标仍ca082，新候选/完整命令见preview，旧2d99不得应用。
+固定实现d683：312个静态函数=300普通+12真实，实际正式14检查全PASS/47.07秒，无cache/skip/未运行，7普通guard完整，详见 verification-evidence.md。目标和候选均80bebb，已由6aa官方init应用；旧2d99不再使用。两个研究case改宿主repo内标准库独占短.q目录，先清junction再清owned目录；短路径修后行为通过，但精确OS停滞机制未定论。
 
-待完成：文档/实现独立复核，feature固定checkpoint，用户新精确清单确认，本机官方init备份/覆盖/校验，串行固定基线正式验证，实施审查和Gate2。只用官方公开入口，不绕只读HOME、不改安装包、不反复全量、不放宽guard或预算。无主干推送、合并、发布。
+待完成：本机官方my-spec state-init/完整预览，用户Gate2确认，官方规格原子应用及确认的PR交付。三份正式目标为local-quant-research-workflow验证要求、joinquant-archive-sync回归接缝、local-quant-research-runtime历史证据边界；生产正确性/self-test和turtle正式编译合同保留。完整Delta只放.local/spec-work/current/delta，不提前改formal。没有PR/main推送/合并/发布。
