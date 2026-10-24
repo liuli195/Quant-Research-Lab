@@ -1482,6 +1482,10 @@ def test_verify_rejects_tampered_original_research_response(simulation_baseline:
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     record["sha256"] = digest
     record["bytes"] = path.stat().st_size
+    # The serialized baseline no longer shares the builder's record object.
+    for lineage_record in manifest["research_lineage"]:
+        if lineage_record["path"] == record["path"]:
+            lineage_record.update(sha256=digest, bytes=record["bytes"])
     for name in (
         "results",
         "balances",
