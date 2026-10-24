@@ -54,7 +54,7 @@ def isolated_research_repo(repo_root: Path):
         try:
             subprocess.run(
                 ["cmd", "/c", "mklink", "/J", str(venv), str(repo_root / ".venv")],
-                capture_output=True, text=True, shell=False, check=True,
+                capture_output=True, shell=False, check=True,
             )
             yield root
         finally:
