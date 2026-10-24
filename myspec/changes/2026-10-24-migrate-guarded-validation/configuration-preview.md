@@ -109,7 +109,11 @@
 
    paths/inputs：见完整JSON同ID条目。
 
-## 写入前尚需实际核验
+## 写入前核验状态
+
+已完成本机有界元数据、命令及测试目标核查：Python 3.12.10、Pytest 9.0.3、xdist 3.8.0、Playwright 1.61；Chromium 1228普通与无头可执行文件存在，但没有启动或运行测试。纠正量化身份输入为实际读取的default_code.py及strategy_index.csv；海龟模块源码仍由research/**覆盖。修正后的路径须再做定向核查，不重复全量扫描。
+
+### 写入前最后确认
 
 - 在准确本机量化工作树检查项目Python、Pytest/xdist及命令依赖可用；检查逐项字面路径与通配输入。
 - 检查 .build-and-verify 及默认备份目录可写、备份留在repo内；先展示问题、影响及建议。
