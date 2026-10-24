@@ -223,6 +223,9 @@ def test_bundle_time_cursors_never_move_backwards() -> None:
 def test_public_simulation_archive_query_smoke(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    monkeypatch.chdir(repository)
     from contextlib import contextmanager
     from types import SimpleNamespace
     import jq_sync
@@ -283,7 +286,7 @@ def test_public_simulation_archive_query_smoke(
     }
     calls: list[dict[str, str]] = []
     object_dir = (
-        tmp_path
+        repository
         / "joinquant"
         / "strategies"
         / "strategy-001"
@@ -386,8 +389,8 @@ def test_public_simulation_archive_query_smoke(
         yield SimpleNamespace(pages=[object()])
 
     monkeypatch.setattr(jq_sync, "open_authenticated_context", offline_context)
-    command = ["sync-active-simulations", "--repository", str(tmp_path),
-               "--profile", str(tmp_path.parent / "unused-sync-profile")]
+    command = ["sync-active-simulations", "--repository", str(repository),
+               "--profile", str(tmp_path / "unused-sync-profile")]
     for expected in ("committed", "unchanged"):
         assert jq_sync.main(command) == 0
         assert json.loads(capsys.readouterr().out)["results"][0]["status"] == expected
@@ -397,7 +400,7 @@ def test_public_simulation_archive_query_smoke(
     assert jq_sync.main(["query", "--object", manifest, "--dataset", "results"]) == 0
     rows = json.loads(capsys.readouterr().out)
     assert [row["time"] for row in rows] == ["2026-01-01 16:00:00", "2026-01-01 17:00:00"]
-    destination = tmp_path / "results.csv"
+    destination = repository / "results.csv"
     assert jq_sync.main(["export-csv", "--object", manifest, "--dataset", "results",
                          "--fields", "time,returns", "--destination", str(destination)]) == 0
     assert destination.read_text(encoding="utf-8").splitlines()[0] == "time,returns"
