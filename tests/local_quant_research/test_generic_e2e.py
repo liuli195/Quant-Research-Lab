@@ -47,8 +47,9 @@ def _remove_empty_test_roots(repo_root: Path, market_root: Path) -> None:
 @pytest.mark.real
 def test_minimal_strategy_completes_reuses_and_rejects_digest_conflict(
     tmp_path: Path,
-    repo_root: Path,
+    isolated_research_repo: Path,
 ) -> None:
+    repo_root = isolated_research_repo
     token = uuid.uuid4().hex
     project_id = "minimal-fixture-b"
     project_root = repo_root / ".local/e2e-tests" / token

@@ -62,8 +62,9 @@ def _write_market_csv(
 @pytest.mark.real
 def test_turtle_project_completes_full_single_scenario_entrypoint(
     tmp_path: Path,
-    repo_root: Path,
+    isolated_research_repo: Path,
 ) -> None:
+    repo_root = isolated_research_repo
     token = uuid.uuid4().hex
     research_root = repo_root / "joinquant/strategies/strategy-003/research"
     baseline = json.loads(
