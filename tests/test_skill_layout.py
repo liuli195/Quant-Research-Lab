@@ -194,7 +194,7 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
         assert "--basetemp=.local/pytest/" + identity in check["command"]
         assert ('-m real' if identity in real else '-m "not real"') in check["command"]
     worktree = checks["verify.worktree-setup"]
-    assert worktree["pytestXdistWorkers"] == 4
+    assert worktree["pytestXdistWorkers"] == 2
     assert "-p xdist.plugin" in worktree["command"]
     assert all("pytestXdistWorkers" not in check for identity, check in checks.items()
                if identity != "verify.worktree-setup")

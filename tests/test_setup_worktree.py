@@ -26,16 +26,14 @@ def make_repo(tmp_path):
     repo.mkdir()
     (repo / "scripts").mkdir()
     shutil.copy2(SCRIPT, repo / "scripts" / SCRIPT.name)
-    (repo / "requirements.txt").write_text("base\n", encoding="utf-8")
-    (repo / "requirements-dev.txt").write_text("dev\n", encoding="utf-8")
+    (repo / "requirements.txt").write_text("", encoding="utf-8")
+    (repo / "requirements-dev.txt").write_text("", encoding="utf-8")
     nested = repo / ".agents/skills/joinquant-archive-sync/requirements.txt"
     nested.parent.mkdir(parents=True, exist_ok=True)
     nested.write_text("", encoding="utf-8")
     run("git", "init", cwd=repo)
     run("git", "config", "user.email", "test@example.com", cwd=repo)
     run("git", "config", "user.name", "Test", cwd=repo)
-    run("git", "add", ".", cwd=repo)
-    run("git", "commit", "-m", "fixture", cwd=repo)
     return repo
 
 
@@ -62,8 +60,6 @@ def test_build_and_verify_runs_worktree_setup_checks():
 @pytest.mark.real
 def test_main_worktree_update_and_verification_smoke(tmp_path):
     repo = make_repo(tmp_path)
-    for name in ("requirements.txt", "requirements-dev.txt"):
-        (repo / name).write_text("", encoding="utf-8")
     config = {"version": 2, "build": {"checks": []}, "verify": {
         "realChecks": ["verify.shared-venv-smoke"], "checks": [{
             "id": "verify.shared-venv-smoke", "paths": ["probe.txt"], "inputs": ["probe.txt"],

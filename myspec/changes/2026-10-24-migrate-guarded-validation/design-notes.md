@@ -8,7 +8,7 @@
 - 真实检查：不可替代外部环境的显式未保护角色。按领域/场景一核心链，不能将旧矩阵塞进少数入口。DuckDB 即使 :memory: 仍为原生边界；文件 SQLite 防重复消费须真实保留。
 - 三类环境是 Python 文件/数据、Chromium/Windows 会话、Git/PowerShell/共享环境，不是三个巨型检查。14 checks=7普通+7真实，后者承接12链。
 - 优先已有公开数据接缝、Arrow 内存表/流和数据模型；分析复用既有 _AnalysisLedger/result_contract，不拦截 Path 或重造 SQL/文件系统。两个真实研究 CLI 独立小 repo，其他场景同链复用准备；不为两个 case 多造 session 基线层。
-- 外4/既有工作树内4是量化起始资源方案；浏览器/工作树保留既有串行阶段，长组前置。无新调度器/benchmark，不保证60已达标。
+- 外4/工作树内4为已验收起始方案，用户最新正式采用外4/仅工作树内2；浏览器/工作树保留既有串行阶段，长组前置。无新调度器/网格benchmark；旧4×4在47.07秒通过，新4×2仍待契约同步后的正式复验。
 
 ## 用户批准的覆盖变化
 
@@ -41,6 +41,6 @@
 
 ## 当前状态与执行门禁
 
-固定实现d683：312个静态函数=300普通+12真实，实际正式14检查全PASS/47.07秒，无cache/skip/未运行，7普通guard完整，详见 verification-evidence.md。目标和候选均80bebb，已由6aa官方init应用；旧2d99不再使用。两个研究case改宿主repo内标准库独占短.q目录，先清junction再清owned目录；短路径修后行为通过，但精确OS停滞机制未定论。
+固定实现d683：312个静态函数=300普通+12真实，实际正式14检查全PASS/47.07秒，无cache/skip/未运行，7普通guard完整，详见 verification-evidence.md。这是旧4×4/80bebb、已由6aa官方init应用；当前4×2候选与明确契约已更新，正式目标仍80bebb待本机恢复官方init；旧2d99不再使用。两个研究case改宿主repo内标准库独占短.q目录，先清junction再清owned目录；短路径修后行为通过，但精确OS停滞机制未定论。
 
-待完成：本机官方my-spec state-init/完整预览，用户Gate2确认，官方规格原子应用及确认的PR交付。三份正式目标为local-quant-research-workflow验证要求、joinquant-archive-sync回归接缝、local-quant-research-runtime历史证据边界；生产正确性/self-test和turtle正式编译合同保留。完整Delta只放.local/spec-work/current/delta，不提前改formal。没有PR/main推送/合并/发布。
+旧MySpec会话dd901807已生成完整预览，但其IF96a4绑定旧8e2e输入；当前资源采用会改变树，不能以旧READY应用。待完成：新4×2官方配置/正式复验，合法state-abort保存完整旧预览再state-init --import-aborted建立新IF并重验预览，用户Gate2确认及后续官方应用/交付。三份正式目标为local-quant-research-workflow验证要求、joinquant-archive-sync回归接缝、local-quant-research-runtime历史证据边界；生产正确性/self-test和turtle正式编译合同保留。完整Delta只放.local/spec-work/current/delta，不提前改formal。没有PR/main推送/合并/发布。

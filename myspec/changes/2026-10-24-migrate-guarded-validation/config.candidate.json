@@ -590,7 +590,7 @@
           "tests/test_setup_worktree.py"
         ],
         "checkParallel": false,
-        "pytestXdistWorkers": 4
+        "pytestXdistWorkers": 2
       }
     ]
   }
