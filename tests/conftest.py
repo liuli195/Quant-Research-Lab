@@ -28,6 +28,15 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers", "real: requires real file, native database, process, or browser behavior"
     )
+    if config.getoption("markexpr") == "not real":
+        import socket
+
+        # Ordinary calculations do not verify optional CCXT/IPv6 host capabilities.
+        optional_host = pytest.MonkeyPatch()
+        config.add_cleanup(optional_host.undo)
+        optional_host.setitem(sys.modules, "ccxt", None)
+        optional_host.setattr(socket, "has_ipv6", False)
+
     # Cache only a known path: gettempdir() would otherwise probe with real writes.
     temp_root = Path(os.environ.get("TMPDIR") or REPO_ROOT).resolve()
     if not temp_root.is_relative_to(REPO_ROOT) or not temp_root.is_dir():
