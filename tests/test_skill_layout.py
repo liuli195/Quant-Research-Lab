@@ -231,6 +231,12 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
     config = json.loads(
         (repo_root / ".build-and-verify" / "config.json").read_text(encoding="utf-8")
     )
+    assert config["version"] == 2
+    assert config["verify"]["maxParallel"] == 4
+    assert config["verify"]["enforceLocalBudget"] is True
+    assert "verify.local-quant-research-jit" not in {
+        check["id"] for check in config["verify"]["checks"]
+    }
     checks = {check["id"]: check for check in config["verify"]["checks"]}
     unit_checks = [
         checks["verify.local-quant-research-package-unit"],
