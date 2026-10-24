@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
-import shutil
+import copy
+import hashlib
+from dataclasses import replace
+from types import SimpleNamespace
 from datetime import date
 from pathlib import Path
 
@@ -85,15 +88,77 @@ def test_calculate_return_metrics_compounds_and_measures_drawdown() -> None:
     assert metrics["calmar"] is not None
 
 
+def _standard_plan_document() -> dict[str, object]:
+    return {
+        "schema_version": "strategy-analysis-plan/2",
+        "strategy_id": "minimal",
+        "baseline_config": "baseline.json",
+        "scenarios": [
+            {"scenario_id": "baseline", "dimension": "baseline", "overrides": {}}
+        ],
+        "analyses": {
+            "fixed_periods": [
+                {"id": "fixture", "start": "2024-01-01", "end": "2024-12-31"}
+            ],
+            "rolling": {
+                "window_years": 1,
+                "step_months": 3,
+                "minimum_positive_cagr_fraction": 0.7,
+            },
+            "bootstrap": {
+                "block_sizes": [1],
+                "paths": 3,
+                "horizon_days": 1,
+                "seed": 7,
+                "thresholds": {
+                    "probability_drawdown_over_20pct_max": 1.0,
+                    "probability_drawdown_over_30pct_max": 1.0,
+                    "median_terminal_return_min_exclusive": -1.0,
+                },
+            },
+            "historical_stress": [
+                {
+                    "id": "stress-fixture",
+                    "start": "2024-01-01",
+                    "end": "2024-12-31",
+                    "max_drawdown_abs_max": 1.0,
+                }
+            ],
+            "position_shocks": [
+                {
+                    "id": "shock-fixture",
+                    "asset_group_shocks": {"etf": -0.1},
+                    "maximum_loss_abs_max": 1.0,
+                }
+            ],
+            "cvar": [
+                {
+                    "id": "cvar-fixture",
+                    "horizon_days": 1,
+                    "confidence": 0.95,
+                    "maximum_loss_abs_max": 1.0,
+                    "minimum_tail_observations": 1,
+                }
+            ],
+        },
+        "thresholds": {
+            "cagr_min_exclusive": 0.0,
+            "max_drawdown_abs_max": 0.2,
+            "calmar_min": 0.5,
+        },
+    }
+
+
 def _standard_package_inputs(
     repo_root: Path,
     tmp_path: Path,
     *,
     extensions: tuple[ResultExtension, ...] | None = None,
+    scenario: dict[str, object] | None = None,
 ) -> tuple[Path, list[Path], Path, Path]:
     root = tmp_path / "package-repository"
     root.mkdir()
-    scenario = {
+    scenario = scenario or {
         "project_id": "minimal",
         "scenario_id": "baseline",
         "universe": [{"security": "TEST.X", "asset_group": "etf"}],
@@ -107,67 +172,7 @@ def _standard_package_inputs(
     )
     config = root / "config"
     _write_json(config / "baseline.json", scenario)
-    _write_json(
-        config / "analysis-plan.json",
-        {
-            "schema_version": "strategy-analysis-plan/2",
-            "strategy_id": "minimal",
-            "baseline_config": "baseline.json",
-            "scenarios": [
-                {"scenario_id": "baseline", "dimension": "baseline", "overrides": {}}
-            ],
-            "analyses": {
-                "fixed_periods": [
-                    {"id": "fixture", "start": "2024-01-01", "end": "2024-12-31"}
-                ],
-                "rolling": {
-                    "window_years": 1,
-                    "step_months": 3,
-                    "minimum_positive_cagr_fraction": 0.7,
-                },
-                "bootstrap": {
-                    "block_sizes": [1],
-                    "paths": 3,
-                    "horizon_days": 1,
-                    "seed": 7,
-                    "thresholds": {
-                        "probability_drawdown_over_20pct_max": 1.0,
-                        "probability_drawdown_over_30pct_max": 1.0,
-                        "median_terminal_return_min_exclusive": -1.0,
-                    },
-                },
-                "historical_stress": [
-                    {
-                        "id": "stress-fixture",
-                        "start": "2024-01-01",
-                        "end": "2024-12-31",
-                        "max_drawdown_abs_max": 1.0,
-                    }
-                ],
-                "position_shocks": [
-                    {
-                        "id": "shock-fixture",
-                        "asset_group_shocks": {"etf": -0.1},
-                        "maximum_loss_abs_max": 1.0,
-                    }
-                ],
-                "cvar": [
-                    {
-                        "id": "cvar-fixture",
-                        "horizon_days": 1,
-                        "confidence": 0.95,
-                        "maximum_loss_abs_max": 1.0,
-                        "minimum_tail_observations": 1,
-                    }
-                ],
-            },
-            "thresholds": {
-                "cagr_min_exclusive": 0.0,
-                "max_drawdown_abs_max": 0.2,
-                "calmar_min": 0.5,
-            },
-        },
-    )
+    _write_json(config / "analysis-plan.json", _standard_plan_document())
     benchmark_set = write_benchmark_set(
         market_data_root=config,
         rows=[
@@ -186,34 +191,90 @@ def _standard_package_inputs(
     return root, [package], config / "analysis-plan.json", benchmark_set.root / "manifest.json"
 
 
-@pytest.fixture(scope="session")
-def standard_package_baseline(
-    tmp_path_factory: pytest.TempPathFactory,
-) -> tuple[Path, list[Path], Path, Path]:
-    repo_root = Path(__file__).resolve().parents[2]
-    return _standard_package_inputs(repo_root, tmp_path_factory.mktemp("analysis-baseline"))
+@pytest.fixture
+def memory_analysis_inputs(repo_root: Path, monkeypatch: pytest.MonkeyPatch):
+    from scripts.research import result_package
+    from scripts.research.result_contract import ExecutionBundle, ExecutionRun
+    from scripts.research.market_data.benchmark_sets import BenchmarkSet
+    from tests.local_quant_research.test_analysis_data_views import _AnalysisLedger
+    from quant_analysis import evidence as matrix
+
+    root = repo_root
+    params = {"project_id": "minimal", "scenario_id": "baseline",
+              "universe": [{"security": "TEST.X", "asset_group": "etf"}], "risk": {}}
+    plan = _standard_plan_document()
+    expanded = {"schema_version": "analysis-scenarios/1", "strategy_id": "minimal",
+                "analysis_plan": "config/analysis-plan.json", "analysis_plan_sha256": analysis.evidence_digest(plan),
+                "baseline_config": "baseline.json", "baseline_config_sha256": analysis.evidence_digest(params),
+                "universe": {"TEST.X": "etf"}, "analyses": copy.deepcopy(plan["analyses"]),
+                "thresholds": copy.deepcopy(plan["thresholds"]), "scenarios": [{
+                    "scenario_id": "baseline", "dimension": "baseline", "overrides": {},
+                    "params": copy.deepcopy(params), "params_sha256": analysis.evidence_digest(params)}]}
+    run = ExecutionRun(_AnalysisLedger(), {})
+    core = result_package._materialize_core(ExecutionBundle(run, run, ("primary",))).tables()
+    tables, sources, source_sha, artifacts = {}, {}, {}, {}
+
+    def read_table(path, columns=None, **_kwargs):
+        table = tables[Path(path)]
+        return table if columns is None else table.select(columns)
+
+    monkeypatch.setattr(analysis.pq, "read_table", read_table)
+    def add_source(path, scenario, extensions=()):
+        path = Path(path).resolve()
+        tables.update({path / "data" / f"{name}.parquet": table for name, table in core.items()})
+        manifest = {"extensions": {}}
+        for extension in extensions:
+            relative = "strategy.py"  # Existing static path; actual input is the Arrow data seam.
+            tables[path / relative] = extension.table
+            digest = analysis.evidence_digest(extension.table.to_pylist())
+            source_sha[path / relative] = digest
+            manifest["extensions"][extension.name] = {"status": "complete",
+                "schema": [{"name": field.name} for field in extension.table.schema],
+                "files": [{"path": relative, "sha256": digest}]}
+        sources[path] = package_source.PackageSource(root=path,
+            manifest_sha256=analysis.evidence_digest(manifest),
+            content_sha256=analysis.evidence_digest({"params": scenario, "extensions": manifest["extensions"]}),
+            strategy_id=str(scenario["project_id"]), scenario_id=str(scenario["scenario_id"]),
+            params=copy.deepcopy(scenario), capabilities={"common_facts": {"status": "available"},
+                "official_risk": {"status": "missing_at_source"},
+                "attribution": package_source._attribution_capability(path, manifest)})
+        return path
+
+    packages = [add_source(repo_root / "tests/local_quant_research/fixtures/minimal_strategy", params)]
+    rows = [{"time": day, "benchmark_id": identity, "returns": 0.0 if day == "2024-01-02" else 0.01}
+            for day in ("2024-01-02", "2024-01-03") for identity in CONTRACT_BENCHMARK_IDS]
+    benchmark = BenchmarkSet(root=repo_root / "memory-benchmark", benchmark_set_id=analysis.evidence_digest(rows),
+                             manifest={"data": {"sha256": analysis.evidence_digest(rows)}})
+    tables[benchmark.root / "benchmark-returns.parquet"] = pa.Table.from_pylist(rows)
+    source_sha[benchmark.root / "manifest.json"] = analysis.evidence_digest(dict(benchmark.manifest))
+    monkeypatch.setattr(analysis, "open_package_sources", lambda paths: tuple(sources[Path(path).resolve()] for path in paths))
+    monkeypatch.setattr(analysis, "expand_analysis_plan", lambda _root, _plan: copy.deepcopy(expanded))
+    monkeypatch.setattr(analysis, "open_benchmark_set", lambda _root: benchmark)
+
+    def capture_json(path, value):
+        artifacts[Path(path)] = (json.dumps(value, ensure_ascii=False, sort_keys=True,
+                                           separators=(",", ":"), allow_nan=False) + "\n").encode()
+    def capture_matrix(results, path):
+        rows = matrix._rows(results)
+        table = pa.Table.from_pylist(rows, schema=matrix._SCHEMA).replace_schema_metadata(matrix._metadata(rows))
+        sink = pa.BufferOutputStream()
+        pq.write_table(table, sink, compression="zstd", use_dictionary=False, write_statistics=True)
+        artifacts[Path(path)] = sink.getvalue().to_pybytes()
+        return Path(path)
+    monkeypatch.setattr(analysis, "_immutable_json", capture_json)
+    monkeypatch.setattr(analysis, "_atomic_json", capture_json)
+    monkeypatch.setattr(analysis, "build_evidence_matrix", capture_matrix)
+    monkeypatch.setattr(analysis, "_sha256", lambda path: hashlib.sha256(artifacts[Path(path)]).hexdigest()
+                        if Path(path) in artifacts else source_sha[Path(path)])
+    return SimpleNamespace(inputs=(root, packages, root / "config/analysis-plan.json", benchmark.root / "manifest.json"),
+                           params=params, expanded=expanded, packages=packages, sources=sources,
+                           artifacts=artifacts, add_source=add_source)
 
 
-def _copy_standard_package_inputs(
-    tmp_path: Path, baseline: tuple[Path, list[Path], Path, Path]
-) -> tuple[Path, list[Path], Path, Path]:
-    source, packages, plan, benchmark = baseline
-    root = tmp_path / "package-repository"
-    shutil.copytree(source, root)
-    return (
-        root,
-        [root / package.relative_to(source) for package in packages],
-        root / plan.relative_to(source),
-        root / benchmark.relative_to(source),
-    )
-
-
-@pytest.mark.real
 def test_standard_analysis_accepts_explicit_package_without_registry(
-    standard_package_baseline: tuple[Path, list[Path], Path, Path],
-    repo_root: Path, tmp_path: Path
+    memory_analysis_inputs, repo_root: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root, packages, plan, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
+    root, packages, plan, benchmark = memory_analysis_inputs.inputs
 
     result = run_standard_analysis(root, packages, plan, benchmark)
 
@@ -221,15 +282,13 @@ def test_standard_analysis_accepts_explicit_package_without_registry(
     assert result["baseline"]["scenario_id"] == "baseline"
 
 
-@pytest.mark.real
 def test_standard_analysis_identity_does_not_depend_on_package_location(
-    standard_package_baseline: tuple[Path, list[Path], Path, Path],
-    repo_root: Path, tmp_path: Path
+    memory_analysis_inputs, repo_root: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root, packages, plan, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
+    root, packages, plan, benchmark = memory_analysis_inputs.inputs
     first = run_standard_analysis(root, packages, plan, benchmark)
-    relocated = tmp_path / "unrelated-location" / "renamed-package"
-    shutil.copytree(packages[0], relocated)
+    relocated = root / "memory-relocated-package"
+    memory_analysis_inputs.add_source(relocated, memory_analysis_inputs.params)
 
     second = run_standard_analysis(root, [relocated], plan, benchmark)
 
@@ -237,12 +296,10 @@ def test_standard_analysis_identity_does_not_depend_on_package_location(
     assert second == first
 
 
-@pytest.mark.real
 def test_standard_analysis_does_not_call_legacy_source_readers(
-    standard_package_baseline: tuple[Path, list[Path], Path, Path],
-    repo_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    memory_analysis_inputs, repo_root: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root, packages, plan, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
+    root, packages, plan, benchmark = memory_analysis_inputs.inputs
 
     def reject_legacy_reader(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("standard analysis must not use a legacy source reader")
@@ -253,59 +310,42 @@ def test_standard_analysis_does_not_call_legacy_source_readers(
     assert run_standard_analysis(root, packages, plan, benchmark)["analysis_id"]
 
 
-@pytest.mark.real
 def test_standard_analysis_resolves_baseline_from_the_plan_bundle(
-    standard_package_baseline: tuple[Path, list[Path], Path, Path],
-    repo_root: Path, tmp_path: Path
+    memory_analysis_inputs, repo_root: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root, packages, plan, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
-    bundle = tmp_path / "portable-plan"
-    bundle.mkdir()
-    portable_plan = json.loads(plan.read_text(encoding="utf-8"))
-    portable_plan["baseline_config"] = "baseline.json"
-    _write_json(bundle / "analysis-plan.json", portable_plan)
-    shutil.copy(plan.parent / "baseline.json", bundle / "baseline.json")
-
-    result = run_standard_analysis(root, packages, bundle / "analysis-plan.json", benchmark)
-
+    from quant_analysis.analysis_plan import expand_analysis_plan
+    actual = expand_analysis_plan(repo_root, repo_root / "joinquant/strategies/strategy-003/research/analysis-plan.json")
+    assert actual["baseline_config"] == "baseline.json"
+    memory_analysis_inputs.expanded["baseline_config"] = actual["baseline_config"]
+    result = run_standard_analysis(*memory_analysis_inputs.inputs)
     assert result["analysis_configuration"]["baseline_config"]["path"] == "baseline.json"
 
 
-@pytest.mark.real
 def test_standard_analysis_rejects_missing_plan_scenario_package(
-    standard_package_baseline: tuple[Path, list[Path], Path, Path],
-    repo_root: Path, tmp_path: Path
+    memory_analysis_inputs, repo_root: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root, packages, plan_path, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
-    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    root, packages, plan_path, benchmark = memory_analysis_inputs.inputs
+    plan = memory_analysis_inputs.expanded
     plan["scenarios"].append(
         {"scenario_id": "alternate", "dimension": "parameter", "overrides": {}}
     )
-    _write_json(plan_path, plan)
 
     with pytest.raises(UnifiedAnalysisError, match="scenarios differ"):
         run_standard_analysis(root, packages, plan_path, benchmark)
 
 
-@pytest.mark.real
 def test_standard_analysis_rejects_package_params_that_differ_from_plan(
-    standard_package_baseline: tuple[Path, list[Path], Path, Path],
-    repo_root: Path, tmp_path: Path
+    memory_analysis_inputs, repo_root: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root, packages, plan_path, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
-    plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    baseline_path = plan_path.parent / plan["baseline_config"]
-    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-    baseline["risk"] = {"unit": 0.01}
-    _write_json(baseline_path, baseline)
+    root, packages, plan_path, benchmark = memory_analysis_inputs.inputs
+    memory_analysis_inputs.expanded["scenarios"][0]["params"]["risk"] = {"unit": 0.01}
 
     with pytest.raises(UnifiedAnalysisError, match="parameters differ"):
         run_standard_analysis(root, packages, plan_path, benchmark)
 
 
-@pytest.mark.real
 def test_standard_analysis_discovers_attribution_by_fields_not_extension_name(
-    repo_root: Path, tmp_path: Path
+    memory_analysis_inputs, repo_root: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     extension = ResultExtension(
         name="turtle_etf",
@@ -323,9 +363,9 @@ def test_standard_analysis_discovers_attribution_by_fields_not_extension_name(
         unique_key=("event_id",),
         evidence={"status": "complete"},
     )
-    root, packages, plan, benchmark = _standard_package_inputs(
-        repo_root, tmp_path, extensions=(extension,)
-    )
+    root, packages, plan, benchmark = memory_analysis_inputs.inputs
+    scenario = memory_analysis_inputs.params
+    memory_analysis_inputs.add_source(packages[0], scenario, (extension,))
 
     result = run_standard_analysis(root, packages, plan, benchmark)
 
@@ -333,9 +373,8 @@ def test_standard_analysis_discovers_attribution_by_fields_not_extension_name(
     assert result["attribution"]["event_counts"] == {"breakout_entry": 1}
 
 
-@pytest.mark.real
 def test_standard_analysis_preserves_source_loss_events_and_daily_reconciliation(
-    repo_root: Path, tmp_path: Path
+    memory_analysis_inputs, repo_root: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     extension = ResultExtension(
         name="audit_events",
@@ -377,20 +416,14 @@ def test_standard_analysis_preserves_source_loss_events_and_daily_reconciliation
         unique_key=("event_id",),
         evidence={"status": "complete"},
     )
-    root, packages, plan, benchmark = _standard_package_inputs(
-        repo_root, tmp_path, extensions=(extension,)
-    )
-    scenario = json.loads((root / "config/baseline.json").read_text(encoding="utf-8"))
+    root, packages, plan, benchmark = memory_analysis_inputs.inputs
+    scenario = copy.deepcopy(memory_analysis_inputs.params)
     scenario["universe"].append({"security": "OFFSET.X", "asset_group": "etf"})
-    _write_json(root / "config/baseline.json", scenario)
-    # Rebuild the package so its immutable manifest binds the expanded universe.
-    shutil.rmtree(packages[0])
-    packages[0] = _write_result_package(
-        root / "package",
-        strategy_id="minimal",
-        scenario=scenario,
-        extensions=(extension,),
-    )
+    memory_analysis_inputs.expanded["universe"]["OFFSET.X"] = "etf"
+    memory_analysis_inputs.expanded["scenarios"][0]["params"] = copy.deepcopy(scenario)
+    memory_analysis_inputs.expanded["scenarios"][0]["params_sha256"] = analysis.evidence_digest(scenario)
+    memory_analysis_inputs.expanded["baseline_config_sha256"] = analysis.evidence_digest(scenario)
+    memory_analysis_inputs.add_source(packages[0], scenario, (extension,))
 
     result = run_standard_analysis(root, packages, plan, benchmark)
 
@@ -430,73 +463,56 @@ def test_standard_analysis_preserves_source_loss_events_and_daily_reconciliation
     ]
 
 
-@pytest.mark.real
-def test_standard_analysis_rejects_tampered_benchmark_data(
-    standard_package_baseline: tuple[Path, list[Path], Path, Path],
-    repo_root: Path, tmp_path: Path
+def test_standard_analysis_rejects_invalid_benchmark_evidence(
+    memory_analysis_inputs, repo_root: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root, packages, plan, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
-    benchmark_data = benchmark.parent / "benchmark-returns.parquet"
-    table = pq.read_table(benchmark_data)
-    returns = table["returns"].to_pylist()
-    returns[-1] = float(returns[-1]) + 0.01
-    pq.write_table(table.set_column(2, "returns", pa.array(returns)), benchmark_data)
+    root, packages, plan, benchmark = memory_analysis_inputs.inputs
+    from scripts.research.market_data.benchmark_sets import BenchmarkSetError
+    def invalid_benchmark(_root):
+        raise BenchmarkSetError("benchmark data digest mismatch")
+    monkeypatch.setattr(analysis, "open_benchmark_set", invalid_benchmark)
 
     with pytest.raises(UnifiedAnalysisError, match="benchmark.*digest"):
         run_standard_analysis(root, packages, plan, benchmark)
 
 
-@pytest.mark.real
 def test_standard_analysis_is_byte_deterministic_after_fresh_output(
-    standard_package_baseline: tuple[Path, list[Path], Path, Path],
-    repo_root: Path, tmp_path: Path
+    memory_analysis_inputs, repo_root: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root, packages, plan, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
+    root, packages, plan, benchmark = memory_analysis_inputs.inputs
     first = run_standard_analysis(root, packages, plan, benchmark)
     workspace = root / ".local/standard-strategy-analysis" / first["analysis_id"]
-    first_bytes = (workspace / "deterministic-analysis.json").read_bytes()
-    shutil.rmtree(workspace)
+    first_bytes = memory_analysis_inputs.artifacts[workspace / "deterministic-analysis.json"]
+    memory_analysis_inputs.artifacts.clear()
 
     second = run_standard_analysis(root, packages, plan, benchmark)
 
     assert second == first
-    assert (workspace / "deterministic-analysis.json").read_bytes() == first_bytes
+    assert memory_analysis_inputs.artifacts[workspace / "deterministic-analysis.json"] == first_bytes
 
 
-@pytest.mark.real
 def test_standard_analysis_rejects_source_drift_before_publishing(
-    standard_package_baseline: tuple[Path, list[Path], Path, Path],
-    repo_root: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    memory_analysis_inputs, repo_root: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root, packages, plan, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
-    package_manifest = packages[0] / "manifest.json"
-    real_benchmark_series = analysis._benchmark_series
-
-    def mutate_source_after_reads(path: Path) -> dict[str, pd.Series]:
-        result = real_benchmark_series(path)
-        package_manifest.write_bytes(package_manifest.read_bytes() + b" ")
-        return result
-
-    monkeypatch.setattr(analysis, "_benchmark_series", mutate_source_after_reads)
-
+    root, packages, plan, benchmark = memory_analysis_inputs.inputs
+    calls = 0
+    def changing_sources(paths):
+        nonlocal calls
+        calls += 1
+        values = tuple(memory_analysis_inputs.sources[Path(path).resolve()] for path in paths)
+        return values if calls == 1 else tuple(replace(value, manifest_sha256="f" * 64) for value in values)
+    monkeypatch.setattr(analysis, "open_package_sources", changing_sources)
     with pytest.raises(UnifiedAnalysisError, match="changed during analysis"):
         run_standard_analysis(root, packages, plan, benchmark)
-    assert not list(
-        (root / ".local/standard-strategy-analysis").glob(
-            "*/deterministic-analysis.json"
-        )
-    )
+    assert calls == 2
+    assert memory_analysis_inputs.artifacts == {}
 
 
-@pytest.mark.real
 def test_missing_period_observations_degrade_to_evidence_insufficient(
-    standard_package_baseline: tuple[Path, list[Path], Path, Path],
-    repo_root: Path, tmp_path: Path
+    memory_analysis_inputs, repo_root: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root, packages, plan_path, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
-    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    root, packages, plan_path, benchmark = memory_analysis_inputs.inputs
+    plan = memory_analysis_inputs.expanded
     plan["analyses"]["fixed_periods"] = [
         {"id": "missing", "start": "1990-01-01", "end": "1990-12-31"}
     ]
@@ -513,7 +529,6 @@ def test_missing_period_observations_degrade_to_evidence_insufficient(
             "max_drawdown_abs_max": 1.0,
         }
     ]
-    _write_json(plan_path, plan)
 
     result = run_standard_analysis(root, packages, plan_path, benchmark)
 
@@ -528,31 +543,18 @@ def test_missing_period_observations_degrade_to_evidence_insufficient(
     )
 
 
-@pytest.mark.real
 def test_cost_execution_scenario_uses_standard_package_metrics(
-    standard_package_baseline: tuple[Path, list[Path], Path, Path],
-    repo_root: Path, tmp_path: Path
+    memory_analysis_inputs, repo_root: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root, packages, plan_path, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
-    plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    plan["scenarios"].append(
-        {
-            "scenario_id": "double-commission",
-            "dimension": "cost_execution",
-            "overrides": {"costs": {"commission_multiplier": 2.0}},
-        }
-    )
-    _write_json(plan_path, plan)
-    scenario = json.loads((root / "config/baseline.json").read_text(encoding="utf-8"))
+    root, packages, plan_path, benchmark = memory_analysis_inputs.inputs
+    scenario = copy.deepcopy(memory_analysis_inputs.params)
     scenario["scenario_id"] = "double-commission"
     scenario["costs"] = {"commission_multiplier": 2.0}
-    packages.append(
-        _write_result_package(
-            root / "cost-package",
-            strategy_id="minimal",
-            scenario=scenario,
-        )
-    )
+    packages.append(memory_analysis_inputs.add_source(root / "memory-cost-package", scenario))
+    memory_analysis_inputs.expanded["scenarios"].append({
+        "scenario_id": "double-commission", "dimension": "cost_execution",
+        "overrides": {"costs": {"commission_multiplier": 2.0}}, "params": scenario,
+        "params_sha256": analysis.evidence_digest(scenario)})
 
     result = run_standard_analysis(root, packages, plan_path, benchmark)
 
@@ -563,12 +565,10 @@ def test_cost_execution_scenario_uses_standard_package_metrics(
     assert cost[0]["metrics"]["cagr"] > 0
 
 
-@pytest.mark.real
 def test_standard_analysis_keeps_independent_results_and_evidence_gaps(
-    standard_package_baseline: tuple[Path, list[Path], Path, Path],
-    repo_root: Path, tmp_path: Path
+    memory_analysis_inputs, repo_root: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root, packages, plan, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
+    root, packages, plan, benchmark = memory_analysis_inputs.inputs
 
     result = run_standard_analysis(root, packages, plan, benchmark)
 
@@ -587,7 +587,7 @@ def test_standard_analysis_keeps_independent_results_and_evidence_gaps(
     assert result["analysis_configuration"]["scenario_params"]
     assert result["script"]["version"] == "analyze-quant-robustness/2"
     assert result["script"]["entry"].endswith("analyze_quant_robustness.py")
-    assert (root / ".local/standard-strategy-analysis" / result["analysis_id"] / "deterministic-analysis.json").is_file()
+    assert root / ".local/standard-strategy-analysis" / result["analysis_id"] / "deterministic-analysis.json" in memory_analysis_inputs.artifacts
 
 
 def test_rolling_window_accepts_exact_calendar_year() -> None:
@@ -623,12 +623,10 @@ def test_rolling_window_accepts_exact_calendar_year() -> None:
     assert rows[-1]["dimension"] == "rolling_gate"
 
 
-@pytest.mark.real
 def test_standard_analysis_runs_single_source_return_checks(
-    standard_package_baseline: tuple[Path, list[Path], Path, Path],
-    repo_root: Path, tmp_path: Path
+    memory_analysis_inputs, repo_root: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root, packages, plan, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
+    root, packages, plan, benchmark = memory_analysis_inputs.inputs
 
     result = run_standard_analysis(root, packages, plan, benchmark)
 

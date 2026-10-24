@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import pytest
 
 import hashlib
 import json
 from pathlib import Path
-import subprocess
 
 
 def _sha256(path: Path) -> str:
@@ -130,59 +128,6 @@ def test_local_research_and_standard_analysis_skills_do_not_call_each_other(
     )
 
 
-@pytest.mark.real
-def test_standard_analysis_import_graph_excludes_local_research_runtime(
-    repo_root: Path,
-) -> None:
-    entry = (
-        repo_root
-        / ".agents/skills/analyze-quant-robustness/scripts/analyze_quant_robustness.py"
-    )
-    completed = subprocess.run(
-        [
-            str(repo_root / ".venv/Scripts/python.exe"),
-            "-c",
-            (
-                "import runpy,sys;"
-                f"runpy.run_path({str(entry)!r},run_name='skill_import');"
-                "print('\\n'.join(sorted(name for name in sys.modules "
-                "if name.startswith('scripts.research.local_quant_research'))))"
-            ),
-        ],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        shell=False,
-        check=True,
-    )
-
-    assert completed.stdout == "\n"
-
-
-@pytest.mark.real
-def test_local_research_import_graph_excludes_analysis_runtime(
-    repo_root: Path,
-) -> None:
-    completed = subprocess.run(
-        [
-            str(repo_root / ".venv/Scripts/python.exe"),
-            "-c",
-            (
-                "import scripts.research.local_quant_research.runner,sys;"
-                "print('\\n'.join(sorted(name for name in sys.modules "
-                "if name.startswith('scripts.research.analysis_data'))))"
-            ),
-        ],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        shell=False,
-        check=True,
-    )
-
-    assert completed.stdout == "\n"
-
-
 def test_standard_analysis_skill_is_the_only_public_entry(repo_root: Path) -> None:
     source = repo_root / ".agents" / "skills" / "analyze-quant-robustness"
     claude = repo_root / ".claude" / "skills" / "analyze-quant-robustness"
@@ -256,10 +201,10 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
     numeric = checks["verify.quant-calculation"]
     assert "NUMBA_DISABLE_JIT=1" in numeric["command"]
     assert "test_turtle_vectorbt_callbacks.py" in numeric["command"]
-    equivalence = checks["verify.quant-equivalence"]
-    assert "test_local_research_equivalence.py" in equivalence["command"]
-    assert "verify.quant-equivalence" in real
-    assert all(not path.startswith(".local/") for path in equivalence["inputs"])
+    assert "verify.quant-equivalence" not in checks
+    assert "verify.skill-layout-real" not in checks
+    assert "test_local_research_equivalence.py" in checks["verify.quant-unit"]["command"]
+    assert all(not path.startswith(".local/") for check in checks.values() for path in check["inputs"])
 
 
 def test_full_verify_checkout_downloads_git_lfs_objects(repo_root: Path) -> None:

@@ -1,134 +1,149 @@
-# 新配置增量精确清单（待再次写入确认）
+# 14 项配置精确清单：12 条领域核心冒烟（待官方覆盖确认）
 
-完整命令、逐项 paths/inputs 以 [config.candidate.json](config.candidate.json) 为准。上一版 SHA256 `ca0823e2dd84ac71fda2e0355f846c17c6b4e01007378409c79ea2dfc8c5b14f` 已经用户批准并由官方初始化写入；本次候选 SHA256 `2d99dffd360755425bf7a214687d246d83862473336ad5af4c9b41d9584b3079` 尚未覆盖目标配置。
+完整命令及每项 paths/inputs 见 [config.candidate.json](config.candidate.json)。候选 SHA256：
 
-## 本次仅两类配置变化
+`80bebb691467584e27d83b400885805a88161c5ed8188113d7a4bacb452fd9e6`
 
-1. 将 `verify.quant-equivalence`、`verify.quant-real`、`verify.sync-real`、`verify.analysis-real` 按此顺序前置；其余 12 项保留原相对顺序。上一轮耗时分别为 32.91 秒后被总截止终止、29.27 秒、24.31 秒、9.67 秒；前置让长组更早拿到现有 worker，不表示已经证明全轮可在 60 秒内完成。
-2. 在 `verify.quant-unit`、`verify.quant-real`、`verify.quant-calculation`、`verify.quant-equivalence`、`verify.market-unit`、`verify.market-real`、`verify.analysis-unit`、`verify.analysis-real` 的 paths 和 inputs 各补 `scripts/__init__.py`、`scripts/research/__init__.py`，补齐实际包初始化及运行身份读取闭包。
+当前正式目标 SHA256 仍为 `ca0823e2dd84ac71fda2e0355f846c17c6b4e01007378409c79ea2dfc8c5b14f`，本次未改。旧排序候选 `2d99dffd` 已废弃，不能用于本轮初始化。
 
-16 个 ID、命令、角色、超时、预算、外并发 4、工作树内并发 4、串并行属性均不改变。浏览器和工作树仍在并行批次结束后按原相对顺序串行，不新增调度框架或检查。
+## 已批准范围与本次配置变化
+
+用户 `Sentinel_5eba966575b48191aa0b9a7d916fb320` 已批准按领域/场景保留一条最核心真实链，并明确接受所披露的物理异常矩阵及三条私有全历史复算删除。不是把旧 253 个真实函数塞进几个入口。当前静态源映射为 312 个测试函数：300 普通、12 真实；参数化实例数与运行结果尚待正式验收。
+
+- 16 项改为 14 项：删除 `verify.skill-layout-real` 和 `verify.quant-equivalence`。普通 7 项，真实 7 项承接下列 12 链；每领域仍有独立选择和缓存。
+- 第一批顺序为 quant-real、analysis-real、quant-calculation、sync-real，其余保留原相对顺序。基于已有耗时让长组早启动，不保证 60 秒已达标。
+- 命令改为实际保留模块列表，全部普通组使用精确 `-m "not real"`，全部真实组使用 `-m real`。删除已退休测试和大历史归档输入，不隐藏真实依赖。
+- 量化/行情/分析共 7 项的 paths 与 inputs 补齐 `scripts/__init__.py`、`scripts/research/__init__.py`。计算项另精确包含两个 minimal_strategy 目录和 performance-baseline.json；分析普通项包含现有静态策略输入和共享测试数据接缝，真实 SQL 数据在所属小型夹具中生成。
 
 ## 运行与权限边界
 
-- 配置版本2；构建检查空集；16个检查，7普通守卫、9真实未保护。
-- 最大外层并发4。仅工作树检查内部4个Pytest工作进程并显式加载xdist；浏览器和工作树检查在并行批次结束后分别串行执行，其他检查安全并行。原生库线程和业务子进程另行计数，不声称总进程硬上限16。
-- 本机快/全验证60秒总硬截止，强制开关true；默认单检查180秒，原量化单项300秒保留。无3秒单测限制；云端/PR/CI沿工具原策略。
-- Pytest插件自动加载关闭。原量化检查保留NUMBA_DISABLE_JIT=1，不把公式通过冒充编译通过。
-- 普通检查仅模拟 CCXT 可选依赖不可用及 IPv6 宿主能力不可用，以避免无关导入探测；socket 构造、子进程和守卫不变，普通结果不证明这两项宿主能力，真实检查不使用该模拟。
-- 每check独立basetemp为 .local/pytest/<check-id>；真实检查各worker/session另有native-temp，TEMP/TMP/TMPDIR随之绑定。会话共享基线只读、每case独立复制。守卫自身临时证据仍走工具原有每check隔离机制；启动官方工具前先把其临时根绑定在已确认的本repo目录，不逃守卫。
-- 两条完整量化 CLI 主路各在独立真实临时仓库运行，只复制所需公开源码、策略和 schema，并各用一个 junction 复用原虚拟环境；不复制私有行情、历史档案或验证缓存。生产暂存区外写入检测及验证缓存目录保护保持原样，复制和 junction 的实际耗时仍待验证。
-- 三个私有快照场景条件skip，静态覆盖不等于复算通过；不上传私有行情或凭据。
+- 版本 2；build.checks 保持空，无假构建。外层 maxParallel=4；只保留既有工作树检查 pytestXdistWorkers=4 并显式加载 xdist。浏览器、工作树 checkParallel=false，按工具既有串行阶段执行；不新增调度器。线程/业务子进程不冒称包含在名义 4×4 内。
+- 本机快/全验证 fullBudgetSeconds=60、enforceLocalBudget=true，到期终止本次进程树、停止剩余检查并失败。默认单检查 180 秒，既有量化项 300 秒；不加单测 3 秒。云端/PR/CI 沿工具原策略。
+- PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 保持；现有量化 NUMBA_DISABLE_JIT=1 保持。公式通过不代表实际编译，生产 JIT 与正式编译契约不改。
+- 普通组仅按精确 markexpr 模拟可选 CCXT 不可用和 IPv6 宿主能力不可用，复用依赖原有分支并 cleanup；实际 socket/Popen/守卫不改。普通结果不证明这两种宿主能力，真实组不应用模拟。
+- 各 check 独立 `.local/pytest/<check-id>`，真实 worker/session 各有 native-temp；不共享可变 basetemp。普通阶段不 mkdir，tempfile 只缓存已存在的仓库内路径值，真实写仍被守卫拒绝。工具的 TEMP/TMP/TMPDIR 只绑定到已批准仓库内目录，不用以逃守卫。
+- 两个量化 E2E 各复制必要公开源码、策略和 schema 到独立真实临时仓库，各用一个 .venv junction；失败必须 fail，结束只 rmdir junction 本身。无私有行情、历史归档或缓存复制；生产暂存区外写入监控和验证缓存保护保持原样。
 
-## 逐项清单
+## 按执行顺序逐项清单
 
-1. **verify.quant-equivalence**：真实未保护；三个固定机器私有快照条件复算，缺数据明确skip；检查间可并行。
+1. **verify.quant-real**：真实未保护；2 条：通用策略、海龟策略的最小真实运行；后者保留一次晋升。
 
-   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.quant-equivalence tests/local_quant_research/test_local_research_equivalence.py -m real`
+   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.quant-real tests/local_quant_research/test_generic_e2e.py tests/local_quant_research/test_turtle_e2e.py -m real`
 
-   paths/inputs：见完整JSON同ID条目。
+   paths 20 项 / inputs 21 项：完整 JSON 同 ID 的两个数组；允许检查间并行；单项超时 300 秒。
 
-2. **verify.quant-real**：真实未保护；量化真实运行、结果包固化及晋升的核心成功/恢复路径；检查间可并行。
+2. **verify.analysis-real**：真实未保护；3 条：标准分析 run→report；backtest、simulation 两种来源各一条真实只读 SQL。
 
-   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.quant-real tests/local_quant_research/test_analysis_manifest_schemas.py tests/local_quant_research/test_archive_promotion.py tests/local_quant_research/test_result_package.py tests/local_quant_research/test_runner.py tests/local_quant_research/test_strategy_contract.py tests/local_quant_research/test_evidence.py tests/local_quant_research/test_contract_fixtures.py tests/local_quant_research/test_skill_contract.py tests/local_quant_research/test_strategy_identity.py tests/local_quant_research/test_local_research_v2_e2e.py tests/local_quant_research/test_generic_e2e.py tests/local_quant_research/test_turtle_e2e.py -m real`
+   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.analysis-real tests/quant_analysis/test_standard_analysis_e2e.py tests/local_quant_research/test_analysis_data_views.py -m real`
 
-   paths/inputs：见完整JSON同ID条目。
+   paths 19 项 / inputs 20 项：完整 JSON 同 ID 的两个数组；允许检查间并行；单项超时 300 秒。
 
-3. **verify.sync-real**：真实未保护；同步归档、原生查询和公开自检的持久主路；检查间可并行。
-
-   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.sync-real tests/joinquant_sync/test_archive.py tests/joinquant_sync/test_query.py tests/joinquant_sync/test_self_test.py tests/joinquant_sync/test_sync_pipeline.py -m real`
-
-   paths/inputs：见完整JSON同ID条目。
-
-4. **verify.analysis-real**：真实未保护；标准分析run/report与真实SQL视图/源完整性；检查间可并行。
-
-   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.analysis-real tests/quant_analysis/test_analysis_plan.py tests/quant_analysis/test_reporting.py tests/quant_analysis/test_standard_analysis_e2e.py tests/quant_analysis/test_statistics.py tests/quant_analysis/test_unified_analysis.py tests/local_quant_research/test_analysis_data_views.py -m real`
-
-   paths/inputs：见完整JSON同ID条目。
-
-5. **verify.skill-layout**：普通守卫；技能布局与配置的静态契约；检查间可并行。
-
-   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.skill-layout tests/test_skill_layout.py tests/test_setup_worktree.py -m "not real"`
-
-   paths/inputs：见完整JSON同ID条目。
-
-6. **verify.skill-layout-real**：真实未保护；两项隔离进程导入边界；检查间可并行。
-
-   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.skill-layout-real tests/test_skill_layout.py -m real`
-
-   paths/inputs：见完整JSON同ID条目。
-
-7. **verify.sync-unit**：普通守卫；归档/浏览器响应/同步的内存契约与必要静态读取；检查间可并行。
-
-   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.sync-unit tests/joinquant_sync/test_archive.py tests/joinquant_sync/test_browser_research.py tests/joinquant_sync/test_manual_sync_cli.py tests/joinquant_sync/test_query.py tests/joinquant_sync/test_self_test.py tests/joinquant_sync/test_sync_pipeline.py -m "not real"`
-
-   paths/inputs：见完整JSON同ID条目。
-
-8. **verify.browser-real**：真实未保护；Chromium/Windows加密会话及SQLite一次性消费；并行批次后串行。
-
-   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.browser-real tests/joinquant_sync/test_browser_research.py -m real`
-
-   paths/inputs：见完整JSON同ID条目。
-
-9. **verify.docs-unit**：普通守卫；HTML格式与API索引内存转换；检查间可并行。
-
-   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.docs-unit tests/joinquant_docs_sync/test_cli.py -m "not real"`
-
-   paths/inputs：见完整JSON同ID条目。
-
-10. **verify.docs-real**：真实未保护；文档CLI预览/同步/幂等/失败保留/校验；检查间可并行。
-
-   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.docs-real tests/joinquant_docs_sync/test_cli.py -m real`
-
-   paths/inputs：见完整JSON同ID条目。
-
-11. **verify.quant-unit**：普通守卫；量化配置、结果包和晋升的内存及静态契约；检查间可并行。
-
-   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.quant-unit tests/local_quant_research/test_analysis_manifest_schemas.py tests/local_quant_research/test_archive_promotion.py tests/local_quant_research/test_result_package.py tests/local_quant_research/test_runner.py tests/local_quant_research/test_strategy_contract.py tests/local_quant_research/test_evidence.py tests/local_quant_research/test_contract_fixtures.py tests/local_quant_research/test_skill_contract.py tests/local_quant_research/test_strategy_identity.py tests/local_quant_research/test_local_research_v2_e2e.py tests/local_quant_research/test_local_research_equivalence.py tests/local_quant_research/test_generic_e2e.py tests/local_quant_research/test_turtle_e2e.py -m "not real"`
-
-   paths/inputs：见完整JSON同ID条目。
-
-12. **verify.quant-calculation**：普通守卫；海龟与vectorbt计算、输入、回调公式；检查间可并行。
+3. **verify.quant-calculation**：普通守卫；普通公式、回调、输入、适配器及性能结果契约；不做真实 JIT 编译。
 
    命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.quant-calculation tests/local_quant_research/test_turtle_indicators.py tests/local_quant_research/test_turtle_vectorbt_callbacks.py tests/local_quant_research/test_turtle_vectorbt_inputs.py tests/local_quant_research/test_turtle_vectorbt_delayed.py tests/local_quant_research/test_turtle_vectorbt_engine.py tests/local_quant_research/test_turtle_result_adapter.py tests/local_quant_research/test_turtle_strategy_module.py tests/local_quant_research/test_vectorbt_runtime.py tests/local_quant_research/test_turtle_vectorbt_performance.py -m "not real"`
 
-   paths/inputs：见完整JSON同ID条目。
+   paths 29 项 / inputs 30 项：完整 JSON 同 ID 的两个数组；允许检查间并行；单项超时 300 秒。
 
-13. **verify.market-unit**：普通守卫；行情、基准、导出与收益的内存契约；检查间可并行。
+4. **verify.sync-real**：真实未保护；1 条：模拟归档提交→再次同步幂等→校验→查询→CSV 导出，共用一份数据。
+
+   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.sync-real tests/joinquant_sync/test_sync_pipeline.py -m real`
+
+   paths 7 项 / inputs 8 项：完整 JSON 同 ID 的两个数组；允许检查间并行；单项超时 180 秒。
+
+5. **verify.skill-layout**：普通守卫；技能布局、配置契约及工作树脚本静态约束。
+
+   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.skill-layout tests/test_skill_layout.py tests/test_setup_worktree.py -m "not real"`
+
+   paths 14 项 / inputs 15 项：完整 JSON 同 ID 的两个数组；允许检查间并行；单项超时 180 秒。
+
+6. **verify.sync-unit**：普通守卫；归档/查询门禁、响应解析、浏览器 CLI 和同步规则的内存输入。
+
+   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.sync-unit tests/joinquant_sync/test_archive.py tests/joinquant_sync/test_browser_research.py tests/joinquant_sync/test_manual_sync_cli.py tests/joinquant_sync/test_query.py tests/joinquant_sync/test_sync_pipeline.py -m "not real"`
+
+   paths 11 项 / inputs 12 项：完整 JSON 同 ID 的两个数组；允许检查间并行；单项超时 180 秒。
+
+7. **verify.browser-real**：真实未保护；3 条：一次 Chromium 会话/下载；Windows DPAPI 加密恢复；SQLite 持久一次性消费。
+
+   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.browser-real tests/joinquant_sync/test_browser_research.py -m real`
+
+   paths 7 项 / inputs 8 项：完整 JSON 同 ID 的两个数组；串行阶段；单项超时 180 秒。
+
+8. **verify.docs-unit**：普通守卫；HTML/Markdown 转换、索引、参数解析和 UTF-8 输出的内存流验证。
+
+   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.docs-unit tests/joinquant_docs_sync/test_cli.py -m "not real"`
+
+   paths 8 项 / inputs 9 项：完整 JSON 同 ID 的两个数组；允许检查间并行；单项超时 180 秒。
+
+9. **verify.docs-real**：真实未保护；1 条：公开离线 self-test 的预览→同步→幂等→校验链。
+
+   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.docs-real tests/joinquant_docs_sync/test_cli.py -m real`
+
+   paths 8 项 / inputs 9 项：完整 JSON 同 ID 的两个数组；允许检查间并行；单项超时 180 秒。
+
+10. **verify.quant-unit**：普通守卫；契约、结果包、晋升拒绝/禁止重算、静态历史夹具结构和摘要连接；无私有全历史复算。
+
+   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.quant-unit tests/local_quant_research/test_analysis_manifest_schemas.py tests/local_quant_research/test_archive_promotion.py tests/local_quant_research/test_result_package.py tests/local_quant_research/test_runner.py tests/local_quant_research/test_strategy_contract.py tests/local_quant_research/test_evidence.py tests/local_quant_research/test_contract_fixtures.py tests/local_quant_research/test_skill_contract.py tests/local_quant_research/test_strategy_identity.py tests/local_quant_research/test_local_research_v2_e2e.py tests/local_quant_research/test_local_research_equivalence.py -m "not real"`
+
+   paths 36 项 / inputs 37 项：完整 JSON 同 ID 的两个数组；允许检查间并行；单项超时 300 秒。
+
+11. **verify.market-unit**：普通守卫；行情规范化、经济收益、查询选择和基准契约的普通数据规则。
 
    命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.market-unit tests/local_quant_research/test_market_data_candidate_screen.py tests/local_quant_research/test_market_data_economic_returns.py tests/local_quant_research/test_market_data_query.py tests/local_quant_research/test_market_data_storage.py tests/local_quant_research/test_benchmark_set_contract.py tests/local_quant_research/test_joinquant_export.py -m "not real"`
 
-   paths/inputs：见完整JSON同ID条目。
+   paths 14 项 / inputs 15 项：完整 JSON 同 ID 的两个数组；允许检查间并行；单项超时 300 秒。
 
-14. **verify.market-real**：真实未保护；CSV/Parquet/快照的原生持久、冲突和锁保证；检查间可并行。
+12. **verify.market-real**：真实未保护；1 条：小型 CSV 运输→导入→不可变快照→真实查询，包含公司行动输入。
 
-   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.market-real tests/local_quant_research/test_market_data_candidate_screen.py tests/local_quant_research/test_market_data_economic_returns.py tests/local_quant_research/test_market_data_query.py tests/local_quant_research/test_market_data_storage.py tests/local_quant_research/test_benchmark_set_contract.py tests/local_quant_research/test_joinquant_export.py -m real`
+   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.market-real tests/local_quant_research/test_joinquant_export.py -m real`
 
-   paths/inputs：见完整JSON同ID条目。
+   paths 9 项 / inputs 10 项：完整 JSON 同 ID 的两个数组；允许检查间并行；单项超时 300 秒。
 
-15. **verify.analysis-unit**：普通守卫；标准分析的纯计算、输入和报告契约；检查间可并行。
+13. **verify.analysis-unit**：普通守卫；计划/schema、统计、报告及统一分析计算；使用现有数据接缝和内存 Arrow/JSON。
 
-   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.analysis-unit tests/quant_analysis/test_analysis_plan.py tests/quant_analysis/test_reporting.py tests/quant_analysis/test_standard_analysis_e2e.py tests/quant_analysis/test_statistics.py tests/quant_analysis/test_unified_analysis.py tests/local_quant_research/test_analysis_data_views.py -m "not real"`
+   命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\.venv\Scripts\python.exe -m pytest --basetemp=.local/pytest/verify.analysis-unit tests/quant_analysis/test_analysis_plan.py tests/quant_analysis/test_reporting.py tests/quant_analysis/test_statistics.py tests/quant_analysis/test_unified_analysis.py -m "not real"`
 
-   paths/inputs：见完整JSON同ID条目。
+   paths 24 项 / inputs 25 项：完整 JSON 同 ID 的两个数组；允许检查间并行；单项超时 300 秒。
 
-16. **verify.worktree-setup**：真实未保护；真实Git/PowerShell共享虚拟环境及缺失/过期恢复；并行批次后串行，内部4工作进程。
+14. **verify.worktree-setup**：真实未保护；1 条：同一 Git 仓库 main 初始化→worktree 共享环境→清单正常更新→正式验证入口。
 
    命令：`set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\.venv\Scripts\python.exe -m pytest -p xdist.plugin --basetemp=.local/pytest/verify.worktree-setup tests/test_setup_worktree.py -m real`
 
-   paths/inputs：见完整JSON同ID条目。
+   paths 7 项 / inputs 8 项：完整 JSON 同 ID 的两个数组；串行阶段；单项超时 180 秒。
 
-## 写入前核验状态
+## 7 个真实检查 → 12 条实际链
 
-已完成本机有界元数据、命令及测试目标核查：Python 3.12.10、Pytest 9.0.3、xdist 3.8.0、Playwright 1.61；Chromium 1228普通与无头可执行文件存在。上一版已完成官方初始化、备份及结构核验。最近提交 `ff734109e366f57dfebdc7d8cf290f5326b7fc55` 的官方 16 项验证，12 项通过（包含全部 7 项普通守卫且保护证据完整），量化真实组因并发验证缓存写入触发原漂移检测而失败；私有复算组被 60 秒总截止终止，浏览器和工作树未启动。总计 60.14 秒，未通过，不作为性能达标证据。上述隔离夹具和本次新配置尚未验收；本次新增的两条静态依赖须做定向存在核查，不重复全量扫描。
+- verify.sync-real：`tests/joinquant_sync/test_sync_pipeline.py::test_public_simulation_archive_query_smoke`
+- verify.docs-real：`tests/joinquant_docs_sync/test_cli.py::test_public_self_test_runs_complete_offline_flow`
+- verify.browser-real：`tests/joinquant_sync/test_browser_research.py::test_persistent_context_and_download_capture`
+- verify.browser-real：`tests/joinquant_sync/test_browser_research.py::test_authenticated_session_is_encrypted_and_restored`
+- verify.browser-real：`tests/joinquant_sync/test_browser_research.py::test_paid_preview_is_bound_and_one_time`
+- verify.quant-real：`tests/local_quant_research/test_generic_e2e.py::test_minimal_strategy_completes_public_run`
+- verify.quant-real：`tests/local_quant_research/test_turtle_e2e.py::test_turtle_project_completes_full_single_scenario_entrypoint`
+- verify.market-real：`tests/local_quant_research/test_joinquant_export.py::test_verified_transfer_snapshot_query_smoke`
+- verify.analysis-real：`tests/quant_analysis/test_standard_analysis_e2e.py::test_standard_analysis_skill_runs_only_the_read_only_package_flow`
+- verify.analysis-real：`tests/local_quant_research/test_analysis_data_views.py::test_joinquant_source_builds_six_read_only_logical_views`
+- verify.analysis-real：`tests/local_quant_research/test_analysis_data_views.py::test_joinquant_simulation_requires_and_pins_one_snapshot`
+- verify.worktree-setup：`tests/test_setup_worktree.py::test_main_worktree_update_and_verification_smoke`
 
-### 写入前最后确认
+## 真实输入和准备次数
 
-- 在准确本机量化工作树检查项目Python、Pytest/xdist及命令依赖可用；检查逐项字面路径与通配输入。
-- 检查 .build-and-verify 及默认备份目录可写、备份留在repo内；先展示问题、影响及建议。
-- 用户最终确认后，才执行裸 build-and-verify init --project <已核实量化工作树> --config <已确认本文件旁JSON> --overwrite；旧配置由工具备份到 .build-and-verify/backups/config-YYYYMMDD-HHMMSS.json，并补齐cache/runs/backups忽略规则；随即按官方契约验证结构。
-- 配置变化将选择全部16项，不能声称只运行一个普通项；正式执行次数与是否跑完整模式仍按原授权及门禁处理。
+- 同步：一份公开模拟响应和研究响应，一次归档数据；第二次同步验证幂等，不重新建独立归档。文档：一次离线目录树和同链输出。
+- 浏览器：一次 Chromium launch/context/download；DPAPI 一次会话加密/恢复，不另启动浏览器；付费预览一次文件 SQLite 创建/消费，并以第二次消费拒绝证明持久约束。三种不可替代能力各一条。
+- 通用研究：2 日、1 资产、1 批次、1 快照、1 run；海龟：70 个交易日、11 ETF、1 批次、1 快照、1 run、1 次晋升。两 case 各有独立临时 repo/venv junction，无新增 session 基线再复制层。
+- 行情：一个 4 行/2 证券的小运输与一个公司行动输入；分析 run/report 复用同一计划、两小结果包和一份基准。
+- 只读 SQL：backtest 和 simulation 各创建同 schema 的 6 张小 Parquet 表，共 12 张；非空结果/余额各 2 行、风险 1 行，其余允许空，仅读这些小树。simulation 固定一个 tiny-snapshot。没有扫描 backtests/111 或私有大历史。
+- 工作树：一个 Git 仓库、一个真实环境；同链完成 main、worktree 与正常清单更新。仍复用现有 PowerShell/项目 .venv，不用静态字符串代替实际分支。实际耗时待测，不承诺缩短秒数。
 
-## CI身份来源
+## 覆盖变化与证据边界
 
-BAV开发模式身份来自已实际运行的官方doctor：源码提交0cecf8a48865aab9483cfe21527f58ab2f98c930，实现身份sha256:796c6ff086f5cc7031d1b7a404371a0204242af343bdb98984b61ec7be5b93d8，CLI/包2.7.1。仅同步量化仓库BAV记录及工作流BAV源码锁，MySpec旧身份不变；不提前执行PR、合并或正式complete。Ubuntu工具链快速验证若跳过，只计工具链/结构证据，Windows真实验收仍独立完成。
+- 转普通：同步/归档前置拒绝与响应数据，文档解析/编码内存流，结果包数据契约及复用/冲突规则，行情规范化/选择与摘要，分析计划/schema/Arrow 表/统计/报告计算等；保留原有有价值断言，使用已有公开数据接缝，不造 fake FS/DB。
+- 按批准退休：锁竞争、系统重试、链接组合、异常回滚、历史格式、重复 CLI 接线的独有物理组合；生产保护未删，不能宣称物理异常覆盖完全不变。最后残留 backtests/111 全树/Parquet 历史实体验证也退休，不暗留未声明 LFS 依赖。
+- 删除三条私有全历史重算；保留两项静态历史夹具结构/摘要连接和原研究证据。静态证据不等于自动精确复算，无隐藏 skip、无第二手动入口。重复独立 JIT 检查已去重，公式仍在。
+- 本轮只完成源代码静态检查与独立审查，不把删除 real 标记/搜索 write/AST 解析当守卫通过。旧轮 7 个普通组 guard 通过仅属于旧提交，不替代本轮 14 项验收；正式运行将分别披露 pass/fail/skip/未运行/角色。
+
+## 确认后官方步骤
+
+1. 父线程在本机准确仓库复核固定提交、候选 SHA、项目 .venv 与现有 2.7.1 身份；仅在授权仓库内准备日志/临时目录，不重装依赖。
+2. 用户确认本完整清单后，经裸 `build-and-verify init --project "D:\My Project\Quant-Research-Lab" --config "D:\My Project\Quant-Research-Lab\myspec\changes\2026-10-24-migrate-guarded-validation\config.candidate.json" --overwrite` 备份并写入，核正式目标与候选一致；不手写目标。
+3. 父线程统一串行安排本机正式固定基线验证，禁止与其他任务抢资源。60 秒硬截止和守卫不放宽；若失败按根因分层，不自动反复全量。
+4. 量化仓库 BAV 身份已基于官方 doctor 同步 2.7.1 / 源 0cecf8a，独立 CI 旧锁已同步；MySpec 旧锁不擅改。Ubuntu 干净 verify 的 skipped 仅工具链/结构证据，非 Windows 验收。正式规格仍待 Gate2。

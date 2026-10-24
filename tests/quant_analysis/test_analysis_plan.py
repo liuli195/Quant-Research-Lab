@@ -85,41 +85,39 @@ def test_scenario_identifier_contract_matches_analysis_schema() -> None:
         ),
     ],
 )
-@pytest.mark.real
 def test_rejects_inconsistent_plan(
     repo_root: Path,
-    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     mutation,
     message: str,
 ) -> None:
     plan = _load_plan(repo_root)
     mutation(plan)
-    path = tmp_path / "analysis-plan.json"
-    path.write_text(json.dumps(plan), encoding="utf-8")
-    (tmp_path / "baseline.json").write_bytes(
-        (repo_root / PLAN_PATH.parent / "baseline.json").read_bytes()
-    )
+    import quant_analysis.analysis_plan as module
+    original_load = module._load_json
+    monkeypatch.setattr(module, "_load_json", lambda path, *, label:
+                        copy.deepcopy(plan) if label == "analysis plan" else original_load(path, label=label))
 
     with pytest.raises(AnalysisPlanError, match=message):
-        expand_analysis_plan(repo_root, path)
+        expand_analysis_plan(repo_root, PLAN_PATH)
 
-@pytest.mark.real
 def test_rejects_baseline_path_outside_plan_bundle(
-    repo_root: Path, tmp_path: Path
+    repo_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     plan = _load_plan(repo_root)
-    plan["baseline_config"] = str(tmp_path / "outside.json")
-    path = tmp_path / "analysis-plan.json"
-    path.write_text(json.dumps(plan), encoding="utf-8")
+    plan["baseline_config"] = "../outside.json"
+    import quant_analysis.analysis_plan as module
+    original_load = module._load_json
+    monkeypatch.setattr(module, "_load_json", lambda path, *, label:
+                        copy.deepcopy(plan) if label == "analysis plan" else original_load(path, label=label))
 
     with pytest.raises(AnalysisPlanError, match="baseline_config"):
-        expand_analysis_plan(repo_root, path)
+        expand_analysis_plan(repo_root, PLAN_PATH)
 
 
-@pytest.mark.real
 def test_rejects_false_stop_failure_flag_without_market_shocks(
     repo_root: Path,
-    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plan = _load_plan(repo_root)
     plan["analyses"]["position_shocks"][0] = {
@@ -127,8 +125,10 @@ def test_rejects_false_stop_failure_flag_without_market_shocks(
         "use_stop_failure_loss": False,
         "maximum_loss_abs_max": 0.15,
     }
-    path = tmp_path / "analysis-plan.json"
-    path.write_text(json.dumps(plan), encoding="utf-8")
+    import quant_analysis.analysis_plan as module
+    original_load = module._load_json
+    monkeypatch.setattr(module, "_load_json", lambda path, *, label:
+                        copy.deepcopy(plan) if label == "analysis plan" else original_load(path, label=label))
 
     with pytest.raises(AnalysisPlanError, match="schema validation"):
-        expand_analysis_plan(repo_root, path)
+        expand_analysis_plan(repo_root, PLAN_PATH)

@@ -1,19 +1,13 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import os
-import shutil
 import time
-from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Mapping
 
 import numpy as np
 import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
 from scripts.research.local_quant_research.contracts import (
@@ -21,13 +15,7 @@ from scripts.research.local_quant_research.contracts import (
     ExecutionRun,
     ResultExtension,
 )
-from scripts.research.result_package import (
-    ResultContractError,
-    ResultPackage,
-    ResultPackageRequest,
-    validate_result_package,
-    write_result_package,
-)
+from scripts.research.result_package import ResultContractError, ResultPackage, ResultPackageRequest, write_result_package
 
 
 FORBIDDEN_REPORT_PHRASES = ("推荐", "稳健性通过", "适合实盘", "实盘准入")
@@ -264,298 +252,13 @@ def _result_request(
 
 
 @pytest.fixture
-def package_request(tmp_path: Path, counting_ledger: CountingLedger) -> ResultPackageRequest:
-    code = tmp_path / "strategy.py"
-    code.write_text("VALUE = 1\n", encoding="utf-8")
-    return _result_request(code, tmp_path / "result", counting_ledger)
-
-
-@pytest.fixture
 def in_memory_package_request(repo_root: Path, counting_ledger: CountingLedger) -> ResultPackageRequest:
     code = repo_root / "tests/local_quant_research/fixtures/minimal_strategy/strategy.py"
     return _result_request(code, Path("unused-publish/result"), counting_ledger)
 
 
-@pytest.fixture(scope="session")
-def materialized_package_baseline(
-    tmp_path_factory: pytest.TempPathFactory,
-) -> ResultPackage:
-    root = tmp_path_factory.mktemp("result-package-baseline")
-    code = root / "strategy.py"
-    code.write_text("VALUE = 1\n", encoding="utf-8")
-    return write_result_package(_result_request(code, root / "result", CountingLedger()))
-
-
-@pytest.fixture
-def materialized_package(
-    tmp_path: Path, materialized_package_baseline: ResultPackage
-) -> ResultPackage:
-    target = tmp_path / "result"
-    shutil.copytree(materialized_package_baseline.path, target)
-    return replace(materialized_package_baseline, path=target)
-
-
-def _tree_digest(root: Path) -> str:
-    digest = hashlib.sha256()
-    for path in sorted(item for item in root.rglob("*") if item.is_file()):
-        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
-        digest.update(hashlib.sha256(path.read_bytes()).digest())
-    return digest.hexdigest()
-
-
-def _assert_zstd(path: Path) -> None:
-    metadata = pq.ParquetFile(path).metadata
-    if metadata.num_row_groups == 0:
-        return
-    for row_group in range(metadata.num_row_groups):
-        for column in range(metadata.num_columns):
-            assert metadata.row_group(row_group).column(column).compression == "ZSTD"
-
-
-def _write_manifest(path: Path, document: Mapping[str, object]) -> None:
-    path.write_text(
-        json.dumps(document, ensure_ascii=False, sort_keys=True), encoding="utf-8"
-    )
-
-
-def _point_reference_at(
-    root: Path,
-    reference: dict[str, object],
-    source: Path,
-    relative: str,
-) -> None:
-    destination = root / relative
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(source.read_bytes())
-    reference["path"] = relative
-    reference["sha256"] = hashlib.sha256(destination.read_bytes()).hexdigest()
-    reference["bytes"] = destination.stat().st_size
-
-
-def _replace_persisted_extension_table(package: Path, table: pa.Table) -> None:
-    """Keep the disk declaration self-consistent up to logical package identity."""
-    from scripts.research import result_package
-
-    data_path = package / "extensions/decision_log/data.parquet"
-    pq.write_table(table, data_path, compression="zstd")
-    persisted = pq.read_table(data_path)
-    manifest_path = package / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    entry = manifest["extensions"]["decision_log"]
-    reference = entry["files"][0]
-    reference["sha256"] = hashlib.sha256(data_path.read_bytes()).hexdigest()
-    reference["bytes"] = data_path.stat().st_size
-    reference["rows"] = table.num_rows
-    entry["rows"] = table.num_rows
-    entry["verified_empty"] = table.num_rows == 0
-    entry["schema"] = result_package._schema_document(persisted.schema)
-    entry["time_range"] = result_package._time_range(persisted)
-    entry["evidence"]["fields"] = persisted.schema.names
-    _write_manifest(manifest_path, manifest)
-
-
-@pytest.mark.real
-def test_writer_materializes_one_package_without_recomputing_ledger(
-    package_request: ResultPackageRequest,
-    counting_ledger: CountingLedger,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from scripts.research import result_package
-
-    writes: list[tuple[str, str | None]] = []
-    real_write = result_package.pq.write_table
-
-    def recording_write(
-        table: pa.Table, path: Path, *, compression: str | None = None
-    ) -> None:
-        writes.append((Path(path).name, compression))
-        real_write(table, path, compression=compression)
-
-    monkeypatch.setattr(result_package.pq, "write_table", recording_write)
-    package = write_result_package(package_request)
-    manifest = validate_result_package(package.path)
-
-    assert set(manifest["datasets"]) == {"results", "balances", "positions", "orders"}
-    assert counting_ledger.calls == {"orders": 1, "assets": 1, "cash": 1, "value": 1}
-    assert writes == [
-        ("results.parquet", "zstd"),
-        ("balances.parquet", "zstd"),
-        ("positions.parquet", "zstd"),
-        ("orders.parquet", "zstd"),
-        ("data.parquet", "zstd"),
-    ]
-    assert set(package.writer_stages) == {
-        "core_facts",
-        "parquet_materialize",
-        "readback_validate",
-        "report_and_manifest",
-    }
-    assert all(seconds > 0 for seconds in package.writer_stages.values())
-    performance = json.loads(
-        (package.path / "evidence/performance.json").read_text(encoding="utf-8")
-    )
-    for name in ("core_facts", "parquet_materialize", "readback_validate"):
-        assert performance["stages"][name] == package.writer_stages[name]
-    assert (
-        performance["stages"]["report_and_manifest"]
-        <= package.writer_stages["report_and_manifest"]
-    )
-    assert len(package.package_sha256) == 64
-    for name in manifest["datasets"]:
-        reference = manifest["datasets"][name]["files"][0]
-        path = package.path / reference["path"]
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == reference["sha256"]
-        _assert_zstd(path)
-    extension_ref = manifest["extensions"]["decision_log"]["files"][0]
-    _assert_zstd(package.path / extension_ref["path"])
-    report = (package.path / "report/execution-summary.md").read_text(
-        encoding="utf-8"
-    )
-    assert not any(phrase in report for phrase in FORBIDDEN_REPORT_PHRASES)
-
-
-@pytest.mark.real
-def test_writer_freezes_code_before_digest_and_copy(
-    package_request: ResultPackageRequest,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = next(iter(package_request.code_files.values())).resolve()
-    original = source.read_bytes()
-    replacement = b"VALUE = 2\n"
-    real_read_bytes = Path.read_bytes
-    source_reads = 0
-
-    def changing_read_bytes(path: Path) -> bytes:
-        nonlocal source_reads
-        payload = real_read_bytes(path)
-        if path.resolve() == source:
-            source_reads += 1
-            if source_reads == 1:
-                path.write_bytes(replacement)
-        return payload
-
-    monkeypatch.setattr(Path, "read_bytes", changing_read_bytes)
-
-    package = write_result_package(package_request)
-
-    assert source_reads == 1
-    assert source.read_bytes() == replacement
-    assert (package.path / "code/strategy.py").read_bytes() == original
-    assert validate_result_package(package.path)["package_sha256"] == package.package_sha256
-
-
-@pytest.mark.real
-def test_writer_rejects_forbidden_report_before_publish(
-    package_request: ResultPackageRequest,
-) -> None:
-    config = dict(package_request.config_documents)
-    config["scenario.json"] = {
-        "scenario_id": "baseline",
-        "parameters": {"conclusion": "推荐"},
-    }
-
-    with pytest.raises(ResultContractError, match="forbidden"):
-        write_result_package(replace(package_request, config_documents=config))
-
-    assert not package_request.output_dir.exists()
-    assert list(package_request.output_dir.parent.glob(".run-1.*.tmp")) == []
-
-
-@pytest.mark.real
-def test_writer_reads_each_materialized_parquet_table_only_once(
-    package_request: ResultPackageRequest,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from scripts.research import result_package
-
-    reads: Counter[Path] = Counter()
-    real_read = result_package.pq.read_table
-
-    def recording_read(path: Path, *args: object, **kwargs: object) -> pa.Table:
-        reads[Path(path).resolve()] += 1
-        return real_read(path, *args, **kwargs)
-
-    monkeypatch.setattr(result_package.pq, "read_table", recording_read)
-    write_result_package(package_request)
-
-    read_ids = Counter(
-        (
-            "extensions/decision_log/data.parquet"
-            if path.name == "data.parquet"
-            else f"data/{path.name}"
-        )
-        for path, count in reads.items()
-        for _ in range(count)
-    )
-    assert read_ids == Counter(
-        {
-            "data/results.parquet": 1,
-            "data/balances.parquet": 1,
-            "data/positions.parquet": 1,
-            "data/orders.parquet": 1,
-            "extensions/decision_log/data.parquet": 1,
-        }
-    )
-
-
-@pytest.mark.real
-def test_writer_uses_its_single_readback_without_calling_disk_validator(
-    package_request: ResultPackageRequest,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from scripts.research import result_package
-
-    def fail_validator(*_args: object, **_kwargs: object) -> None:
-        pytest.fail("writer must not call the public disk validator")
-
-    monkeypatch.setattr(result_package, "validate_result_package", fail_validator)
-    monkeypatch.setattr(result_package, "_validate_result_package_document", fail_validator)
-
-    write_result_package(package_request)
-
-
-@pytest.mark.real
-def test_writer_distinguishes_persisted_prefinalization_from_returned_full_duration(
-    package_request: ResultPackageRequest,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from scripts.research import result_package
-
-    delay_seconds = 0.05
-    real_write_documents = result_package._write_documents
-
-    def delayed_write_documents(
-        root: Path,
-        directory: str,
-        documents: Mapping[str, object],
-    ) -> dict[str, dict[str, object]]:
-        if directory == "evidence":
-            time.sleep(delay_seconds)
-        return real_write_documents(root, directory, documents)
-
-    monkeypatch.setattr(result_package, "_write_documents", delayed_write_documents)
-    package = write_result_package(package_request)
-    performance = json.loads(
-        (package.path / "evidence/performance.json").read_text(encoding="utf-8")
-    )
-
-    writer = performance["writer"]
-    assert set(writer) == {"prefinalization_seconds"}
-    assert writer["prefinalization_seconds"] > 0
-    assert package.writer_seconds - writer["prefinalization_seconds"] >= (
-        delay_seconds * 0.8
-    )
-    assert package.writer_stages["report_and_manifest"] >= delay_seconds * 0.8
-    assert performance["measurement_scope"] == {
-        "actual_gate_basis": "returned_writer_seconds_through_writer_return",
-        "persisted_writer_measurement": "writer_start_through_prefinalization_before_final_evidence_report_manifest_write",
-        "persisted_measurement_excludes": "final_evidence_report_manifest_write_and_atomic_publish",
-    }
-
-
-@pytest.mark.real
 def test_scenario_gate_uses_writer_duration_through_delayed_return(
-    package_request: ResultPackageRequest,
+    in_memory_package_request: ResultPackageRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from scripts.research.local_quant_research import performance, scenario
@@ -566,15 +269,15 @@ def test_scenario_gate_uses_writer_duration_through_delayed_return(
     )
     from scripts.research.result_package import ResultPackage
 
-    code_path = next(iter(package_request.code_files.values()))
+    code_path = next(iter(in_memory_package_request.code_files.values()))
     loaded_strategy = SimpleNamespace(
         root=code_path.parent,
         source_paths=(code_path,),
-        descriptor=SimpleNamespace(strategy_id=package_request.strategy_id),
+        descriptor=SimpleNamespace(strategy_id=in_memory_package_request.strategy_id),
     )
     warm = SimpleNamespace(
-        execution=package_request.execution,
-        extensions=package_request.extensions,
+        execution=in_memory_package_request.execution,
+        extensions=in_memory_package_request.extensions,
         stages={},
     )
     samples = PerformanceEvidence(
@@ -591,7 +294,7 @@ def test_scenario_gate_uses_writer_duration_through_delayed_return(
         started = time.perf_counter()
         time.sleep(0.05)
         return ResultPackage(
-            path=package_request.output_dir,
+            path=in_memory_package_request.output_dir,
             manifest={},
             package_sha256="a" * 64,
             writer_stages={},
@@ -603,10 +306,10 @@ def test_scenario_gate_uses_writer_duration_through_delayed_return(
     request = scenario.ScenarioRequest(
         loaded_strategy=loaded_strategy,
         snapshot=SimpleNamespace(),
-        scenario={"scenario_id": package_request.scenario_id},
+        scenario={"scenario_id": in_memory_package_request.scenario_id},
         project_document={},
-        run_id=package_request.run_id,
-        output_dir=package_request.output_dir,
+        run_id=in_memory_package_request.run_id,
+        output_dir=in_memory_package_request.output_dir,
         code_identity={},
         market_snapshot={},
         runtime_lock={},
@@ -619,87 +322,21 @@ def test_scenario_gate_uses_writer_duration_through_delayed_return(
     assert caught.value.code == "cold_performance_limit"
 
 
-@pytest.mark.real
-def test_validator_summarizes_each_core_table_once(
-    materialized_package: ResultPackage,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from scripts.research import result_package
-
-    package = materialized_package
-    names_by_fields = {
-        tuple(schema.names): name for name, schema in result_package._SCHEMAS.items()
-    }
-    summaries: Counter[str] = Counter()
-    reads: Counter[Path] = Counter()
-    real_summary = result_package._table_summary
-    real_read = result_package.pq.read_table
-
-    def counting_summary(table: pa.Table) -> dict[str, object]:
-        name = names_by_fields.get(tuple(table.schema.names))
-        if name is not None:
-            summaries[name] += 1
-        return real_summary(table)
-
-    def counting_read(path: Path, *args: object, **kwargs: object) -> pa.Table:
-        reads[Path(path).resolve()] += 1
-        return real_read(path, *args, **kwargs)
-
-    monkeypatch.setattr(result_package, "_table_summary", counting_summary)
-    monkeypatch.setattr(result_package.pq, "read_table", counting_read)
-
-    validate_result_package(package.path)
-
-    assert summaries == Counter({name: 1 for name in result_package.CORE_DATASETS})
-    assert reads == Counter(
-        {
-            (package.path / f"data/{name}.parquet").resolve(): 1
-            for name in result_package.CORE_DATASETS
-        }
-        | {
-            (package.path / "extensions/decision_log/data.parquet").resolve(): 1
-        }
-    )
-
-
-@pytest.mark.real
-def test_writer_reuse_summarizes_new_and_existing_core_once_each(
-    package_request: ResultPackageRequest,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from scripts.research import result_package
-
-    write_result_package(package_request)
-    names_by_fields = {
-        tuple(schema.names): name for name, schema in result_package._SCHEMAS.items()
-    }
-    summaries: Counter[str] = Counter()
-    real_summary = result_package._table_summary
-
-    def counting_summary(table: pa.Table) -> dict[str, object]:
-        name = names_by_fields.get(tuple(table.schema.names))
-        if name is not None:
-            summaries[name] += 1
-        return real_summary(table)
-
-    monkeypatch.setattr(result_package, "_table_summary", counting_summary)
-
-    reused = write_result_package(
-        replace(package_request, execution=_execution(CountingLedger()))
-    )
-
-    assert reused.path == package_request.output_dir.resolve()
-    assert summaries == Counter({name: 2 for name in result_package.CORE_DATASETS})
-
-
-@pytest.mark.real
 def test_execution_report_contains_only_reproducible_package_facts(
-    package_request: ResultPackageRequest,
+    in_memory_package_request: ResultPackageRequest,
 ) -> None:
-    package = write_result_package(package_request)
-    report = (package.path / "report/execution-summary.md").read_text(
-        encoding="utf-8"
-    )
+    from scripts.research import result_package as module
+    request = in_memory_package_request
+    facts = module._materialize_core(request.execution)
+    report_facts = module._build_report_facts(config=request.config_documents, facts=facts,
+        extension_tables={extension.name: extension.table for extension in request.extensions})
+    performance = {**request.evidence_documents["performance.json"], "stages": {
+        "core_facts": 0.0, "parquet_materialize": 0.0, "readback_validate": 0.0, "report_and_manifest": 0.0}}
+    report_bytes, metrics_bytes = module._report_payloads(
+        identity={"strategy_id": request.strategy_id, "scenario_id": request.scenario_id, "run_id": request.run_id},
+        evidence={**request.evidence_documents, "performance.json": performance},
+        report_facts=report_facts, package_sha256="a" * 64)
+    report = report_bytes.decode("utf-8")
     for heading in (
         "## 参数与配置",
         "## 时间范围",
@@ -722,9 +359,7 @@ def test_execution_report_contains_only_reproducible_package_facts(
     assert "状态：`pass`" in report
     assert not any(phrase in report for phrase in FORBIDDEN_REPORT_PHRASES)
 
-    metrics = json.loads(
-        (package.path / "report/metrics.json").read_text(encoding="utf-8")
-    )
+    metrics = json.loads(metrics_bytes)
     assert metrics["parameters"] == {"lookback": 20}
     assert metrics["time_range"] == {"start": "2026-01-05", "end": "2026-01-06"}
     assert metrics["orders"] == {
@@ -748,134 +383,39 @@ def test_execution_report_contains_only_reproducible_package_facts(
     assert metrics["integrity_gate"]["status"] == "pass"
 
 
-@pytest.mark.real
-def test_writer_cleans_only_its_staging_directory_when_readback_fails(
-    package_request: ResultPackageRequest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from scripts.research import result_package
-
-    sibling = package_request.output_dir.parent / "keep-me"
-    sibling.mkdir()
-
-    def fail_readback(*_args: object, **_kwargs: object) -> pa.Table:
-        raise OSError("injected readback failure")
-
-    monkeypatch.setattr(result_package.pq, "read_table", fail_readback)
-    with pytest.raises(ResultContractError, match="readback"):
-        write_result_package(package_request)
-
-    assert sibling.is_dir()
-    assert not package_request.output_dir.exists()
-    assert list(package_request.output_dir.parent.glob(".run-1.*.tmp")) == []
-
-
-@pytest.mark.real
 def test_writer_reuses_equal_package_and_rejects_digest_conflict(
-    package_request: ResultPackageRequest,
+    in_memory_package_request: ResultPackageRequest, repo_root: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    first = write_result_package(package_request)
-    before = _tree_digest(first.path)
-
+    from scripts.research import result_package as module
+    request = replace(in_memory_package_request, output_dir=repo_root)
+    expected_request = replace(request, execution=_execution(CountingLedger()))
+    inputs = module._freeze_request_inputs(expected_request)
+    extensions = module._validate_extension_contracts(expected_request.extensions)
+    facts = module._materialize_core(expected_request.execution)
+    core_summaries = module._validate_common_facts(facts)
+    _, extension_summaries = module._validate_extensions(expected_request.extensions)
+    expected = module._canonical_digest(module._content_document(
+        expected_request, inputs, extensions, core_summaries, extension_summaries))
+    monkeypatch.setattr(module, "validate_result_package", lambda _root: {"package_sha256": expected})
+    monkeypatch.setattr(module, "_read_json", lambda _path, _field: dict(request.evidence_documents["performance.json"]))
     same_ledger = CountingLedger()
-    same = write_result_package(
-        replace(package_request, execution=_execution(same_ledger))
-    )
-    assert same.package_sha256 == first.package_sha256
-    assert _tree_digest(first.path) == before
+    same = write_result_package(replace(request, execution=_execution(same_ledger)))
+    assert same.package_sha256 == expected
+    assert same.path == repo_root
     assert same_ledger.calls == {"orders": 1, "assets": 1, "cash": 1, "value": 1}
-
-    conflicting_ledger = CountingLedger()
     with pytest.raises(ResultContractError, match="conflict"):
-        write_result_package(
-            replace(
-                package_request,
-                scenario_id="other",
-                execution=_execution(conflicting_ledger),
-            )
-        )
-    assert _tree_digest(first.path) == before
+        write_result_package(replace(request, scenario_id="other", execution=_execution(CountingLedger())))
 
 
-@pytest.mark.real
-def test_validator_rejects_manifest_scenario_different_from_frozen_config(
-    package_request: ResultPackageRequest,
+def test_writer_propagates_existing_package_validation_failure(
+    in_memory_package_request: ResultPackageRequest, repo_root: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    mismatched = replace(
-        package_request,
-        scenario_id="different-scenario",
-        output_dir=package_request.output_dir.parent / "scenario-mismatch",
-    )
-
-    with pytest.raises(ResultContractError, match="scenario identity"):
-        write_result_package(mismatched)
-
-    assert not mismatched.output_dir.exists()
-
-
-@pytest.mark.real
-def test_writer_refuses_reuse_when_report_and_manifest_reference_are_tampered(
-    package_request: ResultPackageRequest,
-) -> None:
-    package = write_result_package(package_request)
-    manifest_path = package.path / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    summary = package.path / "report/execution-summary.md"
-    metrics = package.path / "report/metrics.json"
-    summary.write_text(
-        summary.read_text(encoding="utf-8") + "\n外部替换内容\n",
-        encoding="utf-8",
-    )
-    metrics_document = json.loads(metrics.read_text(encoding="utf-8"))
-    metrics_document["external"] = True
-    metrics.write_text(
-        json.dumps(metrics_document, ensure_ascii=False, sort_keys=True),
-        encoding="utf-8",
-    )
-    for name, path in (("execution-summary", summary), ("metrics", metrics)):
-        reference = manifest["reports"][name]
-        reference["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
-        reference["bytes"] = path.stat().st_size
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, sort_keys=True), encoding="utf-8"
-    )
-
+    from scripts.research import result_package as module
+    def invalid_existing_package(_root):
+        raise ResultContractError("report content mismatch")
+    monkeypatch.setattr(module, "validate_result_package", invalid_existing_package)
     with pytest.raises(ResultContractError, match="report"):
-        write_result_package(
-            replace(package_request, execution=_execution(CountingLedger()))
-        )
-
-
-@pytest.mark.real
-def test_writer_atomically_publishes_only_after_staging_is_complete(
-    package_request: ResultPackageRequest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from scripts.research import result_package
-
-    observed: list[tuple[Path, Path]] = []
-    real_replace = os.replace
-
-    def observing_replace(source: Path, target: Path) -> None:
-        source_path = Path(source)
-        target_path = Path(target)
-        assert source_path.name.startswith(".run-1.")
-        assert source_path.name.endswith(".tmp")
-        assert (source_path / "manifest.json").is_file()
-        assert (source_path / "report/execution-summary.md").is_file()
-        assert set(path.name for path in (source_path / "data").iterdir()) == {
-            "results.parquet",
-            "balances.parquet",
-            "positions.parquet",
-            "orders.parquet",
-        }
-        assert not target_path.exists()
-        observed.append((source_path, target_path))
-        real_replace(source_path, target_path)
-
-    monkeypatch.setattr(result_package.os, "replace", observing_replace)
-    package = write_result_package(package_request)
-
-    assert observed == [(observed[0][0], package.path)]
-    assert package.path.is_dir()
+        write_result_package(replace(in_memory_package_request, output_dir=repo_root))
 
 
 @pytest.mark.parametrize("name", ["", "BadName", "bad/name", "-leading"])
@@ -1050,182 +590,3 @@ def test_writer_rejects_duplicate_extension_names_and_keys(
     with pytest.raises(ResultContractError, match="unique key"):
         write_result_package(replace(in_memory_package_request, extensions=(duplicate_key,)))
     assert counting_ledger.calls == {"orders": 0, "assets": 0, "cash": 0, "value": 0}
-
-
-@pytest.mark.real
-def test_writer_rejects_cross_table_reconciliation_and_cleans_staging(
-    package_request: ResultPackageRequest,
-) -> None:
-    broken_assets = _assets().copy()
-    broken_assets[1]["price"] = 109.0
-    ledger = CountingLedger(assets=broken_assets)
-
-    with pytest.raises(ResultContractError, match="reconcile"):
-        write_result_package(
-            replace(package_request, execution=_execution(ledger))
-        )
-
-    assert ledger.calls == {"orders": 1, "assets": 1, "cash": 1, "value": 1}
-    assert not package_request.output_dir.exists()
-    assert list(package_request.output_dir.parent.glob(".run-1.*.tmp")) == []
-
-
-@pytest.mark.real
-def test_validator_rejects_tampered_materialized_table(
-    materialized_package: ResultPackage,
-) -> None:
-    package = materialized_package
-    results = package.path / "data/results.parquet"
-    results.write_bytes(results.read_bytes() + b"tampered")
-
-    with pytest.raises(ResultContractError, match="digest"):
-        validate_result_package(package.path)
-
-
-@pytest.mark.parametrize(
-    "invalid_value",
-    (
-        pa.array([["nested"]], type=pa.list_(pa.string())),
-        pa.array([1], type=pa.int32()),
-    ),
-)
-@pytest.mark.real
-def test_disk_validator_rejects_extension_types_outside_flat_contract(
-    materialized_package: ResultPackage,
-    invalid_value: pa.Array,
-) -> None:
-    package = materialized_package
-    _replace_persisted_extension_table(
-        package.path,
-        pa.table({"event_id": ["event-1"], "value": invalid_value}),
-    )
-
-    with pytest.raises(ResultContractError, match="flat string/bool/int64/float64"):
-        validate_result_package(package.path)
-
-
-@pytest.mark.real
-def test_validator_rejects_non_zstd_physical_compression_with_synced_digest(
-    materialized_package: ResultPackage,
-) -> None:
-    package = materialized_package
-    results = package.path / "data/results.parquet"
-    table = pq.read_table(results)
-    pq.write_table(table, results, compression="snappy")
-    manifest_path = package.path / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    reference = manifest["datasets"]["results"]["files"][0]
-    reference["sha256"] = hashlib.sha256(results.read_bytes()).hexdigest()
-    reference["bytes"] = results.stat().st_size
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, sort_keys=True), encoding="utf-8"
-    )
-
-    with pytest.raises(ResultContractError, match="physical compression"):
-        validate_result_package(package.path)
-
-
-@pytest.mark.parametrize(
-    "relative",
-    [
-        "../escape/scenario.json",
-        "config/scenario.json:ads",
-    ],
-)
-@pytest.mark.real
-def test_validator_rejects_unsafe_declared_paths(
-    materialized_package: ResultPackage,
-    relative: str,
-) -> None:
-    package = materialized_package
-    manifest_path = package.path / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    reference = manifest["config"]["scenario.json"]
-    if relative.endswith(":ads"):
-        source = package.path / str(reference["path"])
-        _point_reference_at(package.path, reference, source, relative)
-    else:
-        reference["path"] = relative
-    _write_manifest(manifest_path, manifest)
-
-    with pytest.raises(ResultContractError, match="unsafe"):
-        validate_result_package(package.path)
-
-
-@pytest.mark.parametrize(
-    ("section", "name"),
-    [
-        ("code", "strategy.py"),
-        ("config", "scenario.json"),
-        ("evidence", "performance.json"),
-    ],
-)
-@pytest.mark.real
-def test_validator_requires_archive_ready_file_sets(
-    materialized_package: ResultPackage,
-    section: str,
-    name: str,
-) -> None:
-    package = materialized_package
-    manifest_path = package.path / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    del manifest[section][name]
-    _write_manifest(manifest_path, manifest)
-
-    with pytest.raises(ResultContractError, match="archive-ready"):
-        validate_result_package(package.path)
-
-
-@pytest.mark.parametrize(
-    "declaration",
-    ["dataset", "extension"],
-)
-@pytest.mark.real
-def test_validator_requires_fixed_declared_file_paths(
-    materialized_package: ResultPackage,
-    declaration: str,
-) -> None:
-    package = materialized_package
-    manifest_path = package.path / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if declaration == "code":
-        reference = manifest["code"]["strategy.py"]
-        relative = "code/renamed-strategy.py"
-    elif declaration == "config":
-        reference = manifest["config"]["scenario.json"]
-        relative = "config/renamed-scenario.json"
-    elif declaration == "evidence":
-        reference = manifest["evidence"]["performance.json"]
-        relative = "evidence/renamed-performance.json"
-    elif declaration == "dataset":
-        reference = manifest["datasets"]["results"]["files"][0]
-        relative = "data/renamed-results.parquet"
-    else:
-        reference = manifest["extensions"]["decision_log"]["files"][0]
-        relative = "extensions/decision_log/renamed-data.parquet"
-    source = package.path / str(reference["path"])
-    _point_reference_at(package.path, reference, source, relative)
-    _write_manifest(manifest_path, manifest)
-
-    with pytest.raises(ResultContractError, match="file identity"):
-        validate_result_package(package.path)
-
-
-@pytest.mark.parametrize("strategy_evidence", [None, "unverified"])
-@pytest.mark.real
-def test_validator_requires_strategy_evidence_object(
-    materialized_package: ResultPackage,
-    strategy_evidence: object,
-) -> None:
-    package = materialized_package
-    manifest_path = package.path / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    extension = manifest["extensions"]["decision_log"]
-    if strategy_evidence is None:
-        del extension["strategy_evidence"]
-    else:
-        extension["strategy_evidence"] = strategy_evidence
-    _write_manifest(manifest_path, manifest)
-
-    with pytest.raises(ResultContractError, match="strategy_evidence"):
-        validate_result_package(package.path)

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -117,24 +116,12 @@ def _standard_analysis() -> dict[str, object]:
     }
 
 
-@pytest.mark.real
-def test_standard_report_lists_package_identity_capabilities_and_evidence_gaps(
-    tmp_path: Path,
-) -> None:
-    repository = tmp_path / "repository"
-    workspace = (
-        repository / ".local" / "standard-strategy-analysis" / "standard-1"
-    )
-    workspace.mkdir(parents=True)
+def test_standard_report_lists_package_identity_capabilities_and_evidence_gaps() -> None:
     analysis = _standard_analysis()
     report = render_standard_analysis_report(
         analysis, build_standard_recommendation(analysis)
     )
-    (workspace / "deterministic-analysis.json").write_text(
-        json.dumps(analysis, ensure_ascii=False), encoding="utf-8"
-    )
-
-    delivery = write_standard_analysis_delivery(repository, workspace)
+    recommendation = build_standard_recommendation(analysis)
 
     assert "结果包与能力" in report
     assert "a" * 64 in report
@@ -144,8 +131,7 @@ def test_standard_report_lists_package_identity_capabilities_and_evidence_gaps(
     assert "market_snapshot_missing_at_source" not in report
     assert "4" * 64 in report
     assert "cagr" in report
-    assert delivery["decision"] == "revise_before_joinquant"
-    assert (workspace / "standard-strategy-analysis-report.md").is_file()
+    assert recommendation["decision"] == "revise_before_joinquant"
 
 
 def test_standard_report_shows_top_ten_loss_events_exit_evidence_and_reconciliation() -> None:
@@ -212,21 +198,6 @@ def test_standard_report_shows_top_ten_loss_events_exit_evidence_and_reconciliat
     assert "已勾稽" in report
 
 
-@pytest.mark.real
-def test_standard_delivery_rejects_workspace_outside_repository(
-    tmp_path: Path,
-) -> None:
-    repository = tmp_path / "repository"
-    repository.mkdir()
-    workspace = tmp_path / "outside" / "standard-1"
-    workspace.mkdir(parents=True)
-    (workspace / "deterministic-analysis.json").write_text(
-        json.dumps(_standard_analysis()), encoding="utf-8"
-    )
-    report = workspace / "standard-strategy-analysis-report.md"
-    report.write_text("keep", encoding="utf-8")
-
+def test_standard_delivery_rejects_workspace_outside_repository(repo_root: Path) -> None:
     with pytest.raises(ValueError, match="standard-strategy-analysis"):
-        write_standard_analysis_delivery(repository, workspace)
-
-    assert report.read_text(encoding="utf-8") == "keep"
+        write_standard_analysis_delivery(repo_root, repo_root.parent / "outside-workspace")

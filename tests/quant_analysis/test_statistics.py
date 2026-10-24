@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pyarrow.parquet as pq
@@ -14,10 +13,7 @@ from quant_analysis.cvar import (
     calculate_cvar,
     rolling_compound_returns,
 )
-from quant_analysis.evidence import (
-    ScenarioResult,
-    build_evidence_matrix,
-)
+from quant_analysis.evidence import ScenarioResult
 from quant_analysis.robustness import (
     block_bootstrap,
     summarize_bootstrap,
@@ -73,8 +69,7 @@ def test_cvar_uses_exact_tail_mass_and_compounds_windows() -> None:
     assert compounded.shape == (2,)
 
 
-@pytest.mark.real
-def test_evidence_matrix_is_deterministic_and_local_only(tmp_path: Path) -> None:
+def test_evidence_matrix_is_deterministic_in_memory() -> None:
     results = (
         ScenarioResult(
             scenario_id="scenario-a",
@@ -92,13 +87,18 @@ def test_evidence_matrix_is_deterministic_and_local_only(tmp_path: Path) -> None
             reasons=("missing_window",),
         ),
     )
-    path = tmp_path / "evidence-matrix.parquet"
+    import pyarrow as pa
+    from quant_analysis import evidence
 
-    build_evidence_matrix(results, path)
-    rows = pq.read_table(path).to_pylist()
-    before = path.read_bytes()
-    build_evidence_matrix(results, path)
+    def serialize():
+        rows = evidence._rows(results)
+        table = pa.Table.from_pylist(rows, schema=evidence._SCHEMA).replace_schema_metadata(evidence._metadata(rows))
+        sink = pa.BufferOutputStream()
+        pq.write_table(table, sink, compression="zstd", use_dictionary=False, write_statistics=True)
+        return sink.getvalue().to_pybytes()
 
+    before = serialize()
+    rows = pq.read_table(pa.BufferReader(before)).to_pylist()
     assert [row["scenario_id"] for row in rows] == ["scenario-a", "scenario-b"]
     assert all(row["authority"] == "local_exploratory" for row in rows)
-    assert path.read_bytes() == before
+    assert serialize() == before

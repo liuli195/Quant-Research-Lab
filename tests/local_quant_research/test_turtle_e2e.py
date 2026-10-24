@@ -257,28 +257,6 @@ def test_turtle_project_completes_full_single_scenario_entrypoint(
         }
         assert archive_files == source_files
 
-        reused = subprocess.run(
-            [
-                str(repo_root / ".venv/Scripts/python.exe"),
-                str(repo_root / "scripts/research/local_quant_research/cli.py"),
-                "promote",
-                "--strategy-id",
-                "strategy-003",
-                "--run-id",
-                outcome["run_id"],
-                "--analysis-id",
-                analysis_id,
-            ],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            shell=False,
-            check=False,
-            timeout=120,
-        )
-        assert reused.returncode == 0
-        assert json.loads(reused.stdout)["reused"] is True
-
         shutil.rmtree(run_output)
         run_output = None
         archived_source = analysis_data.open_analysis_source(archive_output)

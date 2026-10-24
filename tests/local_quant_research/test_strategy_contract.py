@@ -12,7 +12,6 @@ import numpy as np
 import pyarrow as pa
 import pytest
 
-from scripts.research.local_quant_research import strategy_loader
 from scripts.research.local_quant_research.contracts import (
     FILL_ACCEPTED,
     FILL_IGNORED,
@@ -68,10 +67,6 @@ def temporary_strategy_root(repo_root: Path):
                 parent.rmdir()
             except OSError:
                 pass
-
-
-def _relative_to_repo(path: Path, repo_root: Path) -> str:
-    return path.relative_to(repo_root).as_posix()
 
 
 def test_contract_constants_and_namedtuple_fields_are_stable() -> None:
@@ -241,83 +236,6 @@ def test_shared_loader_accepts_two_strategy_modules(repo_root: Path) -> None:
     )
 
 
-@pytest.mark.real
-def test_static_source_discovery_does_not_execute_strategy_and_captures_all_python(
-    repo_root: Path,
-    temporary_strategy_root: Path,
-) -> None:
-    package = temporary_strategy_root / "fixture_package"
-    package.mkdir()
-    marker = package / "executed"
-    (package / "__init__.py").write_text("", encoding="utf-8")
-    helper = package / "helper.py"
-    helper.write_text("VALUE = 1\n", encoding="utf-8")
-    strategy = package / "strategy.py"
-    strategy.write_text(
-        "from pathlib import Path\n"
-        f"Path({str(marker)!r}).write_text('executed', encoding='utf-8')\n",
-        encoding="utf-8",
-    )
-    adjacent = temporary_strategy_root / "adjacent"
-    adjacent.mkdir()
-    (adjacent / "ignored.py").write_text("VALUE = 2\n", encoding="utf-8")
-    archive = package / "research" / "archives"
-    archive.mkdir(parents=True)
-    (archive / "ignored.py").write_text("VALUE = 3\n", encoding="utf-8")
-
-    discovered = strategy_loader.discover_strategy_sources(
-        temporary_strategy_root,
-        "fixture_package.strategy",
-    )
-
-    assert discovered == (
-        (package / "__init__.py").resolve(),
-        helper.resolve(),
-        strategy.resolve(),
-    )
-    assert not marker.exists()
-
-
-@pytest.mark.real
-def test_static_source_discovery_rejects_linked_python_source(
-    repo_root: Path,
-    temporary_strategy_root: Path,
-) -> None:
-    (temporary_strategy_root / "strategy.py").write_text("MODULE = object()\n", encoding="utf-8")
-    external = temporary_strategy_root.parent / f"{uuid.uuid4().hex}.py"
-    external.write_text("VALUE = 1\n", encoding="utf-8")
-    linked = temporary_strategy_root / "linked.py"
-    try:
-        linked.symlink_to(external)
-    except OSError as exc:
-        external.unlink(missing_ok=True)
-        pytest.skip(f"file links are unavailable: {exc}")
-    try:
-        with pytest.raises(ConfigurationError) as caught:
-            strategy_loader.discover_strategy_sources(
-                temporary_strategy_root,
-                "strategy",
-            )
-        assert caught.value.code == "unsafe_strategy_source_tree"
-    finally:
-        linked.unlink(missing_ok=True)
-        external.unlink(missing_ok=True)
-
-
-@pytest.mark.real
-def test_static_source_discovery_rejects_archive_as_strategy_root(
-    temporary_strategy_root: Path,
-) -> None:
-    archive_code = temporary_strategy_root / "research" / "archives" / "saved" / "code"
-    archive_code.mkdir(parents=True)
-    (archive_code / "strategy.py").write_text("MODULE = object()\n", encoding="utf-8")
-
-    with pytest.raises(ConfigurationError) as caught:
-        strategy_loader.discover_strategy_sources(archive_code, "strategy")
-
-    assert caught.value.code == "unsafe_strategy_source_tree"
-
-
 def test_loader_uses_standard_import_and_restores_sys_path(repo_root: Path) -> None:
     before_path = list(sys.path)
     loaded = load_strategy(repo_root, _fixture_config("minimal_strategy"))
@@ -326,153 +244,6 @@ def test_loader_uses_standard_import_and_restores_sys_path(repo_root: Path) -> N
     assert loaded.module.__class__.__module__ == "strategy"
     assert sys.path == before_path
     assert Path(sys.modules["strategy"].__file__).resolve() == loaded.source_paths[0]
-
-
-@pytest.mark.real
-def test_loader_supports_package_relative_imports(
-    repo_root: Path,
-    temporary_strategy_root: Path,
-) -> None:
-    package = temporary_strategy_root / "fixture_package"
-    package.mkdir()
-    (package / "__init__.py").write_text("", encoding="utf-8")
-    (package / "identity.py").write_text(
-        "STRATEGY_ID = 'relative-import-fixture'\n",
-        encoding="utf-8",
-    )
-    (package / "strategy.py").write_text(
-        "\n".join(
-            (
-                "from .identity import STRATEGY_ID",
-                "from scripts.research.local_quant_research.contracts import StrategyDescriptor",
-                "class RelativeImportModule:",
-                "    descriptor = StrategyDescriptor(",
-                "        strategy_id=STRATEGY_ID,",
-                "        contract_version='1',",
-                "        extension_names=(),",
-                "        accounting={},",
-                "    )",
-                "    def prepare(self, snapshot, config): raise NotImplementedError",
-                "    def followup_program(self, prepared, primary_run): return None",
-                "    def build_extensions(self, prepared, execution): return ()",
-                "MODULE = RelativeImportModule()",
-                "",
-            )
-        ),
-        encoding="utf-8",
-    )
-
-    loaded = load_strategy(
-        repo_root,
-        {
-            "root": _relative_to_repo(temporary_strategy_root, repo_root),
-            "module": "fixture_package.strategy",
-            "symbol": "MODULE",
-        },
-    )
-
-    assert loaded.descriptor.strategy_id == "relative-import-fixture"
-    assert "fixture_package" in sys.modules
-    assert "fixture_package.strategy" in sys.modules
-
-
-@pytest.mark.real
-def test_loader_rejects_external_parent_package_before_execution(
-    repo_root: Path,
-    temporary_strategy_root: Path,
-) -> None:
-    package = temporary_strategy_root / "external_parent"
-    package.mkdir()
-    marker = temporary_strategy_root / "external-parent-executed"
-    external_init = temporary_strategy_root.parent / f"{uuid.uuid4().hex}.py"
-    external_init.write_text(
-        "from pathlib import Path\n"
-        f"Path({str(marker)!r}).write_text('executed', encoding='utf-8')\n",
-        encoding="utf-8",
-    )
-    (package / "__init__.py").symlink_to(external_init)
-    (package / "strategy.py").write_text(
-        "\n".join(
-            (
-                "from scripts.research.local_quant_research.contracts import StrategyDescriptor",
-                "class ExternalParentModule:",
-                "    descriptor = StrategyDescriptor(",
-                "        strategy_id='external-parent-fixture',",
-                "        contract_version='1',",
-                "        extension_names=(),",
-                "        accounting={},",
-                "    )",
-                "    def prepare(self, snapshot, config): raise NotImplementedError",
-                "    def followup_program(self, prepared, primary_run): return None",
-                "    def build_extensions(self, prepared, execution): return ()",
-                "MODULE = ExternalParentModule()",
-                "",
-            )
-        ),
-        encoding="utf-8",
-    )
-    try:
-        with pytest.raises(ConfigurationError, match="package file"):
-            load_strategy(
-                repo_root,
-                {
-                    "root": _relative_to_repo(temporary_strategy_root, repo_root),
-                    "module": "external_parent.strategy",
-                    "symbol": "MODULE",
-                },
-            )
-        assert not marker.exists()
-    finally:
-        external_init.unlink(missing_ok=True)
-
-
-@pytest.mark.real
-def test_loaded_strategy_supports_delayed_relative_imports(
-    repo_root: Path,
-    temporary_strategy_root: Path,
-) -> None:
-    package = temporary_strategy_root / "delayed_package"
-    package.mkdir()
-    (package / "__init__.py").write_text("", encoding="utf-8")
-    (package / "identity.py").write_text(
-        "STRATEGY_ID = 'delayed-relative-import-fixture'\n",
-        encoding="utf-8",
-    )
-    (package / "strategy.py").write_text(
-        "\n".join(
-            (
-                "from scripts.research.local_quant_research.contracts import StrategyDescriptor",
-                "class DelayedImportModule:",
-                "    descriptor = StrategyDescriptor(",
-                "        strategy_id='delayed-relative-import-fixture',",
-                "        contract_version='1',",
-                "        extension_names=(),",
-                "        accounting={},",
-                "    )",
-                "    def prepare(self, snapshot, config):",
-                "        from .identity import STRATEGY_ID",
-                "        return STRATEGY_ID",
-                "    def followup_program(self, prepared, primary_run): return None",
-                "    def build_extensions(self, prepared, execution): return ()",
-                "MODULE = DelayedImportModule()",
-                "",
-            )
-        ),
-        encoding="utf-8",
-    )
-
-    loaded = load_strategy(
-        repo_root,
-        {
-            "root": _relative_to_repo(temporary_strategy_root, repo_root),
-            "module": "delayed_package.strategy",
-            "symbol": "MODULE",
-        },
-    )
-
-    assert loaded.module.prepare(object(), {}) == "delayed-relative-import-fixture"
-    assert "delayed_package" in sys.modules
-    assert "delayed_package.strategy" in sys.modules
 
 
 def test_loader_rejects_unknown_symbol(repo_root: Path) -> None:
@@ -491,34 +262,6 @@ def test_loader_rejects_module_file_outside_strategy_root(repo_root: Path) -> No
 
     with pytest.raises(ConfigurationError, match="module file"):
         load_strategy(repo_root, config)
-
-
-@pytest.mark.real
-def test_loader_does_not_execute_module_file_outside_strategy_root(
-    repo_root: Path,
-    temporary_strategy_root: Path,
-) -> None:
-    module_name = f"strategy_contract_external_{uuid.uuid4().hex}"
-    external_module = repo_root / f"{module_name}.py"
-    marker = temporary_strategy_root / "external-module-executed"
-    external_module.write_text(
-        "from pathlib import Path\n"
-        f"Path({str(marker)!r}).write_text('executed', encoding='utf-8')\n",
-        encoding="utf-8",
-    )
-    try:
-        with pytest.raises(ConfigurationError, match="module file"):
-            load_strategy(
-                repo_root,
-                {
-                    "root": _relative_to_repo(temporary_strategy_root, repo_root),
-                    "module": module_name,
-                    "symbol": "MODULE",
-                },
-            )
-        assert not marker.exists()
-    finally:
-        external_module.unlink(missing_ok=True)
 
 
 @pytest.mark.parametrize("fixture_name", ("minimal_strategy", "minimal_strategy_b"))

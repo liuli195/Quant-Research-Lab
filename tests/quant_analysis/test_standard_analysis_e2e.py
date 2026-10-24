@@ -68,17 +68,11 @@ def test_standard_analysis_skill_runs_only_the_read_only_package_flow(
         unique_key=("event_id",),
         evidence={"status": "complete"},
     )
+    scenario = {"project_id": "minimal", "scenario_id": "baseline", "risk": {},
+                "universe": [{"security": "TEST.X", "asset_group": "etf"},
+                             {"security": "OFFSET.X", "asset_group": "etf"}]}
     root, packages, plan, benchmark = _standard_package_inputs(
-        repo_root, tmp_path, extensions=(attribution,)
-    )
-    scenario = json.loads((root / "config/baseline.json").read_text(encoding="utf-8"))
-    scenario["universe"].append({"security": "OFFSET.X", "asset_group": "etf"})
-    _write_json(root / "config/baseline.json", scenario)
-    packages[0] = _write_result_package(
-        root / "baseline-package",
-        strategy_id="minimal",
-        scenario=scenario,
-        extensions=(attribution,),
+        repo_root, tmp_path, extensions=(attribution,), scenario=scenario,
     )
     plan_document = json.loads(plan.read_text(encoding="utf-8"))
     plan_document["scenarios"].append(
