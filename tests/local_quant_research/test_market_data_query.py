@@ -61,6 +61,7 @@ def _snapshot(repo_root: Path, root: Path):
     )
 
 
+@pytest.mark.real
 def test_open_snapshot_uses_only_memory_and_returns_normalized_read_only_rows(
     repo_root: Path,
     tmp_path: Path,
@@ -69,7 +70,9 @@ def test_open_snapshot_uses_only_memory_and_returns_normalized_read_only_rows(
     from scripts.research.market_data import query
 
     snapshot = _snapshot(repo_root, tmp_path)
-    real_connect = query.duckdb.connect
+    import duckdb
+
+    real_connect = duckdb.connect
     connections: list[str] = []
     queried_paths: list[tuple[Path, ...]] = []
     real_reader = query._read_query_rows
@@ -82,7 +85,7 @@ def test_open_snapshot_uses_only_memory_and_returns_normalized_read_only_rows(
         queried_paths.append(tuple(parquet_paths))
         return real_reader(connection, parquet_paths)
 
-    monkeypatch.setattr(query.duckdb, "connect", recording_connect)
+    monkeypatch.setattr(duckdb, "connect", recording_connect)
     monkeypatch.setattr(query, "_read_query_rows", recording_reader)
 
     view = query.open_snapshot(snapshot.snapshot_id, root=tmp_path)
@@ -108,6 +111,7 @@ def test_open_snapshot_uses_only_memory_and_returns_normalized_read_only_rows(
     assert not list(tmp_path.rglob("*.duckdb"))
 
 
+@pytest.mark.real
 def test_open_snapshot_returns_corporate_actions_from_the_same_memory_database(
     repo_root: Path,
     tmp_path: Path,
@@ -155,13 +159,15 @@ def test_open_snapshot_returns_corporate_actions_from_the_same_memory_database(
         root=tmp_path / "store",
     )
     connections: list[str] = []
-    real_connect = query.duckdb.connect
+    import duckdb
+
+    real_connect = duckdb.connect
 
     def recording_connect(database: str):
         connections.append(database)
         return real_connect(database)
 
-    monkeypatch.setattr(query.duckdb, "connect", recording_connect)
+    monkeypatch.setattr(duckdb, "connect", recording_connect)
 
     view = query.open_snapshot(snapshot.snapshot_id, root=tmp_path / "store")
 
@@ -175,6 +181,7 @@ def test_open_snapshot_returns_corporate_actions_from_the_same_memory_database(
     assert not list(tmp_path.rglob("*.duckdb"))
 
 
+@pytest.mark.real
 def test_open_snapshot_normalizes_nulls_and_numeric_paused(tmp_path: Path) -> None:
     from scripts.research.market_data.query import open_snapshot
 
@@ -201,6 +208,7 @@ def test_open_snapshot_normalizes_nulls_and_numeric_paused(tmp_path: Path) -> No
     assert view.rows[1]["paused"] is False
 
 
+@pytest.mark.real
 def test_snapshot_query_supports_multiple_batches_without_duplicate_rows(
     repo_root: Path,
     tmp_path: Path,
@@ -243,6 +251,7 @@ def test_normalized_digest_is_independent_of_input_order() -> None:
     assert normalized_digest(rows) == normalized_digest(reversed(rows))
 
 
+@pytest.mark.real
 def test_open_snapshot_rejects_query_and_parquet_content_drift(
     repo_root: Path,
     tmp_path: Path,
@@ -264,6 +273,7 @@ def test_open_snapshot_rejects_query_and_parquet_content_drift(
         query.open_snapshot(snapshot.snapshot_id, root=tmp_path)
 
 
+@pytest.mark.real
 def test_snapshot_overlap_accepts_exact_subset_with_shared_batch(
     repo_root: Path,
     tmp_path: Path,
@@ -294,6 +304,7 @@ def test_snapshot_overlap_accepts_exact_subset_with_shared_batch(
     assert evidence.corporate_actions_digest
 
 
+@pytest.mark.real
 def test_snapshot_overlap_rejects_corporate_action_drift(
     repo_root: Path,
     tmp_path: Path,

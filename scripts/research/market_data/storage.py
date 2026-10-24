@@ -14,7 +14,6 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -618,6 +617,8 @@ def _read_corporate_actions_parquet(
 
 
 def _duckdb_roundtrip(parquet_bytes: bytes, *, root: Path) -> list[dict[str, object]]:
+    import duckdb
+
     Path(root).mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=".market-data-import-", suffix=".parquet", dir=root
@@ -649,6 +650,8 @@ def _corporate_actions_duckdb_roundtrip(
     declared: Mapping[str, object],
     root: Path,
 ) -> list[dict[str, object]]:
+    import duckdb
+
     Path(root).mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=".corporate-actions-import-", suffix=".parquet", dir=root
@@ -978,6 +981,8 @@ def _import_batch_locked(
     manifest: Mapping[str, object],
     root: Path,
 ) -> BatchRecord:
+    import duckdb
+
     declared = _validate_manifest_input(manifest)
     csv_bytes = csv_path.read_bytes()
     csv_sha256 = _sha256_bytes(csv_bytes)

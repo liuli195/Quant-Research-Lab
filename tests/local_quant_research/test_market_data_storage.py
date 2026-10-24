@@ -133,6 +133,7 @@ def _selection(*securities: str) -> SnapshotSelection:
     )
 
 
+@pytest.mark.real
 def test_import_batch_is_immutable_complete_and_deduplicated(
     repo_root: Path,
     tmp_path: Path,
@@ -202,6 +203,7 @@ def test_import_batch_is_immutable_complete_and_deduplicated(
     }
 
 
+@pytest.mark.real
 def test_import_batch_publishes_market_data_and_versioned_corporate_actions(
     repo_root: Path,
     tmp_path: Path,
@@ -233,6 +235,7 @@ def test_import_batch_publishes_market_data_and_versioned_corporate_actions(
     )
 
 
+@pytest.mark.real
 def test_import_batch_requires_an_explicit_valid_empty_corporate_action_set(
     repo_root: Path,
     tmp_path: Path,
@@ -252,6 +255,7 @@ def test_import_batch_requires_an_explicit_valid_empty_corporate_action_set(
     assert (record.path / "corporate-actions.parquet").is_file()
 
 
+@pytest.mark.real
 def test_corporate_actions_participate_in_batch_and_snapshot_identity(
     repo_root: Path,
     tmp_path: Path,
@@ -294,6 +298,7 @@ def test_corporate_actions_participate_in_batch_and_snapshot_identity(
     ]
 
 
+@pytest.mark.real
 def test_snapshot_validation_rejects_tampered_corporate_actions(
     repo_root: Path,
     tmp_path: Path,
@@ -318,6 +323,7 @@ def test_snapshot_validation_rejects_tampered_corporate_actions(
         validate_snapshot(snapshot.snapshot_id, root=tmp_path)
 
 
+@pytest.mark.real
 def test_audit_store_validates_current_batches_and_snapshots(
     repo_root: Path,
     tmp_path: Path,
@@ -345,6 +351,7 @@ def test_audit_store_validates_current_batches_and_snapshots(
         ({"split_ratio": "0"}, "split_ratio"),
     ],
 )
+@pytest.mark.real
 def test_import_rejects_invalid_corporate_action_evidence(
     repo_root: Path,
     tmp_path: Path,
@@ -366,6 +373,7 @@ def test_import_rejects_invalid_corporate_action_evidence(
         )
 
 
+@pytest.mark.real
 def test_import_retains_action_metadata_published_after_effective_date(
     repo_root: Path,
     tmp_path: Path,
@@ -388,6 +396,7 @@ def test_import_retains_action_metadata_published_after_effective_date(
     assert stored[0]["announcement_date"] == "2026-07-04"
 
 
+@pytest.mark.real
 def test_batch_identity_uses_logical_content_not_csv_line_endings(
     repo_root: Path,
     tmp_path: Path,
@@ -407,6 +416,7 @@ def test_batch_identity_uses_logical_content_not_csv_line_endings(
     assert len(list((tmp_path / "store" / "batches").iterdir())) == 1
 
 
+@pytest.mark.real
 def test_import_batch_retries_transient_directory_publish_lock(
     repo_root: Path,
     tmp_path: Path,
@@ -437,6 +447,7 @@ def test_import_batch_retries_transient_directory_publish_lock(
     assert (tmp_path / "batches" / batch.batch_id / "manifest.json").is_file()
 
 
+@pytest.mark.real
 def test_conflicting_overlap_is_rejected_without_changing_old_batch(
     repo_root: Path,
     tmp_path: Path,
@@ -462,6 +473,7 @@ def test_conflicting_overlap_is_rejected_without_changing_old_batch(
     assert not list(tmp_path.rglob("*.tmp*"))
 
 
+@pytest.mark.real
 def test_new_security_batch_does_not_change_existing_batch(
     repo_root: Path,
     tmp_path: Path,
@@ -486,6 +498,7 @@ def test_new_security_batch_does_not_change_existing_batch(
     assert len(list((tmp_path / "batches").iterdir())) == 2
 
 
+@pytest.mark.real
 def test_snapshot_only_references_batches_and_remains_stable_after_append(
     repo_root: Path,
     tmp_path: Path,
@@ -520,6 +533,7 @@ def test_snapshot_only_references_batches_and_remains_stable_after_append(
     assert not list(tmp_path.rglob("*.tmp*"))
 
 
+@pytest.mark.real
 def test_snapshot_validation_rejects_tampered_authoritative_parquet(
     repo_root: Path,
     tmp_path: Path,
@@ -538,6 +552,7 @@ def test_snapshot_validation_rejects_tampered_authoritative_parquet(
         validate_snapshot(snapshot.snapshot_id, root=tmp_path)
 
 
+@pytest.mark.real
 def test_tampered_batch_identity_cannot_be_repackaged_as_a_new_snapshot(
     repo_root: Path,
     tmp_path: Path,
@@ -557,6 +572,7 @@ def test_tampered_batch_identity_cannot_be_repackaged_as_a_new_snapshot(
         )
 
 
+@pytest.mark.real
 def test_tampered_validation_evidence_cannot_be_reused(
     repo_root: Path,
     tmp_path: Path,
@@ -580,6 +596,7 @@ def test_tampered_validation_evidence_cannot_be_reused(
     "invalid_id",
     ["..\\..\\outside", "../../outside", "g" * 64, "a" * 63],
 )
+@pytest.mark.real
 def test_storage_identifiers_are_strict_sha256_values(
     invalid_id: str,
     tmp_path: Path,
@@ -594,6 +611,7 @@ def test_storage_identifiers_are_strict_sha256_values(
         validate_snapshot(invalid_id, root=tmp_path)
 
 
+@pytest.mark.real
 def test_snapshot_rejects_incomplete_end_date_coverage(
     repo_root: Path,
     tmp_path: Path,
@@ -615,6 +633,7 @@ def test_snapshot_rejects_incomplete_end_date_coverage(
         create_snapshot(batch_ids=[batch.batch_id], selection=selection, root=tmp_path)
 
 
+@pytest.mark.real
 def test_import_rejects_rows_with_missing_or_extra_columns(
     repo_root: Path,
     tmp_path: Path,
@@ -633,6 +652,7 @@ def test_import_rejects_rows_with_missing_or_extra_columns(
             import_batch(csv_path=malformed, manifest=_manifest(), root=tmp_path)
 
 
+@pytest.mark.real
 def test_snapshot_can_reference_multiple_verified_batches(
     repo_root: Path,
     tmp_path: Path,
@@ -677,6 +697,7 @@ def test_snapshot_can_reference_multiple_verified_batches(
     assert validate_snapshot(snapshot.snapshot_id, root=tmp_path) == snapshot
 
 
+@pytest.mark.real
 def test_snapshot_requires_the_complete_source_identity(
     repo_root: Path,
     tmp_path: Path,
@@ -698,6 +719,7 @@ def test_snapshot_requires_the_complete_source_identity(
         create_snapshot(batch_ids=[batch.batch_id], selection=selection, root=tmp_path)
 
 
+@pytest.mark.real
 def test_storage_lock_serializes_cross_process_batch_publication(
     repo_root: Path,
     tmp_path: Path,
@@ -725,6 +747,7 @@ def test_storage_lock_serializes_cross_process_batch_publication(
     assert process.exitcode == 0
 
 
+@pytest.mark.real
 def test_records_expose_deeply_immutable_evidence(
     repo_root: Path,
     tmp_path: Path,
@@ -743,6 +766,7 @@ def test_records_expose_deeply_immutable_evidence(
         snapshot.document["selection"]["source"]["environment"] = "mutated"
 
 
+@pytest.mark.real
 def test_snapshot_validation_rejects_duplicate_or_extra_batch_evidence(
     repo_root: Path,
     tmp_path: Path,
@@ -771,6 +795,7 @@ def test_snapshot_validation_rejects_duplicate_or_extra_batch_evidence(
         validate_snapshot(malformed_id, root=tmp_path)
 
 
+@pytest.mark.real
 def test_snapshot_validation_rejects_embedded_path_traversal_batch_id(
     repo_root: Path,
     tmp_path: Path,
@@ -800,6 +825,7 @@ def test_snapshot_validation_rejects_embedded_path_traversal_batch_id(
         validate_snapshot(malformed_id, root=tmp_path)
 
 
+@pytest.mark.real
 def test_missing_batch_and_deleted_snapshot_evidence_are_rejected(
     repo_root: Path,
     tmp_path: Path,

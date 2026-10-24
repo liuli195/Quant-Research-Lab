@@ -88,6 +88,7 @@ def test_benchmark_rows_use_total_return_and_currency_formula_without_fill() -> 
     assert ("2024-01-03", "NASDAQ100_CNY_TOTAL_RETURN") not in keyed
 
 
+@pytest.mark.real
 def test_benchmark_set_is_immutable_columnar_and_has_exact_two_identities(
     tmp_path: Path,
 ) -> None:
@@ -127,7 +128,7 @@ def test_benchmark_set_is_immutable_columnar_and_has_exact_two_identities(
     assert reused.benchmark_set_id == created.benchmark_set_id
 
 
-def test_benchmark_set_rejects_proxy_missing_or_unknown_identity(tmp_path: Path) -> None:
+def test_benchmark_set_rejects_proxy_missing_or_unknown_identity() -> None:
     valid = [
         {"time": "2024-01-02", "benchmark_id": BENCHMARK_IDS[0], "returns": 0.01},
         {"time": "2024-01-02", "benchmark_id": BENCHMARK_IDS[1], "returns": 0.02},
@@ -138,7 +139,7 @@ def test_benchmark_set_rejects_proxy_missing_or_unknown_identity(tmp_path: Path)
     ):
         with pytest.raises(BenchmarkSetError):
             write_benchmark_set(
-                market_data_root=tmp_path,
+                market_data_root=Path("unused-benchmark-store"),
                 rows=rows,
                 sources=_sources(),
                 start_date=date(2024, 1, 2),
@@ -146,6 +147,7 @@ def test_benchmark_set_rejects_proxy_missing_or_unknown_identity(tmp_path: Path)
             )
 
 
+@pytest.mark.real
 def test_benchmark_set_detects_manifest_or_parquet_tampering(tmp_path: Path) -> None:
     created = write_benchmark_set(
         market_data_root=tmp_path,

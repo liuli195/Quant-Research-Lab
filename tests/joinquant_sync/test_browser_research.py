@@ -232,6 +232,7 @@ def test_log_transport_captures_original_response_text() -> None:
     assert "document.cookie" not in browser._CY_AJAX_JS
 
 
+@pytest.mark.real
 def test_malformed_production_log_response_is_persisted_before_failure(
     tmp_path: Path,
 ) -> None:
@@ -251,6 +252,7 @@ def test_malformed_production_log_response_is_persisted_before_failure(
     assert payload["recovery"][0]["errors"]
 
 
+@pytest.mark.real
 def test_stage_external_file_preserves_bytes_and_sha256(tmp_path: Path) -> None:
     from joinquant_sync.archive import stage_external_file
 
@@ -280,6 +282,7 @@ def test_stage_only_sync_requires_explicit_target() -> None:
     )
 
 
+@pytest.mark.real
 def test_persistent_context_and_download_capture(tmp_path: Path) -> None:
     from joinquant_sync.browser import capture_download, open_authenticated_context
 
@@ -301,6 +304,7 @@ def test_persistent_context_and_download_capture(tmp_path: Path) -> None:
     assert destination.read_bytes() == b'{"ok":true}'
 
 
+@pytest.mark.real
 def test_persistent_context_ignores_exported_storage_state(tmp_path: Path) -> None:
     from joinquant_sync.browser import open_authenticated_context
 
@@ -334,6 +338,7 @@ def test_persistent_context_ignores_exported_storage_state(tmp_path: Path) -> No
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows DPAPI only")
+@pytest.mark.real
 def test_authenticated_session_is_encrypted_and_restored(tmp_path: Path) -> None:
     from joinquant_sync.browser import (
         persist_authenticated_session,
@@ -382,6 +387,7 @@ def test_authenticated_session_is_encrypted_and_restored(tmp_path: Path) -> None
     assert restored.restored == [joinquant_cookie]
 
 
+@pytest.mark.real
 def test_verify_import_stages_file(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -408,6 +414,7 @@ def test_verify_import_stages_file(
     assert item["sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
 
 
+@pytest.mark.real
 def test_export_structured_backtest_stages_download(tmp_path: Path) -> None:
     from joinquant_sync.browser import open_authenticated_context
     from joinquant_sync.research import export_structured_backtest
@@ -425,6 +432,7 @@ def test_export_structured_backtest_stages_download(tmp_path: Path) -> None:
     assert Path(items[0]["path"]).read_bytes() == b'{"status":"done"}'
 
 
+@pytest.mark.real
 def test_auth_uses_external_persistent_profile(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -476,7 +484,7 @@ def test_auth_uses_external_persistent_profile(
 
 
 def test_auth_rejects_profile_inside_repository(
-    tmp_path: Path,
+    repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -487,9 +495,8 @@ def test_auth_rejects_profile_inside_repository(
         raise AssertionError("browser must not open for an unsafe profile")
         yield
 
-    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(jq_sync, "open_authenticated_context", unexpected_context)
-    assert jq_sync.main(["auth", "--profile", str(tmp_path / ".browser")]) == 2
+    assert jq_sync.main(["auth", "--profile", str(repo_root / ".browser")]) == 2
     assert json.loads(capsys.readouterr().out) == {
         "status": "invalid_profile",
         "message": "--profile must be outside the repository",
@@ -784,6 +791,7 @@ def test_unchanged_simulation_code_history_reuses_verified_old_pages() -> None:
     assert pages == previous
 
 
+@pytest.mark.real
 def test_paid_preview_is_bound_and_one_time(tmp_path: Path) -> None:
     from joinquant_sync.browser import (
         PaidConfirmationRequired,

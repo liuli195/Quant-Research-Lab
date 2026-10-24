@@ -241,6 +241,7 @@ def test_local_manifest_cross_field_integrity_is_checked(mutation) -> None:
         validate_local_manifest_document(manifest)
 
 
+@pytest.mark.real
 def test_reader_selects_only_by_top_level_version_and_never_falls_back(
     tmp_path: Path,
 ) -> None:

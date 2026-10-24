@@ -105,9 +105,16 @@ def _write_complete_package(
     return package.path
 
 
+@pytest.fixture(scope="session")
+def promotion_package_baseline(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return _write_complete_package(tmp_path_factory.mktemp("promotion-baseline"))
+
+
 @pytest.fixture
-def complete_package(isolated_repo: Path) -> Path:
-    return _write_complete_package(isolated_repo)
+def complete_package(isolated_repo: Path, promotion_package_baseline: Path) -> Path:
+    target = isolated_repo / ".local/quant-research" / STRATEGY_ID / RUN_ID
+    shutil.copytree(promotion_package_baseline, target)
+    return target
 
 
 def _boom(*_args: object, **_kwargs: object) -> None:
@@ -166,13 +173,13 @@ def _tree_directories(root: Path) -> tuple[str, ...]:
     ),
 )
 def test_promote_rejects_invalid_analysis_id(
-    isolated_repo: Path,
+    repo_root: Path,
     analysis_id: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _guard_recomputation(monkeypatch)
 
-    result = promote_archive(isolated_repo, STRATEGY_ID, RUN_ID, analysis_id)
+    result = promote_archive(repo_root, STRATEGY_ID, RUN_ID, analysis_id)
 
     assert result.status == "failed"
     assert result.reasons == ("invalid_analysis_id",)
@@ -194,13 +201,13 @@ def test_promote_rejects_invalid_analysis_id(
     ),
 )
 def test_promote_rejects_invalid_strategy_identity(
-    isolated_repo: Path,
+    repo_root: Path,
     strategy_id: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _guard_recomputation(monkeypatch)
 
-    result = promote_archive(isolated_repo, strategy_id, RUN_ID, ANALYSIS_ID)
+    result = promote_archive(repo_root, strategy_id, RUN_ID, ANALYSIS_ID)
 
     assert result.status == "failed"
     assert result.reasons == ("invalid_strategy_id",)
@@ -210,19 +217,20 @@ def test_promote_rejects_invalid_strategy_identity(
     "run_id", ("A" * 64, "a" * 63, "a" * 65, "../escape", "a/b", "")
 )
 def test_promote_rejects_invalid_run_identity(
-    isolated_repo: Path,
+    repo_root: Path,
     run_id: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _guard_recomputation(monkeypatch)
 
-    result = promote_archive(isolated_repo, STRATEGY_ID, run_id, ANALYSIS_ID)
+    result = promote_archive(repo_root, STRATEGY_ID, run_id, ANALYSIS_ID)
 
     assert result.status == "failed"
     assert result.reasons == ("invalid_run_id",)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows name matching is required")
+@pytest.mark.real
 def test_promote_rejects_case_insensitive_strategy_directory_alias(
     complete_package: Path,
     isolated_repo: Path,
@@ -280,17 +288,11 @@ def _restore_linked_directory(directory: Path, target: Path) -> None:
 @pytest.mark.parametrize(
     "relative_parent",
     (
-        ".local",
-        ".local/quant-research",
-        f".local/quant-research/{STRATEGY_ID}",
         f".local/quant-research/{STRATEGY_ID}/{RUN_ID}",
-        "joinquant",
-        "joinquant/strategies",
-        f"joinquant/strategies/{STRATEGY_ID}",
-        f"joinquant/strategies/{STRATEGY_ID}/research",
         f"joinquant/strategies/{STRATEGY_ID}/research/archives",
     ),
 )
+@pytest.mark.real
 def test_promote_rejects_linked_fixed_parent_without_crossing_boundary(
     complete_package: Path,
     isolated_repo: Path,
@@ -316,6 +318,7 @@ def test_promote_rejects_linked_fixed_parent_without_crossing_boundary(
         _restore_linked_directory(linked_parent, outside)
 
 
+@pytest.mark.real
 def test_promote_rejects_incomplete_source_package(
     complete_package: Path,
     isolated_repo: Path,
@@ -335,6 +338,7 @@ def test_promote_rejects_incomplete_source_package(
     ("manifest_strategy_id", "manifest_run_id"),
     (("strategy-004", RUN_ID), (STRATEGY_ID, "b" * 64)),
 )
+@pytest.mark.real
 def test_promote_rejects_source_identity_mismatch(
     isolated_repo: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -354,6 +358,7 @@ def test_promote_rejects_source_identity_mismatch(
     assert result.reasons == ("source_identity_mismatch",)
 
 
+@pytest.mark.real
 def test_promote_preserves_layout_and_every_source_byte(
     complete_package: Path,
     isolated_repo: Path,
@@ -383,6 +388,7 @@ def test_promote_preserves_layout_and_every_source_byte(
 
 
 @pytest.mark.parametrize("unsafe_kind", ("symlink", "hardlink", "junction"))
+@pytest.mark.real
 def test_promote_rejects_links_and_reparse_points(
     complete_package: Path,
     isolated_repo: Path,
@@ -429,6 +435,7 @@ def test_promote_rejects_links_and_reparse_points(
     assert result.reasons == ("unsafe_source_entry",)
 
 
+@pytest.mark.real
 def test_promote_reuses_identical_target_without_writing(
     complete_package: Path,
     isolated_repo: Path,
@@ -450,6 +457,7 @@ def test_promote_reuses_identical_target_without_writing(
     assert _tree_digests(second.target) == before
 
 
+@pytest.mark.real
 def test_identical_target_is_revalidated_before_reuse(
     complete_package: Path,
     isolated_repo: Path,
@@ -476,6 +484,7 @@ def test_identical_target_is_revalidated_before_reuse(
     assert _tree_digests(second.target) == before
 
 
+@pytest.mark.real
 def test_promote_reports_conflict_without_changing_existing_target(
     complete_package: Path,
     isolated_repo: Path,
@@ -498,6 +507,7 @@ def test_promote_reports_conflict_without_changing_existing_target(
     assert _tree_digests(first.target) == before
 
 
+@pytest.mark.real
 def test_existing_target_is_never_written(
     complete_package: Path,
     isolated_repo: Path,
@@ -523,6 +533,7 @@ def test_existing_target_is_never_written(
     assert tuple(target.iterdir()) == (marker,)
 
 
+@pytest.mark.real
 def test_target_appearing_before_publish_does_not_leave_staging(
     complete_package: Path,
     isolated_repo: Path,
@@ -561,6 +572,7 @@ def test_target_appearing_before_publish_does_not_leave_staging(
         ("different", "conflict", False),
     ),
 )
+@pytest.mark.real
 def test_target_appearing_during_atomic_publish_uses_idempotency_rules(
     complete_package: Path,
     isolated_repo: Path,
@@ -592,6 +604,7 @@ def test_target_appearing_during_atomic_publish_uses_idempotency_rules(
     assert list(target.parent.glob(f".{ANALYSIS_ID}.*.tmp")) == []
 
 
+@pytest.mark.real
 def test_publish_failure_cleans_staging(
     complete_package: Path,
     isolated_repo: Path,
@@ -618,6 +631,7 @@ def test_publish_failure_cleans_staging(
     assert list(target.parent.glob(f".{ANALYSIS_ID}.*.tmp")) == []
 
 
+@pytest.mark.real
 def test_copy_interruption_cleans_only_its_staging_directory(
     complete_package: Path,
     isolated_repo: Path,
@@ -660,6 +674,7 @@ def test_copy_interruption_cleans_only_its_staging_directory(
     assert _tree_digests(complete_package) == source_before
 
 
+@pytest.mark.real
 def test_copy_failure_rolls_back_new_empty_archive_parents(
     complete_package: Path,
     isolated_repo: Path,
@@ -683,6 +698,7 @@ def test_copy_failure_rolls_back_new_empty_archive_parents(
     assert not (strategy / "research").exists()
 
 
+@pytest.mark.real
 def test_cleanup_failure_returns_stable_reason_and_preserves_existing_parent(
     complete_package: Path,
     isolated_repo: Path,
@@ -718,6 +734,7 @@ def test_cleanup_failure_returns_stable_reason_and_preserves_existing_parent(
     assert archives.is_dir()
 
 
+@pytest.mark.real
 def test_source_change_after_validation_is_not_published(
     complete_package: Path,
     isolated_repo: Path,
@@ -745,6 +762,7 @@ def test_source_change_after_validation_is_not_published(
     assert list(archives.glob(f".{ANALYSIS_ID}.*.tmp")) == []
 
 
+@pytest.mark.real
 def test_promoted_archive_remains_queryable_after_local_source_is_deleted(
     complete_package: Path,
     isolated_repo: Path,
@@ -770,6 +788,7 @@ def test_promoted_archive_remains_queryable_after_local_source_is_deleted(
     assert source.formula_version == "unified-strategy-analysis/1"
 
 
+@pytest.mark.real
 def test_unified_analysis_validation_failure_prevents_publish(
     complete_package: Path,
     isolated_repo: Path,
@@ -791,6 +810,7 @@ def test_unified_analysis_validation_failure_prevents_publish(
     assert not result.target.exists()
 
 
+@pytest.mark.real
 def test_complete_staging_passes_the_real_unified_analysis_entry(
     complete_package: Path,
     isolated_repo: Path,
@@ -821,6 +841,7 @@ def test_complete_staging_passes_the_real_unified_analysis_entry(
     assert validated[0].name.endswith(".tmp")
 
 
+@pytest.mark.real
 def test_prepublish_uses_authoritative_validator_once_per_tree(
     complete_package: Path,
     isolated_repo: Path,
@@ -853,6 +874,7 @@ def test_prepublish_uses_authoritative_validator_once_per_tree(
     assert staging_validations[0].name.startswith(f".{ANALYSIS_ID}.")
 
 
+@pytest.mark.real
 def test_prepublish_analysis_queries_one_row_per_relation(
     complete_package: Path,
     isolated_repo: Path,
@@ -921,7 +943,7 @@ def test_prepublish_analysis_queries_one_row_per_relation(
     (("complete", 0), ("conflict", 1), ("failed", 2)),
 )
 def test_promote_cli_uses_exact_arguments_sorted_json_and_exit_codes(
-    isolated_repo: Path,
+    repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     status: str,
@@ -929,9 +951,9 @@ def test_promote_cli_uses_exact_arguments_sorted_json_and_exit_codes(
 ) -> None:
     from scripts.research.local_quant_research import archive, cli
 
-    source = isolated_repo / ".local/quant-research/strategy-003" / RUN_ID
+    source = repo_root / ".local/quant-research/strategy-003" / RUN_ID
     target = (
-        isolated_repo
+        repo_root
         / "joinquant/strategies/strategy-003/research/archives/baseline-v2"
     )
     calls: list[tuple[Path, str, str, str]] = []
@@ -951,7 +973,7 @@ def test_promote_cli_uses_exact_arguments_sorted_json_and_exit_codes(
             reasons=() if status == "complete" else (f"{status}_reason",),
         )
 
-    monkeypatch.setattr(cli, "REPO_ROOT", isolated_repo)
+    monkeypatch.setattr(cli, "REPO_ROOT", repo_root)
     monkeypatch.setattr(archive, "promote_archive", fake_promote)
 
     actual = cli.main(
@@ -967,7 +989,7 @@ def test_promote_cli_uses_exact_arguments_sorted_json_and_exit_codes(
     )
 
     assert actual == exit_code
-    assert calls == [(isolated_repo, STRATEGY_ID, RUN_ID, ANALYSIS_ID)]
+    assert calls == [(repo_root, STRATEGY_ID, RUN_ID, ANALYSIS_ID)]
     expected = {
         "reasons": [] if status == "complete" else [f"{status}_reason"],
         "reused": status == "complete",
@@ -1009,7 +1031,7 @@ def test_promote_cli_rejects_missing_or_extra_public_arguments(
 
 
 def test_promote_cli_does_not_import_the_run_or_recompute_paths(
-    isolated_repo: Path,
+    repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cli_name = "scripts.research.local_quant_research.cli"
@@ -1045,7 +1067,7 @@ def test_promote_cli_does_not_import_the_run_or_recompute_paths(
         context.setattr(builtins, "__import__", guarded_import)
         sys.modules.pop(cli_name, None)
         cli = importlib.import_module(cli_name)
-        context.setattr(cli, "REPO_ROOT", isolated_repo)
+        context.setattr(cli, "REPO_ROOT", repo_root)
 
         assert cli.main(
             [

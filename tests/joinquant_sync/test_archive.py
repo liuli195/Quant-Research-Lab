@@ -43,6 +43,7 @@ def test_history_target_accepts_only_ordinal_or_detail_url() -> None:
         validate_history_target("strategy-001", "121b439805c89d76b93c5ce520310c2d")
 
 
+@pytest.mark.real
 def test_remote_alias_change_does_not_create_duplicate_directory(
     tmp_path: Path,
 ) -> None:
@@ -79,6 +80,7 @@ def test_remote_alias_change_does_not_create_duplicate_directory(
     ]
 
 
+@pytest.mark.real
 def test_strategy_ids_are_allocated_once(tmp_path: Path) -> None:
     from joinquant_sync.archive import resolve_local_id
 
@@ -102,6 +104,7 @@ def test_strategy_ids_are_allocated_once(tmp_path: Path) -> None:
     assert (first, same, second) == ("strategy-001", "strategy-001", "strategy-002")
 
 
+@pytest.mark.real
 def test_backtest_identity_fingerprint_conflict_is_rejected(tmp_path: Path) -> None:
     from joinquant_sync.archive import IdentityConflict, resolve_local_id
 
@@ -267,6 +270,7 @@ def test_manifest_schema_declares_required_contract(repo_root: Path) -> None:
     ] == {"$ref": "#/$defs/backtestOfficialSummary"}
 
 
+@pytest.mark.real
 def test_failed_batch_keeps_previous_manifest(tmp_path: Path) -> None:
     from joinquant_sync.archive import IntegrityError, commit_manifest
 
@@ -281,6 +285,7 @@ def test_failed_batch_keeps_previous_manifest(tmp_path: Path) -> None:
     assert json.loads((object_dir / "manifest.json").read_text()) == old
 
 
+@pytest.mark.real
 def test_partial_commit_is_explicit_and_verifies_referenced_files(
     tmp_path: Path,
 ) -> None:
@@ -341,6 +346,7 @@ def test_partial_commit_is_explicit_and_verifies_referenced_files(
     assert verify_existing_manifest(object_dir) == manifest
 
 
+@pytest.mark.real
 def test_raw_response_round_trips_and_hashes(tmp_path: Path) -> None:
     from joinquant_sync.archive import write_raw_gzip
 
@@ -356,6 +362,7 @@ def test_raw_response_round_trips_and_hashes(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.real
 def test_atomic_commit_moves_only_manifest_referenced_files(tmp_path: Path) -> None:
     from joinquant_sync.archive import commit_manifest, verify_existing_manifest
 
@@ -392,6 +399,7 @@ def test_atomic_commit_moves_only_manifest_referenced_files(tmp_path: Path) -> N
     assert verify_existing_manifest(object_dir) == manifest
 
 
+@pytest.mark.real
 def test_repeated_commit_with_same_content_is_idempotent(tmp_path: Path) -> None:
     from joinquant_sync.archive import commit_manifest
 
@@ -425,6 +433,7 @@ def test_repeated_commit_with_same_content_is_idempotent(tmp_path: Path) -> None
     assert (object_dir / "raw" / "chunk.json").read_bytes() == payload
 
 
+@pytest.mark.real
 def test_incremental_commit_distinguishes_same_named_partitions(tmp_path: Path) -> None:
     from joinquant_sync.archive import commit_manifest
 
@@ -472,6 +481,7 @@ def test_incremental_commit_distinguishes_same_named_partitions(tmp_path: Path) 
     assert (object_dir / files[1]["path"]).read_bytes() == b"new"
 
 
+@pytest.mark.real
 def test_existing_manifest_rejects_missing_referenced_file(tmp_path: Path) -> None:
     from joinquant_sync.archive import IntegrityError, verify_existing_manifest
 
@@ -494,6 +504,7 @@ def test_existing_manifest_rejects_missing_referenced_file(tmp_path: Path) -> No
         verify_existing_manifest(object_dir)
 
 
+@pytest.mark.real
 def test_verify_rejects_manifest_missing_schema_contract(tmp_path: Path) -> None:
     from joinquant_sync.archive import IntegrityError, verify_existing_manifest
 
@@ -518,6 +529,7 @@ def test_verify_rejects_manifest_missing_schema_contract(tmp_path: Path) -> None
         verify_existing_manifest(tmp_path)
 
 
+@pytest.mark.real
 def test_object_lock_conflict_is_retryable(tmp_path: Path) -> None:
     from joinquant_sync.archive import ObjectLocked, object_lock
 
@@ -528,6 +540,7 @@ def test_object_lock_conflict_is_retryable(tmp_path: Path) -> None:
                 pass
 
 
+@pytest.mark.real
 def test_code_context_keeps_backtest_code_and_simulation_versions(
     tmp_path: Path,
 ) -> None:
@@ -723,6 +736,7 @@ def test_malformed_json_recovery_reports_exact_bad_offset() -> None:
     assert errors == [{"offset": 8, "bytes": 3, "error": "invalid_json"}]
 
 
+@pytest.mark.real
 def test_log_response_is_archived_before_recovery(tmp_path: Path) -> None:
     from joinquant_sync.archive import archive_log_response
 
@@ -983,6 +997,7 @@ def test_performance_profile_rejects_unproven_or_placeholder_payload(
     assert result["status"] == "failed"
 
 
+@pytest.mark.real
 def test_verify_cli_checks_manifest_gate(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -997,7 +1012,6 @@ def test_verify_cli_checks_manifest_gate(
 
 
 def test_verify_cli_reports_a_valid_partial_archive(
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1014,10 +1028,11 @@ def test_verify_cli_reports_a_valid_partial_archive(
     )
     monkeypatch.setattr(jq_sync, "verify_partial_manifest", lambda _path: partial)
 
-    assert jq_sync.main(["verify", "--object", str(tmp_path)]) == 0
+    assert jq_sync.main(["verify", "--object", "unused-archive"]) == 0
     assert json.loads(capsys.readouterr().out)["status"] == "partial"
 
 
+@pytest.mark.real
 def test_paid_log_range_keeps_only_requested_lines(tmp_path: Path) -> None:
     from joinquant_sync.archive import extract_paid_log_range
 
@@ -1033,7 +1048,7 @@ def test_paid_log_range_keeps_only_requested_lines(tmp_path: Path) -> None:
 
 
 def test_paid_log_download_requires_explicit_confirmation(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     import jq_sync
 
@@ -1045,7 +1060,7 @@ def test_paid_log_download_requires_explicit_confirmation(
                 "--preview-id",
                 "0" * 32,
                 "--destination",
-                str(tmp_path / "selected.gz"),
+                "unused-selected.gz",
             ]
         )
         == 4

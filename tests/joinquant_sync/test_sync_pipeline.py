@@ -4,10 +4,12 @@ from pathlib import Path
 import gzip
 import json
 import hashlib
+import shutil
 
 import pytest
 
 
+@pytest.mark.real
 def test_historical_backtest_does_not_lower_latest_id(tmp_path: Path) -> None:
     import joinquant_sync.sync_pipeline as pipeline
 
@@ -27,6 +29,7 @@ def test_historical_backtest_does_not_lower_latest_id(tmp_path: Path) -> None:
     assert pipeline._read_strategy_index(index_path)[0]["latest_backtest_id"] == "115"
 
 
+@pytest.mark.real
 def test_simulation_index_is_flushed_before_atomic_replace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -39,6 +42,7 @@ def test_simulation_index_is_flushed_before_atomic_replace(
     assert flushed
 
 
+@pytest.mark.real
 def test_atomic_replace_retries_transient_windows_permission_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -85,6 +89,7 @@ def test_backtest_fence_changes_when_performance_profile_changes() -> None:
     assert _backtest_browser_fingerprint(browser) != before
 
 
+@pytest.mark.real
 def test_simulation_log_increment_uses_last_verified_offset_not_row_count(
     tmp_path: Path,
 ) -> None:
@@ -116,6 +121,7 @@ def test_simulation_log_increment_uses_last_verified_offset_not_row_count(
     assert state["normal_log_stop_offset"] == 1100
 
 
+@pytest.mark.real
 def test_capped_simulation_log_remains_capped_after_incremental_merge(
     tmp_path: Path,
 ) -> None:
@@ -164,6 +170,7 @@ def test_capped_simulation_log_remains_capped_after_incremental_merge(
     )
 
 
+@pytest.mark.real
 def test_simulation_code_history_cursor_uses_remote_history_count(
     tmp_path: Path,
 ) -> None:
@@ -189,6 +196,7 @@ def test_simulation_code_history_cursor_uses_remote_history_count(
     assert state["code_history_total"] == 3
 
 
+@pytest.mark.real
 def test_simulation_incremental_state_reuses_verified_code_sources(
     tmp_path: Path,
 ) -> None:
@@ -488,6 +496,19 @@ def _commit_test_simulation(
     return manifest
 
 
+@pytest.fixture(scope="session")
+def simulation_baseline(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    root = tmp_path_factory.mktemp("simulation-baseline") / "simulation"
+    _commit_test_simulation(root)
+    return root
+
+
+def _copy_test_simulation(object_dir: Path, baseline: Path) -> dict[str, object]:
+    shutil.copytree(baseline, object_dir)
+    return json.loads((object_dir / "manifest.json").read_text(encoding="utf-8"))
+
+
+@pytest.mark.real
 def test_simulation_rotated_writer_archives_lifecycle_source_only(tmp_path: Path) -> None:
     from joinquant_sync.archive import verify_existing_manifest
 
@@ -513,6 +534,7 @@ def test_simulation_rotated_writer_archives_lifecycle_source_only(tmp_path: Path
     assert verify_existing_manifest(object_dir)["gate"]["status"] == "pass"
 
 
+@pytest.mark.real
 def test_simulation_fence_changes_when_lifecycle_attribution_changes(
     tmp_path: Path,
 ) -> None:
@@ -532,6 +554,7 @@ def test_simulation_fence_changes_when_lifecycle_attribution_changes(
     assert first["fence"] != second["fence"]
 
 
+@pytest.mark.real
 def test_simulation_code_history_mapping_is_verified_against_raw_pages(
     tmp_path: Path,
 ) -> None:
@@ -553,11 +576,12 @@ def test_simulation_code_history_mapping_is_verified_against_raw_pages(
         verify_existing_manifest(object_dir)
 
 
-def test_simulation_code_history_mapping_is_required(tmp_path: Path) -> None:
+@pytest.mark.real
+def test_simulation_code_history_mapping_is_required(simulation_baseline: Path, tmp_path: Path) -> None:
     from joinquant_sync.archive import IntegrityError, verify_existing_manifest
 
     object_dir = tmp_path / "simulation"
-    manifest = _commit_test_simulation(object_dir)
+    manifest = _copy_test_simulation(object_dir, simulation_baseline)
     del manifest["code"]["history_versions"]
     (object_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
@@ -574,16 +598,17 @@ def _datasets(kind: str = "simulation") -> dict[str, dict[str, object]]:
     return expected_datasets(kind, "active" if kind == "simulation" else "done", False)
 
 
-def test_missing_structured_dataset_fails_closed(tmp_path: Path) -> None:
+def test_missing_structured_dataset_fails_closed() -> None:
     from joinquant_sync.archive import evaluate_gate
     from joinquant_sync.sync_pipeline import _stage_structured
 
     datasets = _datasets()
-    _stage_structured(tmp_path, {}, datasets)
+    _stage_structured(Path("unused-stage"), {}, datasets)
     assert datasets["results"]["status"] == "failed"
     assert evaluate_gate(datasets)["status"] == "fail"
 
 
+@pytest.mark.real
 def test_primitive_structured_rows_fail_closed(tmp_path: Path) -> None:
     from joinquant_sync.archive import IntegrityError
     from joinquant_sync.sync_pipeline import _stage_structured
@@ -597,6 +622,7 @@ def test_primitive_structured_rows_fail_closed(tmp_path: Path) -> None:
         _stage_structured(tmp_path, bundle, _datasets())
 
 
+@pytest.mark.real
 def test_duplicate_fact_key_fails_closed(tmp_path: Path) -> None:
     from joinquant_sync.archive import IntegrityError
     from joinquant_sync.sync_pipeline import _stage_structured
@@ -628,6 +654,7 @@ def test_fact_date_outside_result_trading_dates_fails_closed() -> None:
         )
 
 
+@pytest.mark.real
 def test_attribution_is_saved_as_raw_and_queryable_parquet(tmp_path: Path) -> None:
     from joinquant_sync.sync_pipeline import _stage_attribution
 
@@ -642,6 +669,7 @@ def test_attribution_is_saved_as_raw_and_queryable_parquet(tmp_path: Path) -> No
     assert any(path.startswith("data/attribution_log-") for path in paths)
 
 
+@pytest.mark.real
 def test_research_response_path_is_content_addressed(tmp_path: Path) -> None:
     from joinquant_sync.sync_pipeline import _stage_research_response
 
@@ -670,8 +698,9 @@ def test_research_response_path_is_content_addressed(tmp_path: Path) -> None:
     assert first_record["path"] != second_record["path"]
 
 
-def test_simulation_raw_code_evidence_is_content_addressed(tmp_path: Path) -> None:
-    manifest = _commit_test_simulation(tmp_path / "simulation")
+@pytest.mark.real
+def test_simulation_raw_code_evidence_is_content_addressed(simulation_baseline: Path, tmp_path: Path) -> None:
+    manifest = _copy_test_simulation(tmp_path / "simulation", simulation_baseline)
 
     assert manifest["code"]["history"]["path"].startswith("raw/code-history-")
     assert manifest["code"]["source_response"]["path"].startswith(
@@ -679,6 +708,7 @@ def test_simulation_raw_code_evidence_is_content_addressed(tmp_path: Path) -> No
     )
 
 
+@pytest.mark.real
 def test_snapshot_cleanup_keeps_only_manifest_referenced_lineage_file(
     tmp_path: Path,
 ) -> None:
@@ -704,6 +734,7 @@ def test_snapshot_cleanup_keeps_only_manifest_referenced_lineage_file(
     assert not stale.exists()
 
 
+@pytest.mark.real
 def test_performance_profile_payload_is_archived_and_referenced(tmp_path: Path) -> None:
     object_dir = tmp_path / "simulation-001"
 
@@ -720,6 +751,7 @@ def test_performance_profile_payload_is_archived_and_referenced(tmp_path: Path) 
     )
 
 
+@pytest.mark.real
 def test_verify_rejects_placeholder_performance_profile_with_matching_hash(
     tmp_path: Path,
 ) -> None:
@@ -754,6 +786,7 @@ def test_verify_rejects_placeholder_performance_profile_with_matching_hash(
         verify_existing_manifest(object_dir)
 
 
+@pytest.mark.real
 def test_verify_rejects_enabled_profile_mislabeled_missing_at_source(
     tmp_path: Path,
 ) -> None:
@@ -782,6 +815,7 @@ def test_verify_rejects_enabled_profile_mislabeled_missing_at_source(
         verify_existing_manifest(object_dir)
 
 
+@pytest.mark.real
 def test_simulation_attribution_uses_first_result_date_as_run_start(
     tmp_path: Path,
 ) -> None:
@@ -812,6 +846,7 @@ def test_simulation_attribution_mismatch_reports_date_evidence_only() -> None:
         _validate_simulation_attribution(raw, "2026-01-01")
 
 
+@pytest.mark.real
 def test_simulation_code_digest_includes_current_code_missing_from_history(
     tmp_path: Path,
 ) -> None:
@@ -823,6 +858,7 @@ def test_simulation_code_digest_includes_current_code_missing_from_history(
     assert verify_existing_manifest(object_dir)["gate"]["status"] == "pass"
 
 
+@pytest.mark.real
 def test_simulation_snapshot_id_is_content_addressed_not_date_based(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -955,6 +991,7 @@ def test_simulation_fingerprint_uses_code_history_content_not_rotating_alias() -
     )
 
 
+@pytest.mark.real
 def test_simulation_manifest_fence_includes_research_data(tmp_path: Path) -> None:
     from joinquant_sync.sync_pipeline import _build_simulation_batch
 
@@ -1022,6 +1059,7 @@ def test_simulation_manifest_fence_includes_research_data(tmp_path: Path) -> Non
     assert first["fence"] != second["fence"]
 
 
+@pytest.mark.real
 def test_simulation_code_and_params_use_immutable_version_paths(tmp_path: Path) -> None:
     from joinquant_sync.sync_pipeline import _version_simulation_code_context
 
@@ -1055,6 +1093,7 @@ def test_simulation_code_and_params_use_immutable_version_paths(tmp_path: Path) 
     assert all(path.is_file() for path in staged)
 
 
+@pytest.mark.real
 def test_failed_backtest_requires_and_stores_error_log(tmp_path: Path) -> None:
     from joinquant_sync.sync_pipeline import _stage_error_log
 
@@ -1067,15 +1106,13 @@ def test_failed_backtest_requires_and_stores_error_log(tmp_path: Path) -> None:
     assert staged[0].name.startswith("error-log-")
 
 
-def test_capped_normal_log_cannot_prove_failed_error_log_complete(
-    tmp_path: Path,
-) -> None:
+def test_capped_normal_log_cannot_prove_failed_error_log_complete() -> None:
     from joinquant_sync.sync_pipeline import _stage_error_log
 
     datasets = _datasets("backtest")
     assert (
         _stage_error_log(
-            tmp_path,
+            Path("unused-stage"),
             "failed",
             b"2026-01-01 - ERROR - boom\n",
             "capped_free",
@@ -1216,6 +1253,7 @@ def audit_event(event):
 @pytest.mark.parametrize(
     "failure", ["positions", "performance_profile", "attribution_log", "normal_log"]
 )
+@pytest.mark.real
 def test_backtest_batch_keeps_only_isolated_dataset_failed(
     tmp_path: Path, failure: str
 ) -> None:
@@ -1237,6 +1275,7 @@ def test_backtest_batch_keeps_only_isolated_dataset_failed(
     assert staged
 
 
+@pytest.mark.real
 def test_backtest_summary_uses_data_path_and_provenance(tmp_path: Path) -> None:
     from joinquant_sync.sync_pipeline import _build_backtest_batch
 
@@ -1260,6 +1299,7 @@ def test_backtest_summary_uses_data_path_and_provenance(tmp_path: Path) -> None:
     }
 
 
+@pytest.mark.real
 def test_manifest_contract_rejects_legacy_official_summary_path(
     tmp_path: Path,
 ) -> None:
@@ -1280,6 +1320,7 @@ def test_manifest_contract_rejects_legacy_official_summary_path(
     "field",
     ["evidence_version", "source", "encoding", "header", "rows", "related_datasets"],
 )
+@pytest.mark.real
 def test_manifest_contract_rejects_incomplete_official_summary_evidence(
     tmp_path: Path, field: str
 ) -> None:
@@ -1296,6 +1337,7 @@ def test_manifest_contract_rejects_incomplete_official_summary_evidence(
         _validate_manifest_contract(manifest)
 
 
+@pytest.mark.real
 def test_strategy_manifest_uses_immutable_code_version(tmp_path: Path) -> None:
     from joinquant_sync.archive import IntegrityError, verify_existing_manifest
     from joinquant_sync.sync_pipeline import _write_strategy
@@ -1316,7 +1358,8 @@ def test_strategy_manifest_uses_immutable_code_version(tmp_path: Path) -> None:
         verify_existing_manifest(tmp_path)
 
 
-def test_verify_recomputes_parquet_rows_and_gate(tmp_path: Path) -> None:
+@pytest.mark.real
+def test_verify_recomputes_parquet_rows_and_gate(simulation_baseline: Path, tmp_path: Path) -> None:
     from joinquant_sync.archive import (
         IntegrityError,
         evaluate_gate,
@@ -1324,7 +1367,7 @@ def test_verify_recomputes_parquet_rows_and_gate(tmp_path: Path) -> None:
     )
 
     object_dir = tmp_path / "simulation"
-    manifest = _commit_test_simulation(object_dir)
+    manifest = _copy_test_simulation(object_dir, simulation_baseline)
     manifest["datasets"]["results"]["rows"] += 1
     manifest["gate"] = evaluate_gate(manifest["datasets"])
     (object_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -1332,25 +1375,27 @@ def test_verify_recomputes_parquet_rows_and_gate(tmp_path: Path) -> None:
         verify_existing_manifest(object_dir)
 
 
-def test_verify_recomputes_gate_exceptions(tmp_path: Path) -> None:
+@pytest.mark.real
+def test_verify_recomputes_gate_exceptions(simulation_baseline: Path, tmp_path: Path) -> None:
     from joinquant_sync.archive import IntegrityError, verify_existing_manifest
 
     object_dir = tmp_path / "simulation"
-    manifest = _commit_test_simulation(object_dir)
+    manifest = _copy_test_simulation(object_dir, simulation_baseline)
     manifest["gate"] = {"status": "pass", "exceptions": ["forged:complete"]}
     (object_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(IntegrityError, match="gate does not match"):
         verify_existing_manifest(object_dir)
 
 
-def test_verify_compares_raw_and_parquet_values(tmp_path: Path) -> None:
+@pytest.mark.real
+def test_verify_compares_raw_and_parquet_values(simulation_baseline: Path, tmp_path: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
 
     from joinquant_sync.archive import IntegrityError, verify_existing_manifest
 
     object_dir = tmp_path / "simulation"
-    manifest = _commit_test_simulation(object_dir)
+    manifest = _copy_test_simulation(object_dir, simulation_baseline)
     record = next(
         item
         for item in manifest["datasets"]["results"]["files"]
@@ -1369,6 +1414,7 @@ def test_verify_compares_raw_and_parquet_values(tmp_path: Path) -> None:
         verify_existing_manifest(object_dir)
 
 
+@pytest.mark.real
 def test_verify_compares_attribution_raw_and_parquet_values(tmp_path: Path) -> None:
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -1410,6 +1456,7 @@ def test_verify_compares_attribution_raw_and_parquet_values(tmp_path: Path) -> N
         verify_existing_manifest(object_dir)
 
 
+@pytest.mark.real
 def test_sparse_attribution_events_round_trip_through_parquet(tmp_path: Path) -> None:
     from joinquant_sync.archive import verify_existing_manifest
 
@@ -1419,11 +1466,12 @@ def test_sparse_attribution_events_round_trip_through_parquet(tmp_path: Path) ->
     assert verify_existing_manifest(object_dir)["gate"]["status"] == "pass"
 
 
-def test_verify_rejects_tampered_original_research_response(tmp_path: Path) -> None:
+@pytest.mark.real
+def test_verify_rejects_tampered_original_research_response(simulation_baseline: Path, tmp_path: Path) -> None:
     from joinquant_sync.archive import IntegrityError, verify_existing_manifest
 
     object_dir = tmp_path / "simulation"
-    manifest = _commit_test_simulation(object_dir)
+    manifest = _copy_test_simulation(object_dir, simulation_baseline)
     record = manifest["research_response"]
     path = object_dir / record["path"]
     with gzip.open(path, "rt", encoding="utf-8") as stream:
@@ -1449,22 +1497,24 @@ def test_verify_rejects_tampered_original_research_response(tmp_path: Path) -> N
         verify_existing_manifest(object_dir)
 
 
-def test_verify_recomputes_normal_log_rows(tmp_path: Path) -> None:
+@pytest.mark.real
+def test_verify_recomputes_normal_log_rows(simulation_baseline: Path, tmp_path: Path) -> None:
     from joinquant_sync.archive import IntegrityError, verify_existing_manifest
 
     object_dir = tmp_path / "simulation"
-    manifest = _commit_test_simulation(object_dir)
+    manifest = _copy_test_simulation(object_dir, simulation_baseline)
     manifest["datasets"]["normal_log"]["rows"] = 999
     (object_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(IntegrityError, match="normal log row count"):
         verify_existing_manifest(object_dir)
 
 
-def test_verify_recomputes_normal_log_pagination_from_raw_pages(tmp_path: Path) -> None:
+@pytest.mark.real
+def test_verify_recomputes_normal_log_pagination_from_raw_pages(simulation_baseline: Path, tmp_path: Path) -> None:
     from joinquant_sync.archive import IntegrityError, verify_existing_manifest
 
     object_dir = tmp_path / "simulation"
-    manifest = _commit_test_simulation(object_dir)
+    manifest = _copy_test_simulation(object_dir, simulation_baseline)
     manifest["datasets"]["normal_log"]["pagination"] = {
         "pages": 1,
         "cumulative_rows": 1,
@@ -1476,11 +1526,12 @@ def test_verify_recomputes_normal_log_pagination_from_raw_pages(tmp_path: Path) 
         verify_existing_manifest(object_dir)
 
 
-def test_verify_compares_normal_log_raw_pages_and_jsonl_values(tmp_path: Path) -> None:
+@pytest.mark.real
+def test_verify_compares_normal_log_raw_pages_and_jsonl_values(simulation_baseline: Path, tmp_path: Path) -> None:
     from joinquant_sync.archive import IntegrityError, verify_existing_manifest
 
     object_dir = tmp_path / "simulation"
-    manifest = _commit_test_simulation(object_dir)
+    manifest = _copy_test_simulation(object_dir, simulation_baseline)
     record = next(
         item
         for item in manifest["datasets"]["normal_log"]["files"]
@@ -1496,11 +1547,12 @@ def test_verify_compares_normal_log_raw_pages_and_jsonl_values(tmp_path: Path) -
         verify_existing_manifest(object_dir)
 
 
-def test_verify_rejects_unstable_research_collection_fence(tmp_path: Path) -> None:
+@pytest.mark.real
+def test_verify_rejects_unstable_research_collection_fence(simulation_baseline: Path, tmp_path: Path) -> None:
     from joinquant_sync.archive import IntegrityError, verify_existing_manifest
 
     object_dir = tmp_path / "simulation"
-    manifest = _commit_test_simulation(object_dir)
+    manifest = _copy_test_simulation(object_dir, simulation_baseline)
     manifest["collection_fence"] = {
         "collection_before_sha256": "0" * 64,
         "collection_after_sha256": "1" * 64,
@@ -1510,17 +1562,19 @@ def test_verify_rejects_unstable_research_collection_fence(tmp_path: Path) -> No
         verify_existing_manifest(object_dir)
 
 
-def test_verify_rejects_nonexistent_build_object_kind(tmp_path: Path) -> None:
+@pytest.mark.real
+def test_verify_rejects_nonexistent_build_object_kind(simulation_baseline: Path, tmp_path: Path) -> None:
     from joinquant_sync.archive import IntegrityError, verify_existing_manifest
 
     object_dir = tmp_path / "simulation"
-    manifest = _commit_test_simulation(object_dir)
+    manifest = _copy_test_simulation(object_dir, simulation_baseline)
     manifest["object"]["kind"] = "build"
     (object_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(IntegrityError, match="kind"):
         verify_existing_manifest(object_dir)
 
 
+@pytest.mark.real
 def test_verify_derives_attribution_requirement_from_code(tmp_path: Path) -> None:
     from joinquant_sync.archive import (
         IntegrityError,
@@ -1544,6 +1598,7 @@ def test_verify_derives_attribution_requirement_from_code(tmp_path: Path) -> Non
         verify_existing_manifest(object_dir)
 
 
+@pytest.mark.real
 def test_simulation_current_pointers_follow_committed_versions(tmp_path: Path) -> None:
     from joinquant_sync.sync_pipeline import _update_simulation_pointers
 
@@ -1607,6 +1662,7 @@ def test_incremental_orders_preserve_exact_duplicate_multiplicity() -> None:
     assert merged == [order, order]
 
 
+@pytest.mark.real
 def test_simulation_logs_merge_by_offset_and_preserve_order(tmp_path: Path) -> None:
     from joinquant_sync.archive import write_raw_gzip
     from joinquant_sync.sync_pipeline import _merge_simulation_log
@@ -1655,6 +1711,7 @@ def test_bundle_time_cursors_never_move_backwards() -> None:
     ) == {"results": "2026-07-11", "orders": "2026-07-09"}
 
 
+@pytest.mark.real
 def test_research_results_cursor_uses_verified_previous_lineage_time(
     tmp_path: Path,
 ) -> None:
@@ -1713,6 +1770,7 @@ def test_research_results_cursor_uses_verified_previous_lineage_time(
     }
 
 
+@pytest.mark.real
 def test_existing_attribution_raw_is_upgraded_to_queryable_parquet(
     tmp_path: Path,
 ) -> None:
@@ -1735,6 +1793,7 @@ def test_existing_attribution_raw_is_upgraded_to_queryable_parquet(
     )
 
 
+@pytest.mark.real
 def test_paid_supplement_is_recorded_in_manifest(tmp_path: Path) -> None:
     from joinquant_sync.archive import write_raw_gzip
     from joinquant_sync.sync_pipeline import commit_paid_log_supplement
@@ -1766,7 +1825,8 @@ def test_paid_supplement_is_recorded_in_manifest(tmp_path: Path) -> None:
     assert evidence["paid_supplements"][0]["confirmed"] is True
 
 
-def test_rolling_capped_log_keeps_prior_raw_pages_and_commits(tmp_path: Path) -> None:
+@pytest.mark.real
+def test_rolling_capped_log_keeps_prior_raw_pages_and_commits(simulation_baseline: Path, tmp_path: Path) -> None:
     from joinquant_sync.archive import (
         detect_attribution_writer,
         verify_existing_manifest,
@@ -1774,7 +1834,7 @@ def test_rolling_capped_log_keeps_prior_raw_pages_and_commits(tmp_path: Path) ->
     from joinquant_sync.sync_pipeline import commit_simulation_evidence
 
     object_dir = tmp_path / "simulation"
-    previous = _commit_test_simulation(object_dir)
+    previous = _copy_test_simulation(object_dir, simulation_baseline)
     code = "def initialize(context):\n    pass\n"
     records = [
         {"offset": offset, "text": f"line-{offset}"} for offset in range(1, 1001)
@@ -1869,6 +1929,7 @@ def test_rolling_capped_log_keeps_prior_raw_pages_and_commits(tmp_path: Path) ->
     )
 
 
+@pytest.mark.real
 def test_production_simulation_core_runs_incrementally_in_memory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2102,6 +2163,7 @@ def test_production_simulation_core_runs_incrementally_in_memory(
     assert pipeline.sync_all_active_simulations(object(), tmp_path) == []
 
 
+@pytest.mark.real
 def test_active_simulation_persists_malformed_log_before_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

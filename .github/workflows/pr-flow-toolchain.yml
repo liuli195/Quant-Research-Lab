@@ -25,7 +25,7 @@ jobs:
           npm install --global --ignore-scripts --no-audit --no-fund "$tarball"
       - run: |
           git clone --no-checkout https://github.com/liuli195/my-agent-skills $RUNNER_TEMP/build-and-verify
-          git -C $RUNNER_TEMP/build-and-verify checkout --detach ece96f951486b8849c306d13042e6377181bf848
+          git -C $RUNNER_TEMP/build-and-verify checkout --detach 0cecf8a48865aab9483cfe21527f58ab2f98c930
           tarball=$(python $RUNNER_TEMP/build-and-verify/plugins/tool-lifecycle/pack.py build-and-verify $RUNNER_TEMP)
           npm install --global --ignore-scripts --no-audit --no-fund "$tarball"
       - run: myspec doctor --all

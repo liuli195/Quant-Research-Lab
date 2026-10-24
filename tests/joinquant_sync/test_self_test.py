@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 
+@pytest.mark.real
 def test_self_test_runs_full_pipeline_without_network(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -46,6 +47,7 @@ def test_self_test_runs_full_pipeline_without_network(
     assert result["peak_bytes"] > 0
 
 
+@pytest.mark.real
 def test_both_published_skill_entries_run_the_same_production_self_test(
     repo_root: Path,
 ) -> None:
@@ -95,6 +97,7 @@ def test_both_published_skill_entries_run_the_same_production_self_test(
     assert results[0]["object_kind"] == "simulation"
 
 
+@pytest.mark.real
 def test_self_test_never_reads_repository_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -4,7 +4,6 @@ import json
 import shutil
 from datetime import date
 from pathlib import Path
-import subprocess
 
 import pandas as pd
 import pyarrow as pa
@@ -30,7 +29,7 @@ from scripts.research.market_data.benchmark_sets import (
     SourcePayload,
     write_benchmark_set,
 )
-from scripts.research.local_quant_research.contracts import ResultExtension
+from scripts.research.result_contract import ResultExtension
 from tests.local_quant_research.test_analysis_data_views import _write_result_package
 
 
@@ -187,10 +186,34 @@ def _standard_package_inputs(
     return root, [package], config / "analysis-plan.json", benchmark_set.root / "manifest.json"
 
 
+@pytest.fixture(scope="session")
+def standard_package_baseline(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[Path, list[Path], Path, Path]:
+    repo_root = Path(__file__).resolve().parents[2]
+    return _standard_package_inputs(repo_root, tmp_path_factory.mktemp("analysis-baseline"))
+
+
+def _copy_standard_package_inputs(
+    tmp_path: Path, baseline: tuple[Path, list[Path], Path, Path]
+) -> tuple[Path, list[Path], Path, Path]:
+    source, packages, plan, benchmark = baseline
+    root = tmp_path / "package-repository"
+    shutil.copytree(source, root)
+    return (
+        root,
+        [root / package.relative_to(source) for package in packages],
+        root / plan.relative_to(source),
+        root / benchmark.relative_to(source),
+    )
+
+
+@pytest.mark.real
 def test_standard_analysis_accepts_explicit_package_without_registry(
+    standard_package_baseline: tuple[Path, list[Path], Path, Path],
     repo_root: Path, tmp_path: Path
 ) -> None:
-    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    root, packages, plan, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
 
     result = run_standard_analysis(root, packages, plan, benchmark)
 
@@ -198,10 +221,12 @@ def test_standard_analysis_accepts_explicit_package_without_registry(
     assert result["baseline"]["scenario_id"] == "baseline"
 
 
+@pytest.mark.real
 def test_standard_analysis_identity_does_not_depend_on_package_location(
+    standard_package_baseline: tuple[Path, list[Path], Path, Path],
     repo_root: Path, tmp_path: Path
 ) -> None:
-    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    root, packages, plan, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
     first = run_standard_analysis(root, packages, plan, benchmark)
     relocated = tmp_path / "unrelated-location" / "renamed-package"
     shutil.copytree(packages[0], relocated)
@@ -212,10 +237,12 @@ def test_standard_analysis_identity_does_not_depend_on_package_location(
     assert second == first
 
 
+@pytest.mark.real
 def test_standard_analysis_does_not_call_legacy_source_readers(
+    standard_package_baseline: tuple[Path, list[Path], Path, Path],
     repo_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    root, packages, plan, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
 
     def reject_legacy_reader(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("standard analysis must not use a legacy source reader")
@@ -226,10 +253,12 @@ def test_standard_analysis_does_not_call_legacy_source_readers(
     assert run_standard_analysis(root, packages, plan, benchmark)["analysis_id"]
 
 
+@pytest.mark.real
 def test_standard_analysis_resolves_baseline_from_the_plan_bundle(
+    standard_package_baseline: tuple[Path, list[Path], Path, Path],
     repo_root: Path, tmp_path: Path
 ) -> None:
-    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    root, packages, plan, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
     bundle = tmp_path / "portable-plan"
     bundle.mkdir()
     portable_plan = json.loads(plan.read_text(encoding="utf-8"))
@@ -242,10 +271,12 @@ def test_standard_analysis_resolves_baseline_from_the_plan_bundle(
     assert result["analysis_configuration"]["baseline_config"]["path"] == "baseline.json"
 
 
+@pytest.mark.real
 def test_standard_analysis_rejects_missing_plan_scenario_package(
+    standard_package_baseline: tuple[Path, list[Path], Path, Path],
     repo_root: Path, tmp_path: Path
 ) -> None:
-    root, packages, plan_path, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    root, packages, plan_path, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     plan["scenarios"].append(
         {"scenario_id": "alternate", "dimension": "parameter", "overrides": {}}
@@ -256,10 +287,12 @@ def test_standard_analysis_rejects_missing_plan_scenario_package(
         run_standard_analysis(root, packages, plan_path, benchmark)
 
 
+@pytest.mark.real
 def test_standard_analysis_rejects_package_params_that_differ_from_plan(
+    standard_package_baseline: tuple[Path, list[Path], Path, Path],
     repo_root: Path, tmp_path: Path
 ) -> None:
-    root, packages, plan_path, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    root, packages, plan_path, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     baseline_path = plan_path.parent / plan["baseline_config"]
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
@@ -270,6 +303,7 @@ def test_standard_analysis_rejects_package_params_that_differ_from_plan(
         run_standard_analysis(root, packages, plan_path, benchmark)
 
 
+@pytest.mark.real
 def test_standard_analysis_discovers_attribution_by_fields_not_extension_name(
     repo_root: Path, tmp_path: Path
 ) -> None:
@@ -299,6 +333,7 @@ def test_standard_analysis_discovers_attribution_by_fields_not_extension_name(
     assert result["attribution"]["event_counts"] == {"breakout_entry": 1}
 
 
+@pytest.mark.real
 def test_standard_analysis_preserves_source_loss_events_and_daily_reconciliation(
     repo_root: Path, tmp_path: Path
 ) -> None:
@@ -395,10 +430,12 @@ def test_standard_analysis_preserves_source_loss_events_and_daily_reconciliation
     ]
 
 
+@pytest.mark.real
 def test_standard_analysis_rejects_tampered_benchmark_data(
+    standard_package_baseline: tuple[Path, list[Path], Path, Path],
     repo_root: Path, tmp_path: Path
 ) -> None:
-    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    root, packages, plan, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
     benchmark_data = benchmark.parent / "benchmark-returns.parquet"
     table = pq.read_table(benchmark_data)
     returns = table["returns"].to_pylist()
@@ -409,10 +446,12 @@ def test_standard_analysis_rejects_tampered_benchmark_data(
         run_standard_analysis(root, packages, plan, benchmark)
 
 
+@pytest.mark.real
 def test_standard_analysis_is_byte_deterministic_after_fresh_output(
+    standard_package_baseline: tuple[Path, list[Path], Path, Path],
     repo_root: Path, tmp_path: Path
 ) -> None:
-    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    root, packages, plan, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
     first = run_standard_analysis(root, packages, plan, benchmark)
     workspace = root / ".local/standard-strategy-analysis" / first["analysis_id"]
     first_bytes = (workspace / "deterministic-analysis.json").read_bytes()
@@ -424,12 +463,14 @@ def test_standard_analysis_is_byte_deterministic_after_fresh_output(
     assert (workspace / "deterministic-analysis.json").read_bytes() == first_bytes
 
 
+@pytest.mark.real
 def test_standard_analysis_rejects_source_drift_before_publishing(
+    standard_package_baseline: tuple[Path, list[Path], Path, Path],
     repo_root: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    root, packages, plan, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
     package_manifest = packages[0] / "manifest.json"
     real_benchmark_series = analysis._benchmark_series
 
@@ -449,10 +490,12 @@ def test_standard_analysis_rejects_source_drift_before_publishing(
     )
 
 
+@pytest.mark.real
 def test_missing_period_observations_degrade_to_evidence_insufficient(
+    standard_package_baseline: tuple[Path, list[Path], Path, Path],
     repo_root: Path, tmp_path: Path
 ) -> None:
-    root, packages, plan_path, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    root, packages, plan_path, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     plan["analyses"]["fixed_periods"] = [
         {"id": "missing", "start": "1990-01-01", "end": "1990-12-31"}
@@ -485,10 +528,12 @@ def test_missing_period_observations_degrade_to_evidence_insufficient(
     )
 
 
+@pytest.mark.real
 def test_cost_execution_scenario_uses_standard_package_metrics(
+    standard_package_baseline: tuple[Path, list[Path], Path, Path],
     repo_root: Path, tmp_path: Path
 ) -> None:
-    root, packages, plan_path, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    root, packages, plan_path, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     plan["scenarios"].append(
         {
@@ -518,10 +563,12 @@ def test_cost_execution_scenario_uses_standard_package_metrics(
     assert cost[0]["metrics"]["cagr"] > 0
 
 
+@pytest.mark.real
 def test_standard_analysis_keeps_independent_results_and_evidence_gaps(
+    standard_package_baseline: tuple[Path, list[Path], Path, Path],
     repo_root: Path, tmp_path: Path
 ) -> None:
-    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    root, packages, plan, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
 
     result = run_standard_analysis(root, packages, plan, benchmark)
 
@@ -576,10 +623,12 @@ def test_rolling_window_accepts_exact_calendar_year() -> None:
     assert rows[-1]["dimension"] == "rolling_gate"
 
 
+@pytest.mark.real
 def test_standard_analysis_runs_single_source_return_checks(
+    standard_package_baseline: tuple[Path, list[Path], Path, Path],
     repo_root: Path, tmp_path: Path
 ) -> None:
-    root, packages, plan, benchmark = _standard_package_inputs(repo_root, tmp_path)
+    root, packages, plan, benchmark = _copy_standard_package_inputs(tmp_path, standard_package_baseline)
 
     result = run_standard_analysis(root, packages, plan, benchmark)
 
@@ -588,30 +637,20 @@ def test_standard_analysis_runs_single_source_return_checks(
     assert result["cross_scenario"]["status"] == "evidence_insufficient"
 
 
-def test_standard_skill_script_requires_explicit_package_plan_and_benchmark(repo_root: Path) -> None:
-    completed = subprocess.run(
-        [
-            str(repo_root / ".venv/Scripts/python.exe"),
-            str(
-                repo_root
-                / ".agents/skills/analyze-quant-robustness/scripts/analyze_quant_robustness.py"
-            ),
-            "run",
-            "--repository",
-            str(repo_root),
-        ],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        shell=False,
-        check=False,
-    )
+def test_standard_skill_script_requires_explicit_package_plan_and_benchmark(
+    repo_root: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from analyze_quant_robustness import main
 
-    assert completed.returncode == 2
-    assert "--package" in completed.stderr
-    assert "--analysis-plan" in completed.stderr
-    assert "--benchmark-manifest" in completed.stderr
-    assert "--source-registry" not in completed.stderr
+    with pytest.raises(SystemExit) as error:
+        main(["run", "--repository", str(repo_root)])
+
+    stderr = capsys.readouterr().err
+    assert error.value.code == 2
+    assert "--package" in stderr
+    assert "--analysis-plan" in stderr
+    assert "--benchmark-manifest" in stderr
+    assert "--source-registry" not in stderr
 
 
 def test_aligns_strategy_and_both_benchmarks_on_one_shared_calendar() -> None:

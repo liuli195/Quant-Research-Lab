@@ -85,6 +85,7 @@ def test_scenario_identifier_contract_matches_analysis_schema() -> None:
         ),
     ],
 )
+@pytest.mark.real
 def test_rejects_inconsistent_plan(
     repo_root: Path,
     tmp_path: Path,
@@ -102,6 +103,7 @@ def test_rejects_inconsistent_plan(
     with pytest.raises(AnalysisPlanError, match=message):
         expand_analysis_plan(repo_root, path)
 
+@pytest.mark.real
 def test_rejects_baseline_path_outside_plan_bundle(
     repo_root: Path, tmp_path: Path
 ) -> None:
@@ -114,6 +116,7 @@ def test_rejects_baseline_path_outside_plan_bundle(
         expand_analysis_plan(repo_root, path)
 
 
+@pytest.mark.real
 def test_rejects_false_stop_failure_flag_without_market_shocks(
     repo_root: Path,
     tmp_path: Path,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 import hashlib
 import json
 import os
@@ -9,7 +11,7 @@ import subprocess
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from scripts.research.local_quant_research.contracts import ResultExtension
+from scripts.research.result_contract import ResultExtension
 from tests.local_quant_research.test_analysis_data_views import _write_result_package
 from tests.quant_analysis.test_unified_analysis import _standard_package_inputs, _write_json
 
@@ -22,6 +24,7 @@ def _tree_sha(root: Path) -> str:
     return digest.hexdigest()
 
 
+@pytest.mark.real
 def test_standard_analysis_skill_runs_only_the_read_only_package_flow(
     repo_root: Path, tmp_path: Path
 ) -> None:

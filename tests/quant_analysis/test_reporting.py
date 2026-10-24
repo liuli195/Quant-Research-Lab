@@ -117,6 +117,7 @@ def _standard_analysis() -> dict[str, object]:
     }
 
 
+@pytest.mark.real
 def test_standard_report_lists_package_identity_capabilities_and_evidence_gaps(
     tmp_path: Path,
 ) -> None:
@@ -211,6 +212,7 @@ def test_standard_report_shows_top_ten_loss_events_exit_evidence_and_reconciliat
     assert "已勾稽" in report
 
 
+@pytest.mark.real
 def test_standard_delivery_rejects_workspace_outside_repository(
     tmp_path: Path,
 ) -> None:

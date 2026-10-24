@@ -427,9 +427,8 @@ def test_logic_digest_covers_complete_attribution_rows_and_details() -> None:
     ) == 3
 
 
-def test_missing_private_snapshots_are_an_explicit_fixed_machine_gate(
-    tmp_path: Path,
-) -> None:
+def test_missing_private_snapshots_are_an_explicit_fixed_machine_gate() -> None:
+    tmp_path = Path("unused-private-snapshot-root")
     with pytest.raises(pytest.skip.Exception) as skipped:
         _actual_scenario(str(tmp_path), SCENARIOS[0])
     assert str(skipped.value) == (
@@ -440,6 +439,7 @@ def test_missing_private_snapshots_are_an_explicit_fixed_machine_gate(
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS)
+@pytest.mark.real
 def test_strategy_module_matches_frozen_equivalence_fixture(
     repo_root: Path,
     scenario: str,

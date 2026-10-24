@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-import duckdb
 import pandas as pd
 import pytest
 
@@ -115,7 +114,10 @@ def _archive_with_rows(
     return tmp_path / "manifest.json"
 
 
+@pytest.mark.real
 def test_duckdb_view_matches_manifest_rows(tmp_path: Path) -> None:
+    import duckdb
+
     from joinquant_sync.query import open_views
 
     manifest = _archive_with_rows(tmp_path, "orders", [{"id": 1}, {"id": 2}])
@@ -125,6 +127,7 @@ def test_duckdb_view_matches_manifest_rows(tmp_path: Path) -> None:
     assert not list(tmp_path.glob("*.duckdb"))
 
 
+@pytest.mark.real
 def test_csv_exports_only_requested_columns_and_range(tmp_path: Path) -> None:
     from joinquant_sync.query import export_csv
 
@@ -152,7 +155,10 @@ def test_csv_exports_only_requested_columns_and_range(tmp_path: Path) -> None:
     assert frame["id"].tolist() == [2]
 
 
+@pytest.mark.real
 def test_manifest_row_mismatch_blocks_view(tmp_path: Path) -> None:
+    import duckdb
+
     from joinquant_sync.query import QueryError, open_views
 
     manifest = _archive_with_rows(tmp_path, "orders", [{"id": 1}])
@@ -164,7 +170,10 @@ def test_manifest_row_mismatch_blocks_view(tmp_path: Path) -> None:
         open_views(manifest, duckdb.connect(":memory:"))
 
 
+@pytest.mark.real
 def test_query_rejects_failed_manifest_gate(tmp_path: Path) -> None:
+    import duckdb
+
     from joinquant_sync.query import QueryError, open_views
 
     manifest = _archive_with_rows(tmp_path, "orders", [{"id": 1}])
@@ -175,6 +184,7 @@ def test_query_rejects_failed_manifest_gate(tmp_path: Path) -> None:
         open_views(manifest, duckdb.connect(":memory:"))
 
 
+@pytest.mark.real
 def test_nested_parquet_path_is_relative_to_object_root(tmp_path: Path) -> None:
     from joinquant_sync.query import write_parquet
 
@@ -184,6 +194,7 @@ def test_nested_parquet_path_is_relative_to_object_root(tmp_path: Path) -> None:
     assert record["path"] == "data/orders.parquet"
 
 
+@pytest.mark.real
 def test_cli_query_and_csv_use_manifest_only(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -224,7 +235,6 @@ def test_cli_query_and_csv_use_manifest_only(
 
 
 def test_cli_returns_immediately_after_matching_command(
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -243,7 +253,7 @@ def test_cli_returns_immediately_after_matching_command(
 
     arguments = SimpleNamespace(
         command=CommandProbe(),
-        object=str(tmp_path / "manifest.json"),
+        object="unused-archive/manifest.json",
         dataset="orders",
         limit=10,
     )
@@ -255,6 +265,7 @@ def test_cli_returns_immediately_after_matching_command(
     assert json.loads(capsys.readouterr().out) == [{"id": 1}]
 
 
+@pytest.mark.real
 def test_csv_uses_one_manifest_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

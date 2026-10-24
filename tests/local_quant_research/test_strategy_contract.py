@@ -241,6 +241,7 @@ def test_shared_loader_accepts_two_strategy_modules(repo_root: Path) -> None:
     )
 
 
+@pytest.mark.real
 def test_static_source_discovery_does_not_execute_strategy_and_captures_all_python(
     repo_root: Path,
     temporary_strategy_root: Path,
@@ -277,6 +278,7 @@ def test_static_source_discovery_does_not_execute_strategy_and_captures_all_pyth
     assert not marker.exists()
 
 
+@pytest.mark.real
 def test_static_source_discovery_rejects_linked_python_source(
     repo_root: Path,
     temporary_strategy_root: Path,
@@ -302,6 +304,7 @@ def test_static_source_discovery_rejects_linked_python_source(
         external.unlink(missing_ok=True)
 
 
+@pytest.mark.real
 def test_static_source_discovery_rejects_archive_as_strategy_root(
     temporary_strategy_root: Path,
 ) -> None:
@@ -325,6 +328,7 @@ def test_loader_uses_standard_import_and_restores_sys_path(repo_root: Path) -> N
     assert Path(sys.modules["strategy"].__file__).resolve() == loaded.source_paths[0]
 
 
+@pytest.mark.real
 def test_loader_supports_package_relative_imports(
     repo_root: Path,
     temporary_strategy_root: Path,
@@ -372,6 +376,7 @@ def test_loader_supports_package_relative_imports(
     assert "fixture_package.strategy" in sys.modules
 
 
+@pytest.mark.real
 def test_loader_rejects_external_parent_package_before_execution(
     repo_root: Path,
     temporary_strategy_root: Path,
@@ -421,6 +426,7 @@ def test_loader_rejects_external_parent_package_before_execution(
         external_init.unlink(missing_ok=True)
 
 
+@pytest.mark.real
 def test_loaded_strategy_supports_delayed_relative_imports(
     repo_root: Path,
     temporary_strategy_root: Path,
@@ -487,6 +493,7 @@ def test_loader_rejects_module_file_outside_strategy_root(repo_root: Path) -> No
         load_strategy(repo_root, config)
 
 
+@pytest.mark.real
 def test_loader_does_not_execute_module_file_outside_strategy_root(
     repo_root: Path,
     temporary_strategy_root: Path,

@@ -178,6 +178,7 @@ def _build_v2_config(repo: Path) -> tuple[Path, dict[str, object]]:
     return config, document
 
 
+@pytest.mark.real
 def test_repo_state_tracks_files_and_prunes_runtime_directories(tmp_path: Path) -> None:
     from scripts.research.local_quant_research import runner
 
@@ -200,6 +201,7 @@ def test_repo_state_tracks_files_and_prunes_runtime_directories(tmp_path: Path) 
     assert runner._repo_state(tmp_path, ignored_roots=(ignored,)) != before
 
 
+@pytest.mark.real
 def test_v2_config_has_only_strategy_snapshot_scenario_and_declared_inputs(
     tmp_path: Path,
 ) -> None:
@@ -230,6 +232,7 @@ def test_v2_config_has_only_strategy_snapshot_scenario_and_declared_inputs(
 
 
 @pytest.mark.parametrize("legacy_field", LEGACY_RUN_FIELDS)
+@pytest.mark.real
 def test_v2_config_rejects_each_legacy_run_field(
     legacy_field: str,
     tmp_path: Path,
@@ -251,6 +254,7 @@ def test_v2_config_rejects_each_legacy_run_field(
     (None, "", "   ", 7),
     ids=("missing", "empty", "whitespace", "non-string"),
 )
+@pytest.mark.real
 def test_v2_config_rejects_missing_scenario_id_before_strategy_execution(
     scenario_id: object,
     tmp_path: Path,
@@ -270,6 +274,7 @@ def test_v2_config_rejects_missing_scenario_id_before_strategy_execution(
     assert caught.value.code == "missing_scenario_id"
 
 
+@pytest.mark.real
 def test_v2_config_rejects_analysis_incompatible_scenario_id_before_strategy_execution(
     tmp_path: Path,
 ) -> None:
@@ -288,7 +293,8 @@ def test_v2_config_rejects_analysis_incompatible_scenario_id_before_strategy_exe
     assert caught.value.code == "invalid_scenario_id"
 
 
-def test_parent_generates_one_fixed_private_execute_command(tmp_path: Path) -> None:
+def test_parent_generates_one_fixed_private_execute_command() -> None:
+    tmp_path = Path("unused-execution-root")
     from scripts.research.local_quant_research import runner
 
     execution_root = tmp_path / "inputs"
@@ -311,6 +317,7 @@ def test_parent_generates_one_fixed_private_execute_command(tmp_path: Path) -> N
     )
 
 
+@pytest.mark.real
 def test_parent_request_binds_project_run_attempt_and_derived_directories(
     tmp_path: Path,
     repo_root: Path,
@@ -344,6 +351,7 @@ def test_parent_request_binds_project_run_attempt_and_derived_directories(
     assert result.status == "failed"
 
 
+@pytest.mark.real
 def test_fixed_output_root_cannot_escape_repository_through_directory_link(
     tmp_path: Path,
 ) -> None:
@@ -384,6 +392,7 @@ def _make_directory_link(link: Path, target: Path, kind: str) -> None:
 
 @pytest.mark.parametrize("field", ("repository", "market_data", "runtime_cache"))
 @pytest.mark.parametrize("kind", ("symlink", "junction"))
+@pytest.mark.real
 def test_private_bootstrap_rejects_linked_frozen_roots_before_import(
     repo_root: Path,
     tmp_path: Path,
@@ -448,6 +457,7 @@ def test_private_bootstrap_rejects_linked_frozen_roots_before_import(
                 pass
 
 
+@pytest.mark.real
 def test_early_attempt_refuses_linked_attempts_directory(
     tmp_path: Path,
 ) -> None:
@@ -470,6 +480,7 @@ def test_early_attempt_refuses_linked_attempts_directory(
     assert list(outside.iterdir()) == []
 
 
+@pytest.mark.real
 def test_output_run_directory_rejects_existing_directory_link(
     tmp_path: Path,
 ) -> None:
@@ -493,6 +504,7 @@ def test_output_run_directory_rejects_existing_directory_link(
     assert caught.value.code == "unsafe_output_root"
 
 
+@pytest.mark.real
 def test_private_execute_rejects_staging_not_bound_to_frozen_request(
     repo_root: Path,
 ) -> None:
@@ -547,6 +559,7 @@ def test_private_execute_rejects_staging_not_bound_to_frozen_request(
             pass
 
 
+@pytest.mark.real
 def test_freezing_copies_every_captured_shared_runtime_source(
     tmp_path: Path,
     repo_root: Path,
@@ -588,6 +601,7 @@ def test_freezing_copies_every_captured_shared_runtime_source(
     }.issubset(observed)
 
 
+@pytest.mark.real
 def test_parent_runner_never_executes_strategy_top_level_before_frozen_child(
     tmp_path: Path,
     repo_root: Path,
@@ -634,6 +648,7 @@ def test_parent_runner_never_executes_strategy_top_level_before_frozen_child(
     assert not marker.exists()
 
 
+@pytest.mark.real
 def test_freezing_uses_first_captured_scenario_digest_before_process(
     tmp_path: Path,
     repo_root: Path,
@@ -668,6 +683,7 @@ def test_freezing_uses_first_captured_scenario_digest_before_process(
     assert process_calls == 0
 
 
+@pytest.mark.real
 def test_private_execute_bootstrap_loads_runner_from_frozen_repository(
     repo_root: Path,
 ) -> None:
@@ -763,6 +779,7 @@ def test_private_execute_bootstrap_loads_runner_from_frozen_repository(
             pass
 
 
+@pytest.mark.real
 def test_completed_package_reuse_binds_all_frozen_identity_documents(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

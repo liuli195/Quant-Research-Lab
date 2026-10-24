@@ -17,7 +17,7 @@ from scripts.research.analysis_data.manifest import (
     open_analysis_source,
 )
 from scripts.research.analysis_data.views import open_analysis_database
-from scripts.research.local_quant_research.contracts import (
+from scripts.research.result_contract import (
     ExecutionBundle,
     ExecutionRun,
     ResultExtension,
@@ -351,6 +351,7 @@ def _sync_package_reference(
     reference["bytes"] = path.stat().st_size
 
 
+@pytest.mark.real
 def test_local_research_package_exposes_identity_core_and_named_extension(
     tmp_path: Path,
 ) -> None:
@@ -384,6 +385,7 @@ def test_local_research_package_exposes_identity_core_and_named_extension(
             database.extension("unknown")
 
 
+@pytest.mark.real
 def test_open_analysis_source_summarizes_each_core_table_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -412,6 +414,7 @@ def test_open_analysis_source_summarizes_each_core_table_once(
     )
 
 
+@pytest.mark.real
 def test_local_research_rejects_noncanonical_core_path_before_query(
     tmp_path: Path,
 ) -> None:
@@ -433,6 +436,7 @@ def test_local_research_rejects_noncanonical_core_path_before_query(
         open_analysis_database(root)
 
 
+@pytest.mark.real
 def test_local_research_extension_digest_is_validated_before_query(
     tmp_path: Path,
 ) -> None:
@@ -448,6 +452,7 @@ def test_local_research_extension_digest_is_validated_before_query(
     "tampering",
     ["schema", "unique_key", "time_range", "reconciliation", "package_sha"],
 )
+@pytest.mark.real
 def test_local_research_source_rejects_untruthful_complete_contract(
     tmp_path: Path,
     tampering: str,
@@ -512,6 +517,7 @@ def test_local_research_source_rejects_untruthful_complete_contract(
         open_analysis_source(root)
 
 
+@pytest.mark.real
 def test_joinquant_source_builds_six_read_only_logical_views(repo_root: Path) -> None:
     root = repo_root / "joinquant/strategies/strategy-001/backtests/111"
     before = _tree_sha(root)
@@ -534,6 +540,7 @@ def test_joinquant_source_builds_six_read_only_logical_views(repo_root: Path) ->
     assert _tree_sha(root) == before
 
 
+@pytest.mark.real
 def test_joinquant_simulation_requires_and_pins_one_snapshot(repo_root: Path) -> None:
     root = repo_root / "joinquant/strategies/strategy-001/simulations/simulation-001"
     snapshot_id = "5cc582a778eca2ddc481282b"
@@ -562,6 +569,7 @@ def test_joinquant_simulation_requires_and_pins_one_snapshot(repo_root: Path) ->
     assert _tree_sha(root) == before
 
 
+@pytest.mark.real
 def test_joinquant_simulation_rejects_data_outside_registered_snapshot(
     repo_root: Path, tmp_path: Path
 ) -> None:
@@ -580,6 +588,7 @@ def test_joinquant_simulation_rejects_data_outside_registered_snapshot(
         open_analysis_source(root, snapshot_id="5cc582a778eca2ddc481282b")
 
 
+@pytest.mark.real
 def test_joinquant_legal_missing_attribution_exception_remains_read_only(
     repo_root: Path,
 ) -> None:
@@ -595,6 +604,7 @@ def test_joinquant_legal_missing_attribution_exception_remains_read_only(
     assert _tree_sha(root) == before
 
 
+@pytest.mark.real
 def test_joinquant_unknown_gate_exception_is_not_downgraded(
     repo_root: Path, tmp_path: Path
 ) -> None:
@@ -611,6 +621,7 @@ def test_joinquant_unknown_gate_exception_is_not_downgraded(
         open_analysis_database(root)
 
 
+@pytest.mark.real
 def test_joinquant_column_order_variants_are_normalized_in_memory(
     repo_root: Path,
 ) -> None:
@@ -633,6 +644,7 @@ def test_joinquant_column_order_variants_are_normalized_in_memory(
     assert _tree_sha(root) == before
 
 
+@pytest.mark.real
 def test_joinquant_legal_empty_tables_become_typed_memory_views(repo_root: Path) -> None:
     root = repo_root / "joinquant/strategies/strategy-001/backtests/109"
     with open_analysis_database(root) as database:
@@ -656,6 +668,7 @@ def test_joinquant_legal_empty_tables_become_typed_memory_views(repo_root: Path)
         ]
 
 
+@pytest.mark.real
 def test_local_source_exposes_missing_references_without_fake_files(tmp_path: Path) -> None:
     root = _write_local_result(tmp_path / "local")
     with open_analysis_database(root) as database:
@@ -677,6 +690,7 @@ def test_local_source_exposes_missing_references_without_fake_files(tmp_path: Pa
         )
 
 
+@pytest.mark.real
 def test_daily_returns_are_derived_from_cumulative_values_at_query_time(
     tmp_path: Path,
 ) -> None:
@@ -695,6 +709,7 @@ def test_daily_returns_are_derived_from_cumulative_values_at_query_time(
     assert abs(rows[2][2] - 0.1) < 1e-12
 
 
+@pytest.mark.real
 def test_nonzero_first_cumulative_return_is_not_compared_without_predecessor(
     tmp_path: Path,
 ) -> None:

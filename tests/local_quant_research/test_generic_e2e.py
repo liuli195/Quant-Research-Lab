@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 import csv
 import hashlib
 import json
@@ -42,6 +44,7 @@ def _remove_empty_test_roots(repo_root: Path, market_root: Path) -> None:
             pass
 
 
+@pytest.mark.real
 def test_minimal_strategy_completes_reuses_and_rejects_digest_conflict(
     tmp_path: Path,
     repo_root: Path,
@@ -304,6 +307,7 @@ def test_minimal_strategy_completes_reuses_and_rejects_digest_conflict(
         _remove_empty_test_roots(repo_root, market_root)
 
 
+@pytest.mark.real
 def test_public_cli_maps_missing_config_to_evidence_insufficient(
     repo_root: Path,
 ) -> None:
@@ -330,6 +334,7 @@ def test_public_cli_maps_missing_config_to_evidence_insufficient(
     assert "Traceback" not in completed.stderr + completed.stdout
 
 
+@pytest.mark.real
 def test_shared_sources_do_not_depend_on_one_strategy(repo_root: Path) -> None:
     paths = [
         *sorted((repo_root / "scripts/research/market_data").glob("*.py")),

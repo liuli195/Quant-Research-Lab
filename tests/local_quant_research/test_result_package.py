@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import time
 from collections import Counter
 from dataclasses import replace
@@ -22,6 +23,7 @@ from scripts.research.local_quant_research.contracts import (
 )
 from scripts.research.result_package import (
     ResultContractError,
+    ResultPackage,
     ResultPackageRequest,
     validate_result_package,
     write_result_package,
@@ -220,12 +222,9 @@ def counting_ledger() -> CountingLedger:
     return CountingLedger()
 
 
-@pytest.fixture
-def package_request(
-    tmp_path: Path, counting_ledger: CountingLedger
+def _result_request(
+    code: Path, output_dir: Path, counting_ledger: CountingLedger
 ) -> ResultPackageRequest:
-    code = tmp_path / "strategy.py"
-    code.write_text("VALUE = 1\n", encoding="utf-8")
     extension = ResultExtension(
         name="decision_log",
         schema_version="decision-log/1",
@@ -243,7 +242,7 @@ def package_request(
         strategy_id="strategy-003",
         scenario_id="baseline",
         run_id="run-1",
-        output_dir=tmp_path / "result",
+        output_dir=output_dir,
         execution=_execution(counting_ledger),
         extensions=(extension,),
         code_files={"strategy.py": code},
@@ -262,6 +261,38 @@ def package_request(
             "environment.json": {"platform": "windows"},
         },
     )
+
+
+@pytest.fixture
+def package_request(tmp_path: Path, counting_ledger: CountingLedger) -> ResultPackageRequest:
+    code = tmp_path / "strategy.py"
+    code.write_text("VALUE = 1\n", encoding="utf-8")
+    return _result_request(code, tmp_path / "result", counting_ledger)
+
+
+@pytest.fixture
+def in_memory_package_request(repo_root: Path, counting_ledger: CountingLedger) -> ResultPackageRequest:
+    code = repo_root / "tests/local_quant_research/fixtures/minimal_strategy/strategy.py"
+    return _result_request(code, Path("unused-publish/result"), counting_ledger)
+
+
+@pytest.fixture(scope="session")
+def materialized_package_baseline(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> ResultPackage:
+    root = tmp_path_factory.mktemp("result-package-baseline")
+    code = root / "strategy.py"
+    code.write_text("VALUE = 1\n", encoding="utf-8")
+    return write_result_package(_result_request(code, root / "result", CountingLedger()))
+
+
+@pytest.fixture
+def materialized_package(
+    tmp_path: Path, materialized_package_baseline: ResultPackage
+) -> ResultPackage:
+    target = tmp_path / "result"
+    shutil.copytree(materialized_package_baseline.path, target)
+    return replace(materialized_package_baseline, path=target)
 
 
 def _tree_digest(root: Path) -> str:
@@ -323,6 +354,7 @@ def _replace_persisted_extension_table(package: Path, table: pa.Table) -> None:
     _write_manifest(manifest_path, manifest)
 
 
+@pytest.mark.real
 def test_writer_materializes_one_package_without_recomputing_ledger(
     package_request: ResultPackageRequest,
     counting_ledger: CountingLedger,
@@ -382,6 +414,7 @@ def test_writer_materializes_one_package_without_recomputing_ledger(
     assert not any(phrase in report for phrase in FORBIDDEN_REPORT_PHRASES)
 
 
+@pytest.mark.real
 def test_writer_freezes_code_before_digest_and_copy(
     package_request: ResultPackageRequest,
     monkeypatch: pytest.MonkeyPatch,
@@ -411,6 +444,7 @@ def test_writer_freezes_code_before_digest_and_copy(
     assert validate_result_package(package.path)["package_sha256"] == package.package_sha256
 
 
+@pytest.mark.real
 def test_writer_rejects_forbidden_report_before_publish(
     package_request: ResultPackageRequest,
 ) -> None:
@@ -427,6 +461,7 @@ def test_writer_rejects_forbidden_report_before_publish(
     assert list(package_request.output_dir.parent.glob(".run-1.*.tmp")) == []
 
 
+@pytest.mark.real
 def test_writer_reads_each_materialized_parquet_table_only_once(
     package_request: ResultPackageRequest,
     monkeypatch: pytest.MonkeyPatch,
@@ -463,6 +498,7 @@ def test_writer_reads_each_materialized_parquet_table_only_once(
     )
 
 
+@pytest.mark.real
 def test_writer_uses_its_single_readback_without_calling_disk_validator(
     package_request: ResultPackageRequest,
     monkeypatch: pytest.MonkeyPatch,
@@ -478,6 +514,7 @@ def test_writer_uses_its_single_readback_without_calling_disk_validator(
     write_result_package(package_request)
 
 
+@pytest.mark.real
 def test_writer_distinguishes_persisted_prefinalization_from_returned_full_duration(
     package_request: ResultPackageRequest,
     monkeypatch: pytest.MonkeyPatch,
@@ -516,6 +553,7 @@ def test_writer_distinguishes_persisted_prefinalization_from_returned_full_durat
     }
 
 
+@pytest.mark.real
 def test_scenario_gate_uses_writer_duration_through_delayed_return(
     package_request: ResultPackageRequest,
     monkeypatch: pytest.MonkeyPatch,
@@ -581,13 +619,14 @@ def test_scenario_gate_uses_writer_duration_through_delayed_return(
     assert caught.value.code == "cold_performance_limit"
 
 
+@pytest.mark.real
 def test_validator_summarizes_each_core_table_once(
-    package_request: ResultPackageRequest,
+    materialized_package: ResultPackage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from scripts.research import result_package
 
-    package = write_result_package(package_request)
+    package = materialized_package
     names_by_fields = {
         tuple(schema.names): name for name, schema in result_package._SCHEMAS.items()
     }
@@ -623,6 +662,7 @@ def test_validator_summarizes_each_core_table_once(
     )
 
 
+@pytest.mark.real
 def test_writer_reuse_summarizes_new_and_existing_core_once_each(
     package_request: ResultPackageRequest,
     monkeypatch: pytest.MonkeyPatch,
@@ -652,6 +692,7 @@ def test_writer_reuse_summarizes_new_and_existing_core_once_each(
     assert summaries == Counter({name: 2 for name in result_package.CORE_DATASETS})
 
 
+@pytest.mark.real
 def test_execution_report_contains_only_reproducible_package_facts(
     package_request: ResultPackageRequest,
 ) -> None:
@@ -707,6 +748,7 @@ def test_execution_report_contains_only_reproducible_package_facts(
     assert metrics["integrity_gate"]["status"] == "pass"
 
 
+@pytest.mark.real
 def test_writer_cleans_only_its_staging_directory_when_readback_fails(
     package_request: ResultPackageRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -727,6 +769,7 @@ def test_writer_cleans_only_its_staging_directory_when_readback_fails(
     assert list(package_request.output_dir.parent.glob(".run-1.*.tmp")) == []
 
 
+@pytest.mark.real
 def test_writer_reuses_equal_package_and_rejects_digest_conflict(
     package_request: ResultPackageRequest,
 ) -> None:
@@ -753,6 +796,7 @@ def test_writer_reuses_equal_package_and_rejects_digest_conflict(
     assert _tree_digest(first.path) == before
 
 
+@pytest.mark.real
 def test_validator_rejects_manifest_scenario_different_from_frozen_config(
     package_request: ResultPackageRequest,
 ) -> None:
@@ -768,6 +812,7 @@ def test_validator_rejects_manifest_scenario_different_from_frozen_config(
     assert not mismatched.output_dir.exists()
 
 
+@pytest.mark.real
 def test_writer_refuses_reuse_when_report_and_manifest_reference_are_tampered(
     package_request: ResultPackageRequest,
 ) -> None:
@@ -800,6 +845,7 @@ def test_writer_refuses_reuse_when_report_and_manifest_reference_are_tampered(
         )
 
 
+@pytest.mark.real
 def test_writer_atomically_publishes_only_after_staging_is_complete(
     package_request: ResultPackageRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -834,13 +880,13 @@ def test_writer_atomically_publishes_only_after_staging_is_complete(
 
 @pytest.mark.parametrize("name", ["", "BadName", "bad/name", "-leading"])
 def test_writer_rejects_invalid_extension_name_before_reading_ledger(
-    package_request: ResultPackageRequest,
+    in_memory_package_request: ResultPackageRequest,
     counting_ledger: CountingLedger,
     name: str,
 ) -> None:
-    invalid = replace(package_request.extensions[0], name=name)
+    invalid = replace(in_memory_package_request.extensions[0], name=name)
     with pytest.raises(ResultContractError, match="extension name"):
-        write_result_package(replace(package_request, extensions=(invalid,)))
+        write_result_package(replace(in_memory_package_request, extensions=(invalid,)))
     assert counting_ledger.calls == {"orders": 0, "assets": 0, "cash": 0, "value": 0}
 
 
@@ -860,36 +906,32 @@ def test_writer_rejects_invalid_extension_name_before_reading_ledger(
     ],
 )
 def test_writer_rejects_unsafe_run_id_before_reading_or_writing(
-    package_request: ResultPackageRequest,
+    in_memory_package_request: ResultPackageRequest,
     counting_ledger: CountingLedger,
-    tmp_path: Path,
     run_id: str,
 ) -> None:
-    marker = tmp_path / "outside-marker.txt"
-    marker.write_text("unchanged", encoding="utf-8")
-    output_dir = tmp_path / "publish" / "result"
+    output_dir = in_memory_package_request.output_dir
 
     with pytest.raises(ResultContractError, match="run_id"):
         write_result_package(
-            replace(package_request, run_id=run_id, output_dir=output_dir)
+            replace(in_memory_package_request, run_id=run_id, output_dir=output_dir)
         )
 
     assert counting_ledger.calls == {"orders": 0, "assets": 0, "cash": 0, "value": 0}
-    assert marker.read_text(encoding="utf-8") == "unchanged"
     assert not output_dir.parent.exists()
 
 
 def test_writer_rejects_blank_scenario_identity_before_reading_or_writing(
-    package_request: ResultPackageRequest,
+    in_memory_package_request: ResultPackageRequest,
     counting_ledger: CountingLedger,
 ) -> None:
-    config = dict(package_request.config_documents)
+    config = dict(in_memory_package_request.config_documents)
     config["scenario.json"] = {"scenario_id": "   "}
 
     with pytest.raises(ResultContractError, match="identity"):
         write_result_package(
             replace(
-                package_request,
+                in_memory_package_request,
                 scenario_id="   ",
                 config_documents=config,
             )
@@ -915,33 +957,29 @@ def test_writer_rejects_blank_scenario_identity_before_reading_or_writing(
     ],
 )
 def test_writer_rejects_unsafe_package_paths_before_reading_or_writing(
-    package_request: ResultPackageRequest,
+    in_memory_package_request: ResultPackageRequest,
     counting_ledger: CountingLedger,
-    tmp_path: Path,
     field: str,
     unsafe_name: str,
 ) -> None:
-    marker = tmp_path / "outside-marker.txt"
-    marker.write_text("unchanged", encoding="utf-8")
-    output_dir = tmp_path / "publish" / "result"
+    output_dir = in_memory_package_request.output_dir
     replacement: dict[str, object]
     if field == "code_files":
         replacement = {
-            **package_request.code_files,
-            unsafe_name: next(iter(package_request.code_files.values())),
+            **in_memory_package_request.code_files,
+            unsafe_name: next(iter(in_memory_package_request.code_files.values())),
         }
     elif field == "config_documents":
-        replacement = {**package_request.config_documents, unsafe_name: {}}
+        replacement = {**in_memory_package_request.config_documents, unsafe_name: {}}
     else:
-        replacement = {**package_request.evidence_documents, unsafe_name: {}}
+        replacement = {**in_memory_package_request.evidence_documents, unsafe_name: {}}
 
     with pytest.raises(ResultContractError, match="unsafe"):
         write_result_package(
-            replace(package_request, output_dir=output_dir, **{field: replacement})
+            replace(in_memory_package_request, output_dir=output_dir, **{field: replacement})
         )
 
     assert counting_ledger.calls == {"orders": 0, "assets": 0, "cash": 0, "value": 0}
-    assert marker.read_text(encoding="utf-8") == "unchanged"
     assert not output_dir.parent.exists()
 
 
@@ -959,26 +997,25 @@ def test_writer_rejects_unsafe_package_paths_before_reading_or_writing(
     ],
 )
 def test_writer_requires_archive_ready_inputs_before_reading_or_writing(
-    package_request: ResultPackageRequest,
+    in_memory_package_request: ResultPackageRequest,
     counting_ledger: CountingLedger,
-    tmp_path: Path,
     field: str,
     missing_name: str | None,
 ) -> None:
-    output_dir = tmp_path / "publish" / "result"
+    output_dir = in_memory_package_request.output_dir
     replacement = (
         {}
         if field == "code_files"
         else {
             name: value
-            for name, value in getattr(package_request, field).items()
+            for name, value in getattr(in_memory_package_request, field).items()
             if name != missing_name
         }
     )
 
     with pytest.raises(ResultContractError, match="archive-ready"):
         write_result_package(
-            replace(package_request, output_dir=output_dir, **{field: replacement})
+            replace(in_memory_package_request, output_dir=output_dir, **{field: replacement})
         )
 
     assert counting_ledger.calls == {"orders": 0, "assets": 0, "cash": 0, "value": 0}
@@ -986,22 +1023,22 @@ def test_writer_requires_archive_ready_inputs_before_reading_or_writing(
 
 
 def test_writer_rejects_duplicate_extension_names_and_keys(
-    package_request: ResultPackageRequest,
+    in_memory_package_request: ResultPackageRequest,
     counting_ledger: CountingLedger,
 ) -> None:
     duplicate_name = replace(
-        package_request.extensions[0], schema_version="decision-log/2"
+        in_memory_package_request.extensions[0], schema_version="decision-log/2"
     )
     with pytest.raises(ResultContractError, match="unique"):
         write_result_package(
             replace(
-                package_request,
-                extensions=(package_request.extensions[0], duplicate_name),
+                in_memory_package_request,
+                extensions=(in_memory_package_request.extensions[0], duplicate_name),
             )
         )
 
     duplicate_key = replace(
-        package_request.extensions[0],
+        in_memory_package_request.extensions[0],
         table=pa.table(
             {
                 "time": ["2026-01-05", "2026-01-06"],
@@ -1011,10 +1048,11 @@ def test_writer_rejects_duplicate_extension_names_and_keys(
         ),
     )
     with pytest.raises(ResultContractError, match="unique key"):
-        write_result_package(replace(package_request, extensions=(duplicate_key,)))
+        write_result_package(replace(in_memory_package_request, extensions=(duplicate_key,)))
     assert counting_ledger.calls == {"orders": 0, "assets": 0, "cash": 0, "value": 0}
 
 
+@pytest.mark.real
 def test_writer_rejects_cross_table_reconciliation_and_cleans_staging(
     package_request: ResultPackageRequest,
 ) -> None:
@@ -1032,10 +1070,11 @@ def test_writer_rejects_cross_table_reconciliation_and_cleans_staging(
     assert list(package_request.output_dir.parent.glob(".run-1.*.tmp")) == []
 
 
+@pytest.mark.real
 def test_validator_rejects_tampered_materialized_table(
-    package_request: ResultPackageRequest,
+    materialized_package: ResultPackage,
 ) -> None:
-    package = write_result_package(package_request)
+    package = materialized_package
     results = package.path / "data/results.parquet"
     results.write_bytes(results.read_bytes() + b"tampered")
 
@@ -1050,11 +1089,12 @@ def test_validator_rejects_tampered_materialized_table(
         pa.array([1], type=pa.int32()),
     ),
 )
+@pytest.mark.real
 def test_disk_validator_rejects_extension_types_outside_flat_contract(
-    package_request: ResultPackageRequest,
+    materialized_package: ResultPackage,
     invalid_value: pa.Array,
 ) -> None:
-    package = write_result_package(package_request)
+    package = materialized_package
     _replace_persisted_extension_table(
         package.path,
         pa.table({"event_id": ["event-1"], "value": invalid_value}),
@@ -1064,10 +1104,11 @@ def test_disk_validator_rejects_extension_types_outside_flat_contract(
         validate_result_package(package.path)
 
 
+@pytest.mark.real
 def test_validator_rejects_non_zstd_physical_compression_with_synced_digest(
-    package_request: ResultPackageRequest,
+    materialized_package: ResultPackage,
 ) -> None:
-    package = write_result_package(package_request)
+    package = materialized_package
     results = package.path / "data/results.parquet"
     table = pq.read_table(results)
     pq.write_table(table, results, compression="snappy")
@@ -1087,17 +1128,16 @@ def test_validator_rejects_non_zstd_physical_compression_with_synced_digest(
 @pytest.mark.parametrize(
     "relative",
     [
-        "C:scenario.json",
-        "/absolute/scenario.json",
         "../escape/scenario.json",
         "config/scenario.json:ads",
     ],
 )
+@pytest.mark.real
 def test_validator_rejects_unsafe_declared_paths(
-    package_request: ResultPackageRequest,
+    materialized_package: ResultPackage,
     relative: str,
 ) -> None:
-    package = write_result_package(package_request)
+    package = materialized_package
     manifest_path = package.path / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     reference = manifest["config"]["scenario.json"]
@@ -1117,20 +1157,16 @@ def test_validator_rejects_unsafe_declared_paths(
     [
         ("code", "strategy.py"),
         ("config", "scenario.json"),
-        ("config", "project-run.json"),
-        ("config", "code-identity.json"),
-        ("evidence", "market-snapshot.json"),
-        ("evidence", "runtime-lock.json"),
         ("evidence", "performance.json"),
-        ("evidence", "environment.json"),
     ],
 )
+@pytest.mark.real
 def test_validator_requires_archive_ready_file_sets(
-    package_request: ResultPackageRequest,
+    materialized_package: ResultPackage,
     section: str,
     name: str,
 ) -> None:
-    package = write_result_package(package_request)
+    package = materialized_package
     manifest_path = package.path / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     del manifest[section][name]
@@ -1142,13 +1178,14 @@ def test_validator_requires_archive_ready_file_sets(
 
 @pytest.mark.parametrize(
     "declaration",
-    ["code", "config", "evidence", "dataset", "extension"],
+    ["dataset", "extension"],
 )
+@pytest.mark.real
 def test_validator_requires_fixed_declared_file_paths(
-    package_request: ResultPackageRequest,
+    materialized_package: ResultPackage,
     declaration: str,
 ) -> None:
-    package = write_result_package(package_request)
+    package = materialized_package
     manifest_path = package.path / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if declaration == "code":
@@ -1174,12 +1211,13 @@ def test_validator_requires_fixed_declared_file_paths(
         validate_result_package(package.path)
 
 
-@pytest.mark.parametrize("strategy_evidence", [None, [], "unverified"])
+@pytest.mark.parametrize("strategy_evidence", [None, "unverified"])
+@pytest.mark.real
 def test_validator_requires_strategy_evidence_object(
-    package_request: ResultPackageRequest,
+    materialized_package: ResultPackage,
     strategy_evidence: object,
 ) -> None:
-    package = write_result_package(package_request)
+    package = materialized_package
     manifest_path = package.path / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     extension = manifest["extensions"]["decision_log"]

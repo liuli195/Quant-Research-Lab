@@ -257,12 +257,11 @@ def test_export_request_contains_no_strategy_universe_or_rules() -> None:
 
 
 def test_verify_transfer_requires_matching_bytes_and_confirmed_cleanup(
-    tmp_path: Path,
+    repo_root: Path,
 ) -> None:
     from scripts.research.market_data.joinquant_export import verify_transfer
 
-    local_file = tmp_path / "market-data.csv"
-    local_file.write_bytes(b"date,security\n2026-01-05,510300.XSHG\n")
+    local_file = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
     digest = hashlib.sha256(local_file.read_bytes()).hexdigest()
 
     complete = verify_transfer(
@@ -290,11 +289,11 @@ def test_verify_transfer_requires_matching_bytes_and_confirmed_cleanup(
     assert "remote cleanup is not confirmed" in not_cleaned.reasons
 
 
-def test_verify_transfer_fails_when_local_file_is_missing(tmp_path: Path) -> None:
+def test_verify_transfer_fails_when_local_file_is_missing() -> None:
     from scripts.research.market_data.joinquant_export import verify_transfer
 
     evidence = verify_transfer(
-        local_file=tmp_path / "missing.csv",
+        local_file=Path(__file__).with_name("unused-missing-transfer.csv"),
         remote_sha256="0" * 64,
         remote_cleaned=True,
     )
@@ -304,6 +303,7 @@ def test_verify_transfer_fails_when_local_file_is_missing(tmp_path: Path) -> Non
     assert "local transfer file is missing" in evidence.reasons
 
 
+@pytest.mark.real
 def test_import_verified_transfer_publishes_before_deleting_remote_and_local_csv(
     repo_root: Path,
     tmp_path: Path,
@@ -343,6 +343,7 @@ def test_import_verified_transfer_publishes_before_deleting_remote_and_local_csv
     assert not (record.path / "market-data.csv").exists()
 
 
+@pytest.mark.real
 def test_import_verified_transfer_preserves_both_transports_after_conversion_failure(
     tmp_path: Path,
 ) -> None:
@@ -379,6 +380,7 @@ def test_import_verified_transfer_preserves_both_transports_after_conversion_fai
     assert not (tmp_path / "store" / "batches").exists()
 
 
+@pytest.mark.real
 def test_import_verified_transfer_fails_and_preserves_local_when_remote_cleanup_unconfirmed(
     repo_root: Path,
     tmp_path: Path,

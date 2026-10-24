@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 import csv
 import hashlib
 import json
@@ -57,6 +59,7 @@ def _write_market_csv(
                 previous_close = close
 
 
+@pytest.mark.real
 def test_turtle_project_completes_full_single_scenario_entrypoint(
     tmp_path: Path,
     repo_root: Path,

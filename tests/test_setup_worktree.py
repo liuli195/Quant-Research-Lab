@@ -69,7 +69,7 @@ def test_build_and_verify_runs_worktree_setup_checks():
     config = json.loads((REPO_ROOT / ".build-and-verify" / "config.json").read_text(encoding="utf-8"))
 
     check = next(item for item in config["verify"]["checks"] if item["id"] == "verify.worktree-setup")
-    assert "tests\\test_setup_worktree.py" in check["command"]
+    assert "tests/test_setup_worktree.py" in check["command"]
     assert set(check["paths"]) >= {
         ".gitignore",
         "scripts/setup-worktree.ps1",
@@ -78,6 +78,7 @@ def test_build_and_verify_runs_worktree_setup_checks():
     }
 
 
+@pytest.mark.real
 def test_main_repository_initializes_and_updates_venv(tmp_path):
     repo = make_repo(tmp_path)
     (repo / "requirements.txt").write_text("", encoding="utf-8")
@@ -95,6 +96,7 @@ def test_main_repository_initializes_and_updates_venv(tmp_path):
     assert "requirements-dev.txt" in fingerprint
 
 
+@pytest.mark.real
 def test_failed_main_repository_update_invalidates_fingerprint(tmp_path):
     repo = make_repo(tmp_path)
     (repo / "requirements.txt").write_text("package-that-cannot-exist==0\n", encoding="utf-8")
@@ -115,13 +117,15 @@ def test_failed_main_repository_update_invalidates_fingerprint(tmp_path):
     assert not (repo / ".venv" / ".requirements.sha256").exists()
 
 
+@pytest.mark.real
 def test_build_and_verify_uses_shared_venv_from_worktree(tmp_path):
     repo = make_repo(tmp_path)
     (repo / ".build-and-verify").mkdir()
     config = {
-        "version": 1,
+        "version": 2,
         "build": {"checks": []},
         "verify": {
+            "realChecks": ["verify.shared-venv-smoke"],
             "checks": [
                 {
                     "id": "verify.shared-venv-smoke",
@@ -155,6 +159,7 @@ def test_build_and_verify_uses_shared_venv_from_worktree(tmp_path):
 
 
 @pytest.mark.parametrize("shell_name", ["powershell", "pwsh"])
+@pytest.mark.real
 def test_linked_worktree_reuses_main_repository_venv(tmp_path, shell_name):
     repo = make_repo(tmp_path)
     shared_venv = prepare_shared_venv(repo)
@@ -176,6 +181,7 @@ def test_linked_worktree_reuses_main_repository_venv(tmp_path, shell_name):
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.real
 def test_linked_worktree_stops_when_shared_venv_is_missing(tmp_path):
     repo = make_repo(tmp_path)
     worktree = tmp_path / "worktree"
@@ -189,6 +195,7 @@ def test_linked_worktree_stops_when_shared_venv_is_missing(tmp_path):
     assert not (worktree / ".venv").exists()
 
 
+@pytest.mark.real
 def test_linked_worktree_stops_when_shared_venv_is_stale(tmp_path):
     repo = make_repo(tmp_path)
     prepare_shared_venv(repo)
@@ -205,6 +212,7 @@ def test_linked_worktree_stops_when_shared_venv_is_stale(tmp_path):
     assert not (worktree / ".venv").exists()
 
 
+@pytest.mark.real
 def test_linked_worktree_stops_when_dependency_manifests_differ(tmp_path):
     repo = make_repo(tmp_path)
     prepare_shared_venv(repo)

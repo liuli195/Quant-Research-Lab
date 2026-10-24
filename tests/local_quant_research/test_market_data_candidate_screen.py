@@ -115,6 +115,7 @@ def test_screen_rejects_each_fixed_gate(
     assert result.passed_securities == ()
 
 
+@pytest.mark.real
 def test_screen_report_is_content_addressed_and_contains_no_backtest_metrics(
     tmp_path: Path,
 ) -> None:

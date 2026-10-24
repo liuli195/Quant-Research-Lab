@@ -7,10 +7,13 @@ import re
 import uuid
 from collections.abc import Iterable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
+
+if TYPE_CHECKING:
+    import duckdb
 
 from .archive import IntegrityError, verify_existing_manifest
 
@@ -156,6 +159,8 @@ def export_csv(
     if not fields:
         raise QueryError("at least one field is required")
     manifest = _load_manifest(manifest_path)
+    import duckdb
+
     connection = duckdb.connect(":memory:")
     try:
         if dataset not in open_views(manifest_path, connection, manifest=manifest):
@@ -207,6 +212,8 @@ def query_rows(
 ) -> list[dict[str, object]]:
     if limit < 1 or limit > 10_000:
         raise QueryError("limit must be between 1 and 10000")
+    import duckdb
+
     connection = duckdb.connect(":memory:")
     try:
         if dataset not in open_views(manifest_path, connection):

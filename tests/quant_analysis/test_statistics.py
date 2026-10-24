@@ -73,6 +73,7 @@ def test_cvar_uses_exact_tail_mass_and_compounds_windows() -> None:
     assert compounded.shape == (2,)
 
 
+@pytest.mark.real
 def test_evidence_matrix_is_deterministic_and_local_only(tmp_path: Path) -> None:
     results = (
         ScenarioResult(

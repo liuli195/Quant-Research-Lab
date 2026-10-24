@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 
-import duckdb
 import pyarrow.parquet as pq
+
+if TYPE_CHECKING:
+    import duckdb
 
 from scripts.research.analysis_data.derived import register_return_views
 from scripts.research.analysis_data.manifest import (
@@ -233,6 +235,8 @@ class AnalysisDatabase:
 def open_analysis_database(
     result_dir: Path, *, snapshot_id: str | None = None
 ) -> AnalysisDatabase:
+    import duckdb
+
     source = open_analysis_source(result_dir, snapshot_id=snapshot_id)
     connection = duckdb.connect(":memory:")
     try:
