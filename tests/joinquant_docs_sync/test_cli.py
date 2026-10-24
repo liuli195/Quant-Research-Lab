@@ -318,10 +318,15 @@ def test_sync_preserves_syntax_highlighted_code_lines() -> None:
 
 
 def test_index_classifies_specialized_factors_and_excludes_builtins() -> None:
-    technical = _markdown("<h2>DMA-平均线差</h2><pre><code>DMA(security_list, check_date)\nlen(values)</code></pre>")
+    details = "<h3>参数</h3><p>官方参数说明。</p><h3>返回</h3><p>官方返回说明。</p>"
+    technical = _markdown(
+        "<h2>DMA-平均线差</h2><pre><code>DMA(security_list, check_date)\nlen(values)</code></pre>"
+        + details
+    )
     jqdata = _markdown(
         "<h2>聚宽因子库</h2><pre><code>get_all_factors()\nDataFrame(values)\ncode(value)\n"
         "append(value)\nSTD(value)\nchar(value)\nstock(value)</code></pre>"
+        + details
     )
     entries = [*extract_api_entries(technical, "technical-analysis"), *extract_api_entries(jqdata, "jqdata")]
     keys = {entry["key"] for entry in entries}

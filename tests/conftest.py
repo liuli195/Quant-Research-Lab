@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -27,6 +28,18 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers", "real: requires real file, native database, process, or browser behavior"
     )
+    # Cache only a known path: gettempdir() would otherwise probe with real writes.
+    temp_root = Path(os.environ.get("TMPDIR") or REPO_ROOT).resolve()
+    if not temp_root.is_relative_to(REPO_ROOT) or not temp_root.is_dir():
+        temp_root = REPO_ROOT
+    tempfile.tempdir = str(temp_root)
+
+    basetemp = config.getoption("basetemp")
+    if config.getoption("markexpr") == "real" and basetemp:
+        parent = Path(basetemp).resolve().parent
+        if not parent.is_relative_to(REPO_ROOT):
+            raise pytest.UsageError("real check basetemp must be inside the repository")
+        parent.mkdir(parents=True, exist_ok=True)
 
 
 @pytest.fixture(scope="session")
