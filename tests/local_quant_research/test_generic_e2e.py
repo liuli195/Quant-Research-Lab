@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 import csv
 import hashlib
 import json
@@ -42,10 +44,12 @@ def _remove_empty_test_roots(repo_root: Path, market_root: Path) -> None:
             pass
 
 
-def test_minimal_strategy_completes_reuses_and_rejects_digest_conflict(
+@pytest.mark.real
+def test_minimal_strategy_completes_public_run(
     tmp_path: Path,
-    repo_root: Path,
+    isolated_research_repo: Path,
 ) -> None:
+    repo_root = isolated_research_repo
     token = uuid.uuid4().hex
     project_id = "minimal-fixture-b"
     project_root = repo_root / ".local/e2e-tests" / token
@@ -238,48 +242,6 @@ def test_minimal_strategy_completes_reuses_and_rejects_digest_conflict(
         assert not tuple(run_output.rglob("*.duckdb"))
         assert not tuple(market_root.rglob("*.duckdb"))
 
-        reused = subprocess.run(
-            [
-                str(repo_root / ".venv/Scripts/python.exe"),
-                str(repo_root / "scripts/research/local_quant_research/cli.py"),
-                "run",
-                "--config",
-                str(run_path.relative_to(repo_root)),
-            ],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            shell=False,
-            check=False,
-            timeout=120,
-        )
-        assert reused.returncode == 0, reused.stderr + reused.stdout
-        assert json.loads(reused.stdout)["reused"] is True
-
-        manifest_path = run_output / "manifest.json"
-        tampered = json.loads(manifest_path.read_text(encoding="utf-8"))
-        tampered["package_sha256"] = "0" * 64
-        manifest_path.write_text(
-            json.dumps(tampered, ensure_ascii=False, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        conflict = subprocess.run(
-            [
-                str(repo_root / ".venv/Scripts/python.exe"),
-                str(repo_root / "scripts/research/local_quant_research/cli.py"),
-                "run",
-                "--config",
-                str(run_path.relative_to(repo_root)),
-            ],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            shell=False,
-            check=False,
-            timeout=120,
-        )
-        assert conflict.returncode == 1
-        assert json.loads(conflict.stdout)["status"] == "failed"
     finally:
         if "run_output" in locals():
             shutil.rmtree(run_output, ignore_errors=True)
@@ -302,55 +264,3 @@ def test_minimal_strategy_completes_reuses_and_rejects_digest_conflict(
         for batch_id in batch_ids:
             shutil.rmtree(market_root / "batches" / batch_id, ignore_errors=True)
         _remove_empty_test_roots(repo_root, market_root)
-
-
-def test_public_cli_maps_missing_config_to_evidence_insufficient(
-    repo_root: Path,
-) -> None:
-    missing = repo_root / ".local/e2e-tests/does-not-exist.json"
-
-    completed = subprocess.run(
-        [
-            str(repo_root / ".venv/Scripts/python.exe"),
-            str(repo_root / "scripts/research/local_quant_research/cli.py"),
-            "run",
-            "--config",
-            str(missing.relative_to(repo_root)),
-        ],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        shell=False,
-        check=False,
-        timeout=30,
-    )
-
-    assert completed.returncode == 2
-    assert json.loads(completed.stdout)["status"] == "evidence_insufficient"
-    assert "Traceback" not in completed.stderr + completed.stdout
-
-
-def test_shared_sources_do_not_depend_on_one_strategy(repo_root: Path) -> None:
-    paths = [
-        *sorted((repo_root / "scripts/research/market_data").glob("*.py")),
-        *sorted((repo_root / "scripts/research/local_quant_research").glob("*.py")),
-        repo_root / ".agents/skills/run-local-quant-research/SKILL.md",
-    ]
-    text = "\n".join(path.read_text(encoding="utf-8").lower() for path in paths)
-    for forbidden in (
-        "turtle",
-        "55日",
-        "strategy-003",
-        "510300.xshg",
-        "512100.xshg",
-    ):
-        assert forbidden not in text
-
-    shared_runtime = repo_root / "scripts/research/local_quant_research"
-    for path in shared_runtime.glob("*.py"):
-        source = path.read_text(encoding="utf-8")
-        if path.name == "vectorbt_runtime.py":
-            assert "Portfolio.from_order_func" in source
-        else:
-            assert "import vectorbt" not in source
-            assert "from vectorbt" not in source

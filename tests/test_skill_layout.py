@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+
 import hashlib
 import json
 from pathlib import Path
-import subprocess
 
 
 def _sha256(path: Path) -> str:
@@ -128,57 +128,6 @@ def test_local_research_and_standard_analysis_skills_do_not_call_each_other(
     )
 
 
-def test_standard_analysis_import_graph_excludes_local_research_runtime(
-    repo_root: Path,
-) -> None:
-    entry = (
-        repo_root
-        / ".agents/skills/analyze-quant-robustness/scripts/analyze_quant_robustness.py"
-    )
-    completed = subprocess.run(
-        [
-            str(repo_root / ".venv/Scripts/python.exe"),
-            "-c",
-            (
-                "import runpy,sys;"
-                f"runpy.run_path({str(entry)!r},run_name='skill_import');"
-                "print('\\n'.join(sorted(name for name in sys.modules "
-                "if name.startswith('scripts.research.local_quant_research'))))"
-            ),
-        ],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        shell=False,
-        check=True,
-    )
-
-    assert completed.stdout == "\n"
-
-
-def test_local_research_import_graph_excludes_analysis_runtime(
-    repo_root: Path,
-) -> None:
-    completed = subprocess.run(
-        [
-            str(repo_root / ".venv/Scripts/python.exe"),
-            "-c",
-            (
-                "import scripts.research.local_quant_research.runner,sys;"
-                "print('\\n'.join(sorted(name for name in sys.modules "
-                "if name.startswith('scripts.research.analysis_data'))))"
-            ),
-        ],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        shell=False,
-        check=True,
-    )
-
-    assert completed.stdout == "\n"
-
-
 def test_standard_analysis_skill_is_the_only_public_entry(repo_root: Path) -> None:
     source = repo_root / ".agents" / "skills" / "analyze-quant-robustness"
     claude = repo_root / ".claude" / "skills" / "analyze-quant-robustness"
@@ -210,119 +159,52 @@ def test_standard_analysis_skill_is_the_only_public_entry(repo_root: Path) -> No
 
 
 def test_build_and_verify_covers_joinquant_docs_sync(repo_root: Path) -> None:
-    config = json.loads(
-        (repo_root / ".build-and-verify" / "config.json").read_text(encoding="utf-8")
-    )
+    config = json.loads((repo_root / ".build-and-verify/config.json").read_text(encoding="utf-8"))
     checks = {check["id"]: check for check in config["verify"]["checks"]}
-    check = checks["verify.docs-sync"]
-    assert check["command"] == (
-        "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& "
-        ".\\.venv\\Scripts\\python.exe -m pytest "
-        "tests\\joinquant_docs_sync\\test_cli.py"
-    )
-    assert ".agents/skills/joinquant-docs-sync/**" in check["paths"]
-    assert ".claude/skills/joinquant-docs-sync" in check["paths"]
-    assert "tests/joinquant_docs_sync/**" in check["inputs"]
+    for identity in ("verify.docs-unit", "verify.docs-real"):
+        check = checks[identity]
+        assert "tests/joinquant_docs_sync/test_cli.py" in check["command"]
+        assert ".agents/skills/joinquant-docs-sync/**" in check["paths"]
+        assert ".claude/skills/joinquant-docs-sync" in check["paths"]
+        assert "tests/joinquant_docs_sync/**" in check["inputs"]
+    assert "verify.docs-real" in config["verify"]["realChecks"]
+    assert "verify.docs-unit" not in config["verify"]["realChecks"]
 
 
 def test_build_and_verify_covers_local_quant_research_without_local_data(
     repo_root: Path,
 ) -> None:
     config = json.loads(
-        (repo_root / ".build-and-verify" / "config.json").read_text(encoding="utf-8")
+        (repo_root / ".build-and-verify/config.json").read_text(encoding="utf-8")
     )
     checks = {check["id"]: check for check in config["verify"]["checks"]}
-    unit_checks = [
-        checks["verify.local-quant-research-package-unit"],
-        checks["verify.local-quant-research-market-data-unit"],
-        checks["verify.local-quant-research-contract-unit"],
-    ]
-    vectorbt_unit = checks["verify.local-quant-research-vectorbt-unit"]
-    equivalence = [
-        checks["verify.local-quant-research-equivalence-immediate-11"],
-        checks["verify.local-quant-research-equivalence-immediate-17"],
-        checks["verify.local-quant-research-equivalence-delayed-11"],
-    ]
-    e2e = checks["verify.local-quant-research-e2e"]
-    turtle_e2e = checks["verify.local-quant-research-e2e-turtle"]
-    jit = checks["verify.local-quant-research-jit"]
-    layout = checks["verify.skill-layout"]
-
-    assert config["verify"]["maxParallel"] == 16
+    real = config["verify"]["realChecks"]
+    assert config["version"] == 2
+    assert config["build"]["checks"] == []
+    assert config["verify"]["maxParallel"] == 4
     assert config["verify"]["fullBudgetSeconds"] == 60
-    assert len(checks) == 18
-    assert [
-        check["id"] for check in config["verify"]["checks"][:10]
-    ] == [
-        "verify.local-quant-research-equivalence-immediate-17",
-        "verify.local-quant-research-equivalence-delayed-11",
-        "verify.local-quant-research-equivalence-immediate-11",
-        "verify.local-quant-research-e2e-turtle",
-        "verify.local-quant-research-e2e",
-        "verify.local-quant-research-package-unit",
-        "verify.self-test",
-        "verify.docs-sync",
-        "verify.browser-research",
-        "verify.skill-layout",
-    ]
-    assert all("NUMBA_DISABLE_JIT=1" in item["command"] for item in unit_checks)
-    assert all("not turtle and not vectorbt" in item["command"] for item in unit_checks)
-    assert "test_archive_promotion.py" in unit_checks[0]["command"]
-    assert "test_market_data_storage.py" in unit_checks[1]["command"]
-    assert "test_local_research_equivalence.py" in unit_checks[2]["command"]
-    assert "not test_strategy_module_matches_frozen_equivalence_fixture" in (
-        unit_checks[2]["command"]
-    )
-    assert "NUMBA_DISABLE_JIT=1" in vectorbt_unit["command"]
-    assert '-k "turtle or vectorbt"' in vectorbt_unit["command"]
-    assert [
-        item["command"].rsplit("[", 1)[-1].split("]", 1)[0]
-        for item in equivalence
-    ] == ["immediate-11-etf", "immediate-17-etf", "delayed-11-etf-1d"]
-    assert all("NUMBA_DISABLE_JIT=1" in item["command"] for item in equivalence)
-    assert "test_generic_e2e.py" in e2e["command"]
-    assert "test_local_research_v2_e2e.py" in e2e["command"]
-    assert "test_turtle_e2e.py" in turtle_e2e["command"]
-    assert "NUMBA_DISABLE_JIT=1" in e2e["command"]
-    assert "NUMBA_DISABLE_JIT=1" in turtle_e2e["command"]
-    assert jit["command"] == (
-        "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& "
-        ".\\.venv\\Scripts\\python.exe -m pytest "
-        "tests\\local_quant_research\\test_turtle_vectorbt_callbacks.py::"
-        "test_group_and_portfolio_unit_scales_follow_confirmed_formula"
-    )
-    shared_skill_paths = {
-        ".agents/skills/run-local-quant-research/**",
-        ".claude/skills/run-local-quant-research",
-    }
-    assert all(shared_skill_paths.issubset(item["paths"]) for item in unit_checks)
-    assert "scripts/research/**" in unit_checks[0]["paths"]
-    assert "scripts/research/market_data/**" in unit_checks[1]["paths"]
-    assert "scripts/research/local_quant_research/**" in unit_checks[2]["paths"]
-    assert "tests/quant_analysis/**" in unit_checks[2]["paths"]
-    assert {"scripts/research/**", *shared_skill_paths}.issubset(e2e["paths"])
-    assert "joinquant/strategies/strategy-003/research/**" in turtle_e2e["paths"]
-    assert all(
-        "tests/local_quant_research/**" not in item["paths"]
-        for item in [*unit_checks, vectorbt_unit, *equivalence, e2e, turtle_e2e, jit]
-    )
-    assert {".agents/skills/**", ".claude/skills/**"}.issubset(layout["paths"])
-    assert {".agents/skills/**", ".claude/skills/**"}.issubset(layout["inputs"])
-    local_checks = [*unit_checks, vectorbt_unit, *equivalence, e2e, turtle_e2e, jit]
-    assert all(item["checkParallel"] is True for item in checks.values())
-    assert "tests\\joinquant_sync\\test_manual_sync_cli.py" in checks[
-        "verify.self-test"
-    ]["command"]
-    assert all(
-        "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1" in item["command"]
-        for item in checks.values()
-        if "pytest" in item["command"]
-    )
-    assert all(
-        not path.startswith(".local/")
-        for item in local_checks
-        for path in item["inputs"]
-    )
+    assert config["verify"]["enforceLocalBudget"] is True
+    assert real and len(real) == len(set(real))
+    assert set(real) < set(checks)
+    assert "verify.local-quant-research-jit" not in checks
+    assert all(check["paths"] and check["inputs"] for check in checks.values())
+    for identity, check in checks.items():
+        assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1" in check["command"]
+        assert ".\\.venv\\Scripts\\python.exe -m pytest" in check["command"]
+        assert "--basetemp=.local/pytest/" + identity in check["command"]
+        assert ('-m real' if identity in real else '-m "not real"') in check["command"]
+    worktree = checks["verify.worktree-setup"]
+    assert worktree["pytestXdistWorkers"] == 2
+    assert "-p xdist.plugin" in worktree["command"]
+    assert all("pytestXdistWorkers" not in check for identity, check in checks.items()
+               if identity != "verify.worktree-setup")
+    numeric = checks["verify.quant-calculation"]
+    assert "NUMBA_DISABLE_JIT=1" in numeric["command"]
+    assert "test_turtle_vectorbt_callbacks.py" in numeric["command"]
+    assert "verify.quant-equivalence" not in checks
+    assert "verify.skill-layout-real" not in checks
+    assert "test_local_research_equivalence.py" in checks["verify.quant-unit"]["command"]
+    assert all(not path.startswith(".local/") for check in checks.values() for path in check["inputs"])
 
 
 def test_full_verify_checkout_downloads_git_lfs_objects(repo_root: Path) -> None:

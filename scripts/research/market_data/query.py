@@ -5,7 +5,6 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Iterable, Mapping, Sequence
 
-import duckdb
 import pyarrow.parquet as pq
 
 from .contracts import (
@@ -134,6 +133,8 @@ def _normalize_selected_rows(
 
 
 def open_snapshot(snapshot_id: str, *, root: Path) -> SnapshotView:
+    import duckdb
+
     snapshot = validate_snapshot(snapshot_id, root=root)
     selection = snapshot.document["selection"]
     fields = tuple(str(field) for field in selection["fields"])

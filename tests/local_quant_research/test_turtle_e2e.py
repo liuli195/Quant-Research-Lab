@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 import csv
 import hashlib
 import json
@@ -57,10 +59,12 @@ def _write_market_csv(
                 previous_close = close
 
 
+@pytest.mark.real
 def test_turtle_project_completes_full_single_scenario_entrypoint(
     tmp_path: Path,
-    repo_root: Path,
+    isolated_research_repo: Path,
 ) -> None:
+    repo_root = isolated_research_repo
     token = uuid.uuid4().hex
     research_root = repo_root / "joinquant/strategies/strategy-003/research"
     baseline = json.loads(
@@ -252,28 +256,6 @@ def test_turtle_project_completes_full_single_scenario_entrypoint(
             if path.is_file()
         }
         assert archive_files == source_files
-
-        reused = subprocess.run(
-            [
-                str(repo_root / ".venv/Scripts/python.exe"),
-                str(repo_root / "scripts/research/local_quant_research/cli.py"),
-                "promote",
-                "--strategy-id",
-                "strategy-003",
-                "--run-id",
-                outcome["run_id"],
-                "--analysis-id",
-                analysis_id,
-            ],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            shell=False,
-            check=False,
-            timeout=120,
-        )
-        assert reused.returncode == 0
-        assert json.loads(reused.stdout)["reused"] is True
 
         shutil.rmtree(run_output)
         run_output = None

@@ -1153,13 +1153,20 @@ def run_project(config_path: Path, *, repo_root: Path) -> RunResult:
         )
     after_state = _repo_state(repo_root, ignored_roots=(staging, execution_root))
     if after_state != before_state:
+        changed_paths = sorted(
+            path for path in before_state.keys() | after_state.keys()
+            if before_state.get(path) != after_state.get(path)
+        )
         return _attempt_result(
             repo_root=repo_root,
             project_id=project_id,
             status="failed",
             stage="project_execution",
             code="write_outside_staging",
-            message="project wrote outside staging",
+            message=(
+                f"project wrote outside staging ({len(changed_paths)} paths): "
+                + ", ".join(changed_paths[:8])
+            ),
             run_id=run_id,
             stages=(*stages, StageRecord("project_execution", "failed")),
             staging=staging,

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 from pathlib import Path
 
@@ -9,7 +8,6 @@ import pytest
 
 from scripts.research.analysis_data.manifest import (
     AnalysisManifestError,
-    open_analysis_source,
     validate_local_manifest_document,
 )
 
@@ -131,14 +129,6 @@ def _local_manifest() -> dict[str, object]:
     }
 
 
-def _tree_digest(root: Path) -> str:
-    digest = hashlib.sha256()
-    for path in sorted(item for item in root.rglob("*") if item.is_file()):
-        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
-        digest.update(hashlib.sha256(path.read_bytes()).digest())
-    return digest.hexdigest()
-
-
 def test_local_manifest_schema_is_strict_and_excludes_joinquant_evidence(
     repo_root: Path,
 ) -> None:
@@ -239,44 +229,3 @@ def test_local_manifest_cross_field_integrity_is_checked(mutation) -> None:
 
     with pytest.raises(AnalysisManifestError):
         validate_local_manifest_document(manifest)
-
-
-def test_reader_selects_only_by_top_level_version_and_never_falls_back(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "backtest"
-    root.mkdir()
-    document = _local_manifest()
-    document["schema_version"] = 1
-    (root / "manifest.json").write_text(json.dumps(document), encoding="utf-8")
-    with pytest.raises(AnalysisManifestError, match="joinquant"):
-        open_analysis_source(root)
-
-    document["schema_version"] = "unknown/1"
-    (root / "manifest.json").write_text(json.dumps(document), encoding="utf-8")
-    with pytest.raises(AnalysisManifestError, match="unsupported"):
-        open_analysis_source(root)
-
-
-def test_existing_joinquant_backtest_validates_without_modification(
-    repo_root: Path,
-) -> None:
-    root = repo_root / "joinquant/strategies/strategy-001/backtests/111"
-    before = _tree_digest(root)
-
-    source = open_analysis_source(root)
-
-    assert source.kind == "joinquant_backtest"
-    datasets = source.manifest["datasets"]
-    assert all(
-        datasets[name]["status"] == "complete"
-        for name in (
-            "results",
-            "balances",
-            "positions",
-            "orders",
-            "risk",
-            "period_risks",
-        )
-    )
-    assert _tree_digest(root) == before

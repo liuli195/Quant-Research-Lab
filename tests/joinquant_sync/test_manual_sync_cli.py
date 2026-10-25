@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -25,7 +26,7 @@ def test_cli_rejects_removed_scheduling_commands(argv: list[str]) -> None:
     ("status", "exit_code"), [("committed", 0), ("failed", 1)]
 )
 def test_manual_active_sync_returns_status(
-    monkeypatch: pytest.MonkeyPatch, tmp_path, status: str, exit_code: int
+    monkeypatch: pytest.MonkeyPatch, status: str, exit_code: int
 ) -> None:
     import jq_sync
 
@@ -44,7 +45,7 @@ def test_manual_active_sync_returns_status(
 
     assert (
         jq_sync.main(
-            ["sync-active-simulations", "--repository", str(tmp_path)]
+            ["sync-active-simulations", "--repository", str(Path.cwd())]
         )
         == exit_code
     )

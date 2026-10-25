@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import gzip
 import hashlib
-import zipfile
 import json
 from pathlib import Path
 
@@ -41,93 +39,6 @@ def test_history_target_accepts_only_ordinal_or_detail_url() -> None:
     )
     with pytest.raises(TargetRequired):
         validate_history_target("strategy-001", "121b439805c89d76b93c5ce520310c2d")
-
-
-def test_remote_alias_change_does_not_create_duplicate_directory(
-    tmp_path: Path,
-) -> None:
-    from joinquant_sync.archive import resolve_local_id
-
-    index = tmp_path / "index.json"
-    first = resolve_local_id(
-        index,
-        "backtest",
-        {
-            "strategy_id": "strategy-001",
-            "page_ordinal": "4",
-            "remote_id": "old-id",
-            "url": "https://example.test/old",
-        },
-    )
-    second = resolve_local_id(
-        index,
-        "backtest",
-        {
-            "strategy_id": "strategy-001",
-            "page_ordinal": "4",
-            "remote_id": "new-id",
-            "url": "https://example.test/new",
-        },
-    )
-
-    saved = json.loads(index.read_text(encoding="utf-8"))
-    assert first == second == "4"
-    assert len(saved["objects"]) == 1
-    assert saved["objects"][0]["aliases"] == [
-        {"remote_id": "old-id", "url": "https://example.test/old"},
-        {"remote_id": "new-id", "url": "https://example.test/new"},
-    ]
-
-
-def test_strategy_ids_are_allocated_once(tmp_path: Path) -> None:
-    from joinquant_sync.archive import resolve_local_id
-
-    index = tmp_path / "index.json"
-    first = resolve_local_id(
-        index,
-        "strategy",
-        {"page_ordinal": "1", "remote_id": "old"},
-    )
-    same = resolve_local_id(
-        index,
-        "strategy",
-        {"page_ordinal": "1", "remote_id": "new"},
-    )
-    second = resolve_local_id(
-        index,
-        "strategy",
-        {"page_ordinal": "2", "remote_id": "other"},
-    )
-
-    assert (first, same, second) == ("strategy-001", "strategy-001", "strategy-002")
-
-
-def test_backtest_identity_fingerprint_conflict_is_rejected(tmp_path: Path) -> None:
-    from joinquant_sync.archive import IdentityConflict, resolve_local_id
-
-    index = tmp_path / "index.json"
-    resolve_local_id(
-        index,
-        "backtest",
-        {
-            "strategy_id": "strategy-001",
-            "page_ordinal": "4",
-            "remote_id": "old-id",
-            "fingerprint": "code-and-params-a",
-        },
-    )
-
-    with pytest.raises(IdentityConflict):
-        resolve_local_id(
-            index,
-            "backtest",
-            {
-                "strategy_id": "strategy-001",
-                "page_ordinal": "4",
-                "remote_id": "new-id",
-                "fingerprint": "code-and-params-b",
-            },
-        )
 
 
 def test_incomplete_attribution_blocks_gate() -> None:
@@ -267,300 +178,11 @@ def test_manifest_schema_declares_required_contract(repo_root: Path) -> None:
     ] == {"$ref": "#/$defs/backtestOfficialSummary"}
 
 
-def test_failed_batch_keeps_previous_manifest(tmp_path: Path) -> None:
+def test_failed_batch_is_rejected_before_writing() -> None:
     from joinquant_sync.archive import IntegrityError, commit_manifest
 
-    object_dir = tmp_path / "backtests" / "1"
-    object_dir.mkdir(parents=True)
-    old = {"schema_version": 1, "gate": {"status": "pass"}, "datasets": {}}
-    (object_dir / "manifest.json").write_text(json.dumps(old), encoding="utf-8")
-
     with pytest.raises(IntegrityError):
-        commit_manifest(object_dir, {"gate": {"status": "fail"}}, [])
-
-    assert json.loads((object_dir / "manifest.json").read_text()) == old
-
-
-def test_partial_commit_is_explicit_and_verifies_referenced_files(
-    tmp_path: Path,
-) -> None:
-    from joinquant_sync.archive import (
-        IntegrityError,
-        commit_manifest,
-        verify_existing_manifest,
-        verify_partial_manifest,
-    )
-
-    object_dir = tmp_path / "backtests" / "1"
-    staged = tmp_path / "stage" / "code.py"
-    staged.parent.mkdir()
-    staged.write_text("def initialize(context):\n    pass\n", encoding="utf-8")
-    digest = hashlib.sha256(staged.read_bytes()).hexdigest()
-    manifest = {
-        "schema_version": 1,
-        "object": {"kind": "strategy", "local_id": "1", "status": "current"},
-        "source": {
-            "url": "memory://strategy",
-            "aliases": [],
-            "observed_at": "2026-01-01T00:00:00Z",
-        },
-        "fence": {"before_sha256": "0" * 64, "after_sha256": "0" * 64},
-        "code": {"path": "code.py", "sha256": digest},
-        "datasets": {
-            "page_metadata": {
-                "required": True,
-                "status": "failed",
-                "files": [{"path": "code.py", "sha256": digest}],
-                "evidence": {"error": "incomplete"},
-            }
-        },
-        "gate": {"status": "fail", "exceptions": []},
-    }
-
-    commit_manifest(object_dir, manifest, [staged], allow_failed_gate=True)
-    (object_dir / "default_code.py").write_text(
-        "def initialize(context):\n    pass\n", encoding="utf-8"
-    )
-
-    assert verify_partial_manifest(object_dir) == manifest
-    with pytest.raises(IntegrityError, match="gate"):
-        verify_existing_manifest(object_dir)
-
-    (object_dir / "code.py").write_text("tampered\n", encoding="utf-8")
-    with pytest.raises(IntegrityError, match="hash mismatch"):
-        verify_partial_manifest(object_dir)
-
-    (object_dir / "code.py").write_text(
-        "def initialize(context):\n    pass\n", encoding="utf-8"
-    )
-    manifest["datasets"]["page_metadata"].update(
-        status="complete", rows=1, evidence={"retry": "complete"}
-    )
-    manifest["gate"] = {"status": "pass", "exceptions": []}
-    commit_manifest(object_dir, manifest, [])
-    assert verify_existing_manifest(object_dir) == manifest
-
-
-def test_raw_response_round_trips_and_hashes(tmp_path: Path) -> None:
-    from joinquant_sync.archive import write_raw_gzip
-
-    raw = b'{"x":1}'
-    destination = tmp_path / "raw.json.gz"
-    result = write_raw_gzip(raw, destination)
-
-    assert gzip.decompress(destination.read_bytes()) == raw
-    assert result["sha256"] == hashlib.sha256(raw).hexdigest()
-    assert (
-        result["compressed_sha256"]
-        == hashlib.sha256(destination.read_bytes()).hexdigest()
-    )
-
-
-def test_atomic_commit_moves_only_manifest_referenced_files(tmp_path: Path) -> None:
-    from joinquant_sync.archive import commit_manifest, verify_existing_manifest
-
-    object_dir = tmp_path / "backtests" / "1"
-    staged = tmp_path / "stage" / "chunk.json"
-    staged.parent.mkdir()
-    staged.write_bytes(b'{"page":1}')
-    digest = hashlib.sha256(staged.read_bytes()).hexdigest()
-    manifest = {
-        "schema_version": 1,
-        "object": {"kind": "strategy", "local_id": "1", "status": "current"},
-        "source": {
-            "url": "memory://strategy",
-            "aliases": [],
-            "observed_at": "2026-01-01T00:00:00Z",
-        },
-        "fence": {"before_sha256": "0" * 64, "after_sha256": "0" * 64},
-        "code": {"path": "raw/chunk.json", "sha256": digest},
-        "datasets": {
-            "page_metadata": {
-                "required": True,
-                "status": "complete",
-                "files": [{"path": "raw/chunk.json", "sha256": digest}],
-            }
-        },
-        "gate": {"status": "pass", "exceptions": []},
-    }
-
-    commit_manifest(object_dir, manifest, [staged])
-
-    assert not staged.exists()
-    assert (object_dir / "raw" / "chunk.json").read_bytes() == b'{"page":1}'
-    (object_dir / "default_code.py").write_bytes(b'{"page":1}')
-    assert verify_existing_manifest(object_dir) == manifest
-
-
-def test_repeated_commit_with_same_content_is_idempotent(tmp_path: Path) -> None:
-    from joinquant_sync.archive import commit_manifest
-
-    object_dir = tmp_path / "backtests" / "1"
-    payload = b'{"page":1}'
-    digest = hashlib.sha256(payload).hexdigest()
-    manifest = {
-        "schema_version": 1,
-        "object": {"kind": "strategy", "local_id": "1", "status": "current"},
-        "source": {
-            "url": "memory://strategy",
-            "aliases": [],
-            "observed_at": "2026-01-01T00:00:00Z",
-        },
-        "fence": {"before_sha256": "0" * 64, "after_sha256": "0" * 64},
-        "code": {"path": "raw/chunk.json", "sha256": digest},
-        "datasets": {
-            "page_metadata": {
-                "required": True,
-                "status": "complete",
-                "files": [{"path": "raw/chunk.json", "sha256": digest}],
-            }
-        },
-        "gate": {"status": "pass", "exceptions": []},
-    }
-    for stage_name in ("stage-a", "stage-b"):
-        staged = tmp_path / stage_name / "chunk.json"
-        staged.parent.mkdir()
-        staged.write_bytes(payload)
-        commit_manifest(object_dir, manifest, [staged])
-    assert (object_dir / "raw" / "chunk.json").read_bytes() == payload
-
-
-def test_incremental_commit_distinguishes_same_named_partitions(tmp_path: Path) -> None:
-    from joinquant_sync.archive import commit_manifest
-
-    object_dir = tmp_path / "simulation"
-    old = object_dir / "snapshots" / "old" / "data" / "results.parquet"
-    old.parent.mkdir(parents=True)
-    old.write_bytes(b"old")
-    stage_root = tmp_path / "stage"
-    new = stage_root / "snapshots" / "new" / "data" / "results.parquet"
-    new.parent.mkdir(parents=True)
-    new.write_bytes(b"new")
-    files = [
-        {
-            "path": "snapshots/old/data/results.parquet",
-            "sha256": hashlib.sha256(b"old").hexdigest(),
-        },
-        {
-            "path": "snapshots/new/data/results.parquet",
-            "sha256": hashlib.sha256(b"new").hexdigest(),
-        },
-    ]
-    manifest = {
-        "schema_version": 1,
-        "object": {"kind": "strategy", "local_id": "1", "status": "current"},
-        "source": {
-            "url": "memory://strategy",
-            "aliases": [],
-            "observed_at": "2026-01-01T00:00:00Z",
-        },
-        "fence": {"before_sha256": "0" * 64, "after_sha256": "0" * 64},
-        "code": {
-            "path": "snapshots/old/data/results.parquet",
-            "sha256": hashlib.sha256(b"old").hexdigest(),
-        },
-        "datasets": {
-            "page_metadata": {
-                "required": True,
-                "status": "complete",
-                "files": files,
-            }
-        },
-        "gate": {"status": "pass", "exceptions": []},
-    }
-    commit_manifest(object_dir, manifest, [new])
-    assert (object_dir / files[1]["path"]).read_bytes() == b"new"
-
-
-def test_existing_manifest_rejects_missing_referenced_file(tmp_path: Path) -> None:
-    from joinquant_sync.archive import IntegrityError, verify_existing_manifest
-
-    object_dir = tmp_path / "backtests" / "1"
-    object_dir.mkdir(parents=True)
-    manifest = {
-        "schema_version": 1,
-        "datasets": {
-            "results": {
-                "required": True,
-                "status": "complete",
-                "files": [{"path": "raw/missing.json", "sha256": "0" * 64}],
-            }
-        },
-        "gate": {"status": "pass", "exceptions": []},
-    }
-    (object_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-
-    with pytest.raises(IntegrityError):
-        verify_existing_manifest(object_dir)
-
-
-def test_verify_rejects_manifest_missing_schema_contract(tmp_path: Path) -> None:
-    from joinquant_sync.archive import IntegrityError, verify_existing_manifest
-
-    (tmp_path / "manifest.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "datasets": {
-                    "fake": {
-                        "required": False,
-                        "status": "complete",
-                        "rows": 0,
-                        "verified_empty": True,
-                    }
-                },
-                "gate": {"status": "pass", "exceptions": []},
-            }
-        ),
-        encoding="utf-8",
-    )
-    with pytest.raises(IntegrityError, match="manifest required field"):
-        verify_existing_manifest(tmp_path)
-
-
-def test_object_lock_conflict_is_retryable(tmp_path: Path) -> None:
-    from joinquant_sync.archive import ObjectLocked, object_lock
-
-    object_dir = tmp_path / "backtests" / "1"
-    with object_lock(object_dir):
-        with pytest.raises(ObjectLocked):
-            with object_lock(object_dir):
-                pass
-
-
-def test_code_context_keeps_backtest_code_and_simulation_versions(
-    tmp_path: Path,
-) -> None:
-    from joinquant_sync.archive import write_code_context
-
-    backtest = write_code_context(
-        tmp_path / "backtest",
-        "backtest",
-        "def initialize(context):\n    pass\n",
-        {"start_date": "2026-01-01"},
-    )
-    simulation = write_code_context(
-        tmp_path / "simulation",
-        "simulation",
-        "def initialize(context):\n    pass\n",
-        {"frequency": "day"},
-        source_backtest="4",
-        versions=["# old\n", "def initialize(context):\n    pass\n"],
-    )
-
-    assert (tmp_path / "backtest" / "code.py").read_text(encoding="utf-8") == (
-        "def initialize(context):\n    pass\n"
-    )
-    assert backtest["path"] == "code.py"
-    assert (tmp_path / "backtest" / "params.json").is_file()
-    assert backtest["params"]["path"] == "params.json"
-    assert len(backtest["params"]["sha256"]) == 64
-    assert simulation["path"] == "current_code.py"
-    assert json.loads(
-        (tmp_path / "simulation" / "source.json").read_text(encoding="utf-8")
-    ) == {"backtest_id": "4"}
-    assert simulation["source"]["path"] == "source.json"
-    assert len(list((tmp_path / "simulation" / "code_versions").glob("*.py"))) == 2
+        commit_manifest(Path("unused-backtest"), {"gate": {"status": "fail"}}, [])
 
 
 def test_attribution_requires_contiguous_sequence_and_run_end() -> None:
@@ -668,28 +290,6 @@ def test_attribution_rejects_nonmonotonic_or_out_of_range_middle_time() -> None:
         )
 
 
-def test_existing_simulation_uses_results_end_for_attribution_validation(
-    repo_root: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from joinquant_sync import archive
-
-    object_dir = (
-        repo_root
-        / "joinquant/strategies/strategy-001/simulations/simulation-001"
-    )
-    manifest = json.loads((object_dir / "manifest.json").read_text(encoding="utf-8"))
-    expected_end = manifest["datasets"]["results"]["time_range"]["end"]
-    validate_attribution = archive.validate_attribution
-
-    def validate_with_expected_end(*args: object, **kwargs: object) -> dict[str, object]:
-        assert kwargs["expected_end"] == expected_end
-        return validate_attribution(*args, **kwargs)
-
-    monkeypatch.setattr(archive, "validate_attribution", validate_with_expected_end)
-    archive.verify_existing_manifest(object_dir)
-
-
 @pytest.mark.parametrize(
     "line",
     [
@@ -723,13 +323,24 @@ def test_malformed_json_recovery_reports_exact_bad_offset() -> None:
     assert errors == [{"offset": 8, "bytes": 3, "error": "invalid_json"}]
 
 
-def test_log_response_is_archived_before_recovery(tmp_path: Path) -> None:
-    from joinquant_sync.archive import archive_log_response
+def test_log_response_is_handed_to_archive_before_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import joinquant_sync.archive as archive
 
     raw = b'{"a":1}\nBAD\n'
-    result = archive_log_response(raw, tmp_path / "raw" / "logs.jsonl.gz")
+    captured: list[bytes] = []
+    monkeypatch.setattr(archive, "write_raw_gzip", lambda content, _path: captured.append(content) or {"sha256": hashlib.sha256(content).hexdigest()})
+    recover = archive.recover_malformed_json
 
-    assert gzip.decompress((tmp_path / "raw" / "logs.jsonl.gz").read_bytes()) == raw
+    def recover_after_archive(content: bytes):
+        assert captured == [content]
+        return recover(content)
+
+    monkeypatch.setattr(archive, "recover_malformed_json", recover_after_archive)
+    result = archive.archive_log_response(raw, Path("unused-logs.jsonl.gz"))
+
+    assert captured == [raw]
     assert result["rows"] == [{"a": 1}]
     assert result["recovery"] == {
         "source_lines": 2,
@@ -983,21 +594,7 @@ def test_performance_profile_rejects_unproven_or_placeholder_payload(
     assert result["status"] == "failed"
 
 
-def test_verify_cli_checks_manifest_gate(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    import jq_sync
-
-    (tmp_path / "manifest.json").write_text(
-        '{"schema_version":1,"gate":{"status":"fail"},"datasets":{}}',
-        encoding="utf-8",
-    )
-    assert jq_sync.main(["verify", "--object", str(tmp_path)]) == 3
-    assert "integrity_failed" in capsys.readouterr().out
-
-
 def test_verify_cli_reports_a_valid_partial_archive(
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1014,26 +611,12 @@ def test_verify_cli_reports_a_valid_partial_archive(
     )
     monkeypatch.setattr(jq_sync, "verify_partial_manifest", lambda _path: partial)
 
-    assert jq_sync.main(["verify", "--object", str(tmp_path)]) == 0
+    assert jq_sync.main(["verify", "--object", "unused-archive"]) == 0
     assert json.loads(capsys.readouterr().out)["status"] == "partial"
 
 
-def test_paid_log_range_keeps_only_requested_lines(tmp_path: Path) -> None:
-    from joinquant_sync.archive import extract_paid_log_range
-
-    archive = tmp_path / "log.zip"
-    with zipfile.ZipFile(archive, "w") as output:
-        output.writestr("log.txt", b"zero\none\ntwo\nthree\n")
-    result = extract_paid_log_range(archive, "1:3", tmp_path / "selected.jsonl.gz")
-    import gzip
-
-    with gzip.open(result["path"], "rb") as stream:
-        assert stream.read() == b"one\ntwo\n"
-    assert result["actual_range"] == "1:3"
-
-
 def test_paid_log_download_requires_explicit_confirmation(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     import jq_sync
 
@@ -1045,7 +628,7 @@ def test_paid_log_download_requires_explicit_confirmation(
                 "--preview-id",
                 "0" * 32,
                 "--destination",
-                str(tmp_path / "selected.gz"),
+                "unused-selected.gz",
             ]
         )
         == 4

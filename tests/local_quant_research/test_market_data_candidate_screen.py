@@ -1,16 +1,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from scripts.research.market_data.candidate_screen import (
-    CandidateScreenRule,
-    screen_candidates,
-    write_candidate_screen,
-)
+from scripts.research.market_data.candidate_screen import CandidateScreenRule, screen_candidates
 
 
 RULE = CandidateScreenRule(
@@ -115,20 +110,17 @@ def test_screen_rejects_each_fixed_gate(
     assert result.passed_securities == ()
 
 
-def test_screen_report_is_content_addressed_and_contains_no_backtest_metrics(
-    tmp_path: Path,
-) -> None:
+def test_screen_document_is_content_addressed_and_contains_no_backtest_metrics() -> None:
+    import hashlib
+    from scripts.research.market_data.candidate_screen import _canonical_document
     result = _screen(_candidate_rows())
-
-    path = write_candidate_screen(result, root=tmp_path)
-    document = json.loads(path.read_text(encoding="utf-8"))
-
-    assert path == tmp_path / "screens" / f"{result.screen_id}.json"
+    document = _canonical_document(result)
     assert document["screen_id"] == result.screen_id
-    forbidden = {"returns", "cagr", "calmar", "max_drawdown"}
+    without_id = {key: value for key, value in document.items() if key != "screen_id"}
+    encoded = json.dumps(without_id, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    assert result.screen_id == hashlib.sha256(encoded).hexdigest()
     serialized = json.dumps(document, ensure_ascii=False).lower()
-    assert all(f'"{field}"' not in serialized for field in forbidden)
-    assert write_candidate_screen(result, root=tmp_path) == path
+    assert all(f'"{field}"' not in serialized for field in {"returns", "cagr", "calmar", "max_drawdown"})
 
 
 def test_invalid_official_coverage_is_a_screen_failure_not_an_exception() -> None:

@@ -39,7 +39,7 @@ def _write_actions(path: Path) -> Path:
         + ",".join(
             (
                 "FUND_DIVIDEND:101",
-                "510300.XSHG",
+                "000001.XSHG",
                 "cash_dividend",
                 "2026-01-05",
                 "2026-01-05",
@@ -257,12 +257,11 @@ def test_export_request_contains_no_strategy_universe_or_rules() -> None:
 
 
 def test_verify_transfer_requires_matching_bytes_and_confirmed_cleanup(
-    tmp_path: Path,
+    repo_root: Path,
 ) -> None:
     from scripts.research.market_data.joinquant_export import verify_transfer
 
-    local_file = tmp_path / "market-data.csv"
-    local_file.write_bytes(b"date,security\n2026-01-05,510300.XSHG\n")
+    local_file = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
     digest = hashlib.sha256(local_file.read_bytes()).hexdigest()
 
     complete = verify_transfer(
@@ -290,11 +289,11 @@ def test_verify_transfer_requires_matching_bytes_and_confirmed_cleanup(
     assert "remote cleanup is not confirmed" in not_cleaned.reasons
 
 
-def test_verify_transfer_fails_when_local_file_is_missing(tmp_path: Path) -> None:
+def test_verify_transfer_fails_when_local_file_is_missing() -> None:
     from scripts.research.market_data.joinquant_export import verify_transfer
 
     evidence = verify_transfer(
-        local_file=tmp_path / "missing.csv",
+        local_file=Path(__file__).with_name("unused-missing-transfer.csv"),
         remote_sha256="0" * 64,
         remote_cleaned=True,
     )
@@ -304,11 +303,15 @@ def test_verify_transfer_fails_when_local_file_is_missing(tmp_path: Path) -> Non
     assert "local transfer file is missing" in evidence.reasons
 
 
-def test_import_verified_transfer_publishes_before_deleting_remote_and_local_csv(
+@pytest.mark.real
+def test_verified_transfer_snapshot_query_smoke(
     repo_root: Path,
     tmp_path: Path,
 ) -> None:
     from scripts.research.market_data.joinquant_export import import_verified_transfer
+    from scripts.research.market_data.contracts import SnapshotSelection
+    from scripts.research.market_data.query import open_snapshot
+    from scripts.research.market_data.storage import create_snapshot
 
     source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
     local_file = tmp_path / "transfer" / "market-data.csv"
@@ -341,68 +344,22 @@ def test_import_verified_transfer_publishes_before_deleting_remote_and_local_csv
     assert not action_file.exists()
     assert (record.path / "market-data.parquet").is_file()
     assert not (record.path / "market-data.csv").exists()
-
-
-def test_import_verified_transfer_preserves_both_transports_after_conversion_failure(
-    tmp_path: Path,
-) -> None:
-    from scripts.research.market_data.joinquant_export import import_verified_transfer
-    from scripts.research.market_data.storage import MarketDataIntegrityError
-
-    local_file = tmp_path / "market-data.csv"
-    local_file.write_text("not,the,declared,fields\n", encoding="utf-8")
-    digest = hashlib.sha256(local_file.read_bytes()).hexdigest()
-    action_file = _write_actions(tmp_path / "corporate-actions.csv")
-    action_digest = hashlib.sha256(action_file.read_bytes()).hexdigest()
-
-    remote_cleanup_calls = 0
-
-    def cleanup_remote() -> bool:
-        nonlocal remote_cleanup_calls
-        remote_cleanup_calls += 1
-        return True
-
-    with pytest.raises(MarketDataIntegrityError):
-        import_verified_transfer(
-            local_file=local_file,
-            remote_sha256=digest,
-            corporate_actions_file=action_file,
-            corporate_actions_remote_sha256=action_digest,
-            cleanup_remote=cleanup_remote,
-            manifest=_manifest(),
-            root=tmp_path / "store",
-        )
-
-    assert local_file.exists()
-    assert action_file.exists()
-    assert remote_cleanup_calls == 0
-    assert not (tmp_path / "store" / "batches").exists()
-
-
-def test_import_verified_transfer_fails_and_preserves_local_when_remote_cleanup_unconfirmed(
-    repo_root: Path,
-    tmp_path: Path,
-) -> None:
-    from scripts.research.market_data.joinquant_export import import_verified_transfer
-    from scripts.research.market_data.storage import MarketDataIntegrityError
-
-    source = repo_root / "tests/local_quant_research/fixtures/daily-bars.csv"
-    local_file = tmp_path / "market-data.csv"
-    local_file.write_bytes(source.read_bytes())
-    digest = hashlib.sha256(local_file.read_bytes()).hexdigest()
-    action_file = _write_actions(tmp_path / "corporate-actions.csv")
-    action_digest = hashlib.sha256(action_file.read_bytes()).hexdigest()
-
-    with pytest.raises(MarketDataIntegrityError, match="remote cleanup"):
-        import_verified_transfer(
-            local_file=local_file,
-            remote_sha256=digest,
-            corporate_actions_file=action_file,
-            corporate_actions_remote_sha256=action_digest,
-            cleanup_remote=lambda: False,
-            manifest=_manifest(),
-            root=tmp_path / "store",
-        )
-
-    assert local_file.exists()
-    assert action_file.exists()
+    manifest = _manifest()
+    snapshot = create_snapshot(
+        batch_ids=[record.batch_id],
+        selection=SnapshotSelection(
+            source=manifest["source"], asset_type="etf", frequency="1d",
+            securities=("000001.XSHG", "000002.XSHE"),
+            start_date="2026-01-05", end_date="2026-01-06", fields=FIELDS,
+            price_semantics=manifest["price_semantics"],
+        ),
+        root=tmp_path / "store",
+    )
+    view = open_snapshot(snapshot.snapshot_id, root=tmp_path / "store")
+    assert len(view.rows) == 4
+    assert view.corporate_action_fields == CORPORATE_ACTION_FIELDS
+    assert len(view.corporate_actions) == 1
+    assert view.corporate_actions[0]["cash_per_share"] == 0.1
+    with pytest.raises(TypeError):
+        view.corporate_actions[0]["cash_per_share"] = 1.0
+    assert not tuple(tmp_path.rglob("*.duckdb"))

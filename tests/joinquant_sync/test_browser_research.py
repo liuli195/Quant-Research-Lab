@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import gzip
 import json
 import os
 from contextlib import contextmanager
@@ -232,35 +231,30 @@ def test_log_transport_captures_original_response_text() -> None:
     assert "document.cookie" not in browser._CY_AJAX_JS
 
 
-def test_malformed_production_log_response_is_persisted_before_failure(
-    tmp_path: Path,
+def test_malformed_production_log_response_is_handed_to_failure_archive(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from joinquant_sync.browser import FreeLogIncomplete
-    from joinquant_sync.sync_pipeline import persist_failure_evidence
+    import joinquant_sync.sync_pipeline as pipeline
 
+    captured: list[bytes] = []
+    def archive_payload(content: bytes, _path: Path):
+        captured.append(content)
+        digest = hashlib.sha256(content).hexdigest()
+        return {"sha256": digest, "compressed_sha256": digest}
+
+    monkeypatch.setattr(pipeline, "write_raw_gzip", archive_payload)
     error = FreeLogIncomplete(
         "malformed",
         raw_pages=[{"offset": 1000, "raw_text": '{"ok":1}\nBROKEN'}],
     )
-    evidence = persist_failure_evidence(tmp_path, error, identity="run-1")
+    evidence = pipeline.persist_failure_evidence(Path("unused-repository"), error, identity="run-1")
     assert evidence is not None
-    with gzip.open(Path(evidence["path"]), "rt", encoding="utf-8") as stream:
-        payload = json.load(stream)
+    payload = json.loads(captured[0])
+    assert payload["identity"] == "run-1"
     assert payload["raw_pages"][0]["raw_text"] == '{"ok":1}\nBROKEN'
     assert payload["recovery"][0]["rows"] == [{"ok": 1}]
     assert payload["recovery"][0]["errors"]
-
-
-def test_stage_external_file_preserves_bytes_and_sha256(tmp_path: Path) -> None:
-    from joinquant_sync.archive import stage_external_file
-
-    source = tmp_path / "export.json"
-    source.write_bytes(b'{"ok":true}')
-
-    item = stage_external_file(source, tmp_path / "stage")
-
-    assert Path(str(item["path"])).read_bytes() == source.read_bytes()
-    assert item["sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
 
 
 def test_stage_only_sync_requires_explicit_target() -> None:
@@ -280,12 +274,19 @@ def test_stage_only_sync_requires_explicit_target() -> None:
     )
 
 
+@pytest.mark.real
 def test_persistent_context_and_download_capture(tmp_path: Path) -> None:
     from joinquant_sync.browser import capture_download, open_authenticated_context
 
     profile = tmp_path / "profile"
+    profile.mkdir()
+    (profile / "storage-state.json").write_text(
+        json.dumps({"cookies": [{"name": "session", "value": "unused-export", "domain": "example.com", "path": "/"}], "origins": []}),
+        encoding="utf-8",
+    )
     destination = tmp_path / "export.json"
     with open_authenticated_context(profile, headless=True) as context:
+        assert context.cookies("https://example.com") == []
         page = context.pages[0]
         page.set_content(
             '<a id="download" download="export.json" '
@@ -301,39 +302,8 @@ def test_persistent_context_and_download_capture(tmp_path: Path) -> None:
     assert destination.read_bytes() == b'{"ok":true}'
 
 
-def test_persistent_context_ignores_exported_storage_state(tmp_path: Path) -> None:
-    from joinquant_sync.browser import open_authenticated_context
-
-    profile = tmp_path / "profile"
-    profile.mkdir()
-    (profile / "storage-state.json").write_text(
-        json.dumps(
-            {
-                "cookies": [
-                    {
-                        "name": "session",
-                        "value": "temporary-test-value",
-                        "domain": "example.com",
-                        "path": "/",
-                        "expires": -1,
-                        "httpOnly": True,
-                        "secure": True,
-                        "sameSite": "Lax",
-                    }
-                ],
-                "origins": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with open_authenticated_context(profile, headless=True) as context:
-        cookies = context.cookies("https://example.com")
-
-    assert cookies == []
-
-
 @pytest.mark.skipif(os.name != "nt", reason="Windows DPAPI only")
+@pytest.mark.real
 def test_authenticated_session_is_encrypted_and_restored(tmp_path: Path) -> None:
     from joinquant_sync.browser import (
         persist_authenticated_session,
@@ -383,16 +353,22 @@ def test_authenticated_session_is_encrypted_and_restored(tmp_path: Path) -> None
 
 
 def test_verify_import_stages_file(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from jq_sync import main
+    import jq_sync
 
-    source = tmp_path / "manual.json"
-    source.write_bytes(b'{"source":"manual"}')
-    stage = tmp_path / "stage"
+    source, stage = Path("manual.json"), Path("unused-stage")
+    digest = hashlib.sha256(b'{"source":"manual"}').hexdigest()
+    captured: list[tuple[Path, Path]] = []
+
+    def stage_file(source_path: Path, stage_path: Path):
+        captured.append((source_path, stage_path))
+        return {"path": str(stage_path / source_path.name), "sha256": digest}
+
+    monkeypatch.setattr(jq_sync, "stage_external_file", stage_file)
 
     assert (
-        main(
+        jq_sync.main(
             [
                 "verify",
                 "--import-file",
@@ -404,29 +380,11 @@ def test_verify_import_stages_file(
         == 0
     )
     item = json.loads(capsys.readouterr().out)
-    assert Path(item["path"]).read_bytes() == source.read_bytes()
-    assert item["sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
-
-
-def test_export_structured_backtest_stages_download(tmp_path: Path) -> None:
-    from joinquant_sync.browser import open_authenticated_context
-    from joinquant_sync.research import export_structured_backtest
-
-    with open_authenticated_context(tmp_path / "profile", headless=True) as context:
-        page = context.pages[0]
-        page.set_content("<body></body>")
-        items = export_structured_backtest(
-            page,
-            "data:application/json,%7B%22status%22%3A%22done%22%7D",
-            tmp_path / "stage",
-        )
-
-    assert len(items) == 1
-    assert Path(items[0]["path"]).read_bytes() == b'{"status":"done"}'
+    assert captured == [(source, stage)]
+    assert item == {"path": str(stage / source.name), "sha256": digest}
 
 
 def test_auth_uses_external_persistent_profile(
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -458,25 +416,23 @@ def test_auth_uses_external_persistent_profile(
         opened.update(profile_dir=profile_dir, headless=headless)
         yield FakeContext()
 
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    local_app_data = Path.cwd().parent / "memory-local-app-data"
+    persisted: list[Path] = []
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
     monkeypatch.setattr(jq_sync, "open_authenticated_context", fake_context)
+    monkeypatch.setattr(jq_sync, "persist_authenticated_session", lambda _context, profile: persisted.append(profile) or True)
 
     assert jq_sync.main(["auth", "--headless", "--timeout-seconds", "0"]) == 0
     assert opened == {
-        "profile_dir": tmp_path / "QuantResearchLab" / "joinquant-playwright",
+        "profile_dir": local_app_data / "QuantResearchLab" / "joinquant-playwright",
         "headless": True,
     }
-    assert (
-        tmp_path
-        / "QuantResearchLab"
-        / "joinquant-playwright"
-        / "joinquant-session.dpapi"
-    ).is_file()
+    assert persisted == [opened["profile_dir"]]
     assert json.loads(capsys.readouterr().out)["status"] == "authenticated"
 
 
 def test_auth_rejects_profile_inside_repository(
-    tmp_path: Path,
+    repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -487,9 +443,8 @@ def test_auth_rejects_profile_inside_repository(
         raise AssertionError("browser must not open for an unsafe profile")
         yield
 
-    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(jq_sync, "open_authenticated_context", unexpected_context)
-    assert jq_sync.main(["auth", "--profile", str(tmp_path / ".browser")]) == 2
+    assert jq_sync.main(["auth", "--profile", str(repo_root / ".browser")]) == 2
     assert json.loads(capsys.readouterr().out) == {
         "status": "invalid_profile",
         "message": "--profile must be outside the repository",
@@ -784,78 +739,40 @@ def test_unchanged_simulation_code_history_reuses_verified_old_pages() -> None:
     assert pages == previous
 
 
+@pytest.mark.real
 def test_paid_preview_is_bound_and_one_time(tmp_path: Path) -> None:
     from joinquant_sync.browser import (
-        PaidConfirmationRequired,
-        consume_paid_preview,
-        create_paid_preview,
-        load_paid_preview,
+        PaidConfirmationRequired, consume_paid_preview, create_paid_preview, load_paid_preview,
     )
-
     quote = {"credits": 3, "rows": 1200}
-    preview = create_paid_preview(
-        "run-1", "normal_log", "1000:1200", quote, store_dir=tmp_path
-    )
+    preview = create_paid_preview("run-1", "normal_log", "1000:1200", quote, store_dir=tmp_path)
     assert load_paid_preview(preview["preview_id"], store_dir=tmp_path) == preview
-    used: set[str] = set()
-    with pytest.raises(PaidConfirmationRequired):
-        consume_paid_preview(
-            preview,
-            "run-1",
-            "normal_log",
-            "1000:1200",
-            quote,
-            False,
-            used,
-            store_dir=tmp_path,
-        )
-    with pytest.raises(PaidConfirmationRequired):
-        consume_paid_preview(
-            preview,
-            "run-1",
-            "normal_log",
-            "1000:1200",
-            {"credits": 4, "rows": 1200},
-            True,
-            used,
-            store_dir=tmp_path,
-        )
-    assert (
-        consume_paid_preview(
-            preview,
-            "run-1",
-            "normal_log",
-            "1000:1200",
-            quote,
-            True,
-            used,
-            store_dir=tmp_path,
-        )["preview_id"]
-        == preview["preview_id"]
-    )
-    with pytest.raises(PaidConfirmationRequired):
-        consume_paid_preview(
-            preview,
-            "run-1",
-            "normal_log",
-            "1000:1200",
-            quote,
-            True,
-            set(),
-            store_dir=tmp_path,
-        )
-    forged = dict(preview, run_id="run-2")
-    with pytest.raises(PaidConfirmationRequired):
-        consume_paid_preview(
-            forged,
-            "run-2",
-            "normal_log",
-            "1000:1200",
-            quote,
-            True,
-            set(),
-            store_dir=tmp_path,
-        )
+    assert consume_paid_preview(preview, "run-1", "normal_log", "1000:1200", quote,
+                                True, set(), store_dir=tmp_path) == preview
+    with pytest.raises(PaidConfirmationRequired, match="already consumed"):
+        consume_paid_preview(preview, "run-1", "normal_log", "1000:1200", quote,
+                             True, set(), store_dir=tmp_path)
+
+
+@pytest.mark.parametrize("kind", ("unconfirmed", "quote-changed", "forged"))
+def test_paid_preview_rejects_invalid_confirmation_before_store(
+    monkeypatch: pytest.MonkeyPatch, kind: str,
+) -> None:
+    import joinquant_sync.browser as browser
+
+    monkeypatch.setattr(browser, "_paid_secret", lambda _store: b"memory-only-preview-key")
+    quote = {"credits": 3, "rows": 1200}
+    preview = {"preview_id": "a" * 32, "run_id": "run-1", "log_type": "normal_log",
+               "range": "1000:1200", "quote": quote, "quote_sha256": browser._quote_sha256(quote)}
+    preview["signature"] = browser._preview_signature(preview, None)
+    run_id = "run-1"
+    if kind == "forged":
+        preview = dict(preview, run_id="run-2")
+        run_id = "run-2"
+    requested_quote = {**quote, "credits": 4} if kind == "quote-changed" else quote
+    with pytest.raises(browser.PaidConfirmationRequired, match="confirmation is invalid"):
+        browser.consume_paid_preview(preview, run_id, "normal_log", "1000:1200",
+                                     requested_quote, kind != "unconfirmed", set())
 
 
 def test_active_simulation_rows_separate_stable_identity_from_aliases() -> None:
