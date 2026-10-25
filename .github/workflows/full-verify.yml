@@ -63,4 +63,6 @@ jobs:
 
       - name: Run full verification
         shell: pwsh
+        env:
+          BUILD_AND_VERIFY_PYTHON: ${{ github.workspace }}\.venv\Scripts\python.exe
         run: build-and-verify verify --project . --full
