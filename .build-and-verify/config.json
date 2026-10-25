@@ -4,7 +4,7 @@
     "checks": []
   },
   "verify": {
-    "maxParallel": 4,
+    "maxParallel": 7,
     "timeoutSeconds": 180,
     "fullBudgetSeconds": 60,
     "enforceLocalBudget": true,
@@ -70,6 +70,31 @@
         "timeoutSeconds": 300
       },
       {
+        "id": "verify.worktree-setup",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest -p xdist.plugin --basetemp=.local/pytest/verify.worktree-setup tests/test_setup_worktree.py -m real",
+        "paths": [
+          ".gitignore",
+          "scripts/setup-worktree.ps1",
+          ".build-and-verify/config.json",
+          "tests/conftest.py",
+          "requirements*.txt",
+          ".agents/skills/joinquant-archive-sync/requirements.txt",
+          "tests/test_setup_worktree.py"
+        ],
+        "inputs": [
+          ".gitignore",
+          "scripts/setup-worktree.ps1",
+          ".build-and-verify/config.json",
+          "tests/conftest.py",
+          "requirements.txt",
+          "requirements-dev.txt",
+          ".agents/skills/joinquant-archive-sync/requirements.txt",
+          "tests/test_setup_worktree.py"
+        ],
+        "checkParallel": true,
+        "pytestXdistWorkers": 2
+      },
+      {
         "id": "verify.analysis-real",
         "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\\.venv\\Scripts\\python.exe -m pytest --basetemp=.local/pytest/verify.analysis-real tests/quant_analysis/test_standard_analysis_e2e.py tests/local_quant_research/test_analysis_data_views.py -m real",
         "paths": [
@@ -114,6 +139,109 @@
           "tests/quant_analysis/test_standard_analysis_e2e.py",
           "tests/local_quant_research/test_analysis_data_views.py",
           "tests/quant_analysis/test_unified_analysis.py"
+        ],
+        "checkParallel": true,
+        "timeoutSeconds": 300
+      },
+      {
+        "id": "verify.sync-real",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest --basetemp=.local/pytest/verify.sync-real tests/joinquant_sync/test_sync_pipeline.py -m real",
+        "paths": [
+          ".agents/skills/joinquant-archive-sync/**",
+          ".claude/skills/joinquant-archive-sync",
+          ".build-and-verify/config.json",
+          "tests/conftest.py",
+          "requirements*.txt",
+          ".agents/skills/joinquant-archive-sync/requirements.txt",
+          "tests/joinquant_sync/test_sync_pipeline.py"
+        ],
+        "inputs": [
+          ".agents/skills/joinquant-archive-sync/**",
+          ".claude/skills/joinquant-archive-sync",
+          ".build-and-verify/config.json",
+          "tests/conftest.py",
+          "requirements.txt",
+          "requirements-dev.txt",
+          ".agents/skills/joinquant-archive-sync/requirements.txt",
+          "tests/joinquant_sync/test_sync_pipeline.py"
+        ],
+        "checkParallel": true
+      },
+      {
+        "id": "verify.browser-real",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest --basetemp=.local/pytest/verify.browser-real tests/joinquant_sync/test_browser_research.py -m real",
+        "paths": [
+          ".agents/skills/joinquant-archive-sync/**",
+          ".claude/skills/joinquant-archive-sync",
+          ".build-and-verify/config.json",
+          "tests/conftest.py",
+          "requirements*.txt",
+          ".agents/skills/joinquant-archive-sync/requirements.txt",
+          "tests/joinquant_sync/test_browser_research.py"
+        ],
+        "inputs": [
+          ".agents/skills/joinquant-archive-sync/**",
+          ".claude/skills/joinquant-archive-sync",
+          ".build-and-verify/config.json",
+          "tests/conftest.py",
+          "requirements.txt",
+          "requirements-dev.txt",
+          ".agents/skills/joinquant-archive-sync/requirements.txt",
+          "tests/joinquant_sync/test_browser_research.py"
+        ],
+        "checkParallel": true
+      },
+      {
+        "id": "verify.docs-real",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest --basetemp=.local/pytest/verify.docs-real tests/joinquant_docs_sync/test_cli.py -m real",
+        "paths": [
+          ".agents/skills/joinquant-docs-sync/**",
+          ".claude/skills/joinquant-docs-sync",
+          "tests/joinquant_docs_sync/**",
+          ".build-and-verify/config.json",
+          "tests/conftest.py",
+          "requirements*.txt",
+          ".agents/skills/joinquant-archive-sync/requirements.txt",
+          "tests/joinquant_docs_sync/test_cli.py"
+        ],
+        "inputs": [
+          ".agents/skills/joinquant-docs-sync/**",
+          ".claude/skills/joinquant-docs-sync",
+          "tests/joinquant_docs_sync/**",
+          ".build-and-verify/config.json",
+          "tests/conftest.py",
+          "requirements.txt",
+          "requirements-dev.txt",
+          ".agents/skills/joinquant-archive-sync/requirements.txt",
+          "tests/joinquant_docs_sync/test_cli.py"
+        ],
+        "checkParallel": true
+      },
+      {
+        "id": "verify.market-real",
+        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\\.venv\\Scripts\\python.exe -m pytest --basetemp=.local/pytest/verify.market-real tests/local_quant_research/test_joinquant_export.py -m real",
+        "paths": [
+          "scripts/research/market_data/**",
+          ".build-and-verify/config.json",
+          "tests/conftest.py",
+          "requirements*.txt",
+          ".agents/skills/joinquant-archive-sync/requirements.txt",
+          "scripts/__init__.py",
+          "scripts/research/__init__.py",
+          "tests/local_quant_research/test_joinquant_export.py",
+          "tests/local_quant_research/fixtures/daily-bars.csv"
+        ],
+        "inputs": [
+          "scripts/research/market_data/**",
+          ".build-and-verify/config.json",
+          "tests/conftest.py",
+          "requirements.txt",
+          "requirements-dev.txt",
+          ".agents/skills/joinquant-archive-sync/requirements.txt",
+          "scripts/__init__.py",
+          "scripts/research/__init__.py",
+          "tests/local_quant_research/test_joinquant_export.py",
+          "tests/local_quant_research/fixtures/daily-bars.csv"
         ],
         "checkParallel": true,
         "timeoutSeconds": 300
@@ -188,30 +316,6 @@
         "timeoutSeconds": 300
       },
       {
-        "id": "verify.sync-real",
-        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest --basetemp=.local/pytest/verify.sync-real tests/joinquant_sync/test_sync_pipeline.py -m real",
-        "paths": [
-          ".agents/skills/joinquant-archive-sync/**",
-          ".claude/skills/joinquant-archive-sync",
-          ".build-and-verify/config.json",
-          "tests/conftest.py",
-          "requirements*.txt",
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          "tests/joinquant_sync/test_sync_pipeline.py"
-        ],
-        "inputs": [
-          ".agents/skills/joinquant-archive-sync/**",
-          ".claude/skills/joinquant-archive-sync",
-          ".build-and-verify/config.json",
-          "tests/conftest.py",
-          "requirements.txt",
-          "requirements-dev.txt",
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          "tests/joinquant_sync/test_sync_pipeline.py"
-        ],
-        "checkParallel": true
-      },
-      {
         "id": "verify.skill-layout",
         "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest --basetemp=.local/pytest/verify.skill-layout tests/test_skill_layout.py tests/test_setup_worktree.py -m \"not real\"",
         "paths": [
@@ -282,58 +386,8 @@
         "checkParallel": true
       },
       {
-        "id": "verify.browser-real",
-        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest --basetemp=.local/pytest/verify.browser-real tests/joinquant_sync/test_browser_research.py -m real",
-        "paths": [
-          ".agents/skills/joinquant-archive-sync/**",
-          ".claude/skills/joinquant-archive-sync",
-          ".build-and-verify/config.json",
-          "tests/conftest.py",
-          "requirements*.txt",
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          "tests/joinquant_sync/test_browser_research.py"
-        ],
-        "inputs": [
-          ".agents/skills/joinquant-archive-sync/**",
-          ".claude/skills/joinquant-archive-sync",
-          ".build-and-verify/config.json",
-          "tests/conftest.py",
-          "requirements.txt",
-          "requirements-dev.txt",
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          "tests/joinquant_sync/test_browser_research.py"
-        ],
-        "checkParallel": false
-      },
-      {
         "id": "verify.docs-unit",
         "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest --basetemp=.local/pytest/verify.docs-unit tests/joinquant_docs_sync/test_cli.py -m \"not real\"",
-        "paths": [
-          ".agents/skills/joinquant-docs-sync/**",
-          ".claude/skills/joinquant-docs-sync",
-          "tests/joinquant_docs_sync/**",
-          ".build-and-verify/config.json",
-          "tests/conftest.py",
-          "requirements*.txt",
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          "tests/joinquant_docs_sync/test_cli.py"
-        ],
-        "inputs": [
-          ".agents/skills/joinquant-docs-sync/**",
-          ".claude/skills/joinquant-docs-sync",
-          "tests/joinquant_docs_sync/**",
-          ".build-and-verify/config.json",
-          "tests/conftest.py",
-          "requirements.txt",
-          "requirements-dev.txt",
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          "tests/joinquant_docs_sync/test_cli.py"
-        ],
-        "checkParallel": true
-      },
-      {
-        "id": "verify.docs-real",
-        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest --basetemp=.local/pytest/verify.docs-real tests/joinquant_docs_sync/test_cli.py -m real",
         "paths": [
           ".agents/skills/joinquant-docs-sync/**",
           ".claude/skills/joinquant-docs-sync",
@@ -480,35 +534,6 @@
         "timeoutSeconds": 300
       },
       {
-        "id": "verify.market-real",
-        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\\.venv\\Scripts\\python.exe -m pytest --basetemp=.local/pytest/verify.market-real tests/local_quant_research/test_joinquant_export.py -m real",
-        "paths": [
-          "scripts/research/market_data/**",
-          ".build-and-verify/config.json",
-          "tests/conftest.py",
-          "requirements*.txt",
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          "scripts/__init__.py",
-          "scripts/research/__init__.py",
-          "tests/local_quant_research/test_joinquant_export.py",
-          "tests/local_quant_research/fixtures/daily-bars.csv"
-        ],
-        "inputs": [
-          "scripts/research/market_data/**",
-          ".build-and-verify/config.json",
-          "tests/conftest.py",
-          "requirements.txt",
-          "requirements-dev.txt",
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          "scripts/__init__.py",
-          "scripts/research/__init__.py",
-          "tests/local_quant_research/test_joinquant_export.py",
-          "tests/local_quant_research/fixtures/daily-bars.csv"
-        ],
-        "checkParallel": true,
-        "timeoutSeconds": 300
-      },
-      {
         "id": "verify.analysis-unit",
         "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& set NUMBA_DISABLE_JIT=1&& .\\.venv\\Scripts\\python.exe -m pytest --basetemp=.local/pytest/verify.analysis-unit tests/quant_analysis/test_analysis_plan.py tests/quant_analysis/test_reporting.py tests/quant_analysis/test_statistics.py tests/quant_analysis/test_unified_analysis.py -m \"not real\"",
         "paths": [
@@ -566,31 +591,6 @@
         ],
         "checkParallel": true,
         "timeoutSeconds": 300
-      },
-      {
-        "id": "verify.worktree-setup",
-        "command": "set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1&& .\\.venv\\Scripts\\python.exe -m pytest -p xdist.plugin --basetemp=.local/pytest/verify.worktree-setup tests/test_setup_worktree.py -m real",
-        "paths": [
-          ".gitignore",
-          "scripts/setup-worktree.ps1",
-          ".build-and-verify/config.json",
-          "tests/conftest.py",
-          "requirements*.txt",
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          "tests/test_setup_worktree.py"
-        ],
-        "inputs": [
-          ".gitignore",
-          "scripts/setup-worktree.ps1",
-          ".build-and-verify/config.json",
-          "tests/conftest.py",
-          "requirements.txt",
-          "requirements-dev.txt",
-          ".agents/skills/joinquant-archive-sync/requirements.txt",
-          "tests/test_setup_worktree.py"
-        ],
-        "checkParallel": false,
-        "pytestXdistWorkers": 2
       }
     ]
   }
