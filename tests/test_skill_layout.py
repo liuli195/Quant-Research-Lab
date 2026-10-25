@@ -181,7 +181,9 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
     real = config["verify"]["realChecks"]
     assert config["version"] == 2
     assert config["build"]["checks"] == []
-    assert config["verify"]["maxParallel"] == 4
+    assert config["verify"]["maxParallel"] == 7
+    assert all(check["checkParallel"] is True for check in checks.values())
+    assert set(list(checks)[:len(real)]) == set(real)
     assert config["verify"]["fullBudgetSeconds"] == 60
     assert config["verify"]["enforceLocalBudget"] is True
     assert real and len(real) == len(set(real))
