@@ -198,8 +198,8 @@ def test_build_and_verify_covers_local_quant_research_without_local_data(
     worktree = checks["verify.worktree-setup"]
     assert worktree["pytestXdistWorkers"] == 2
     assert "-p xdist.plugin" in worktree["command"]
-    assert all("pytestXdistWorkers" not in check for identity, check in checks.items()
-               if identity != "verify.worktree-setup")
+    assert all(check["pytestXdistWorkers"] == 2 for check in checks.values())
+    assert all("-p xdist.plugin" in check["command"] for check in checks.values())
     numeric = checks["verify.quant-calculation"]
     assert "NUMBA_DISABLE_JIT=1" in numeric["command"]
     assert "test_turtle_vectorbt_callbacks.py" in numeric["command"]
